@@ -141,3 +141,6 @@ logs/
 *.bak
 *.swp
 *.swo
+
+# Scratchpad
+scratchpad.ipynb
