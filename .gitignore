@@ -144,3 +144,4 @@ logs/
 
 # Scratchpad
 scratchpad.ipynb
+.aider*
