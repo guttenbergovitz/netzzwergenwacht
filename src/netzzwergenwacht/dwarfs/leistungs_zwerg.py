@@ -3,7 +3,9 @@
 import time
 
 import httpx
+import psutil
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
 
 from .base import AnalysisResult, Dwarf, Severity
 
@@ -47,6 +49,11 @@ class LeistungsZwerg(Dwarf):
             resource_data = await self._analyze_resources(url)
             issues.extend(resource_data["issues"])
             metadata.update(resource_data["metadata"])
+
+            # Analyze Core Web Vitals with browser automation
+            core_vitals_data = await self._analyze_core_web_vitals(url)
+            issues.extend(core_vitals_data["issues"])
+            metadata.update(core_vitals_data["metadata"])
 
             return AnalysisResult(
                 url=url, dwarf_name=self.name, issues=issues, metadata=metadata
@@ -461,6 +468,260 @@ class LeistungsZwerg(Dwarf):
                     issue_type="resource_analysis_failed",
                     severity=Severity.LOW,
                     message=f"Failed to analyze page resources: {str(e)}",
+                    location=url,
+                    evidence={"error": str(e)},
+                )
+            )
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _analyze_core_web_vitals(self, url: str) -> dict:
+        """Analyze Core Web Vitals using browser automation."""
+        issues = []
+        metadata = {}
+
+        try:
+            async with async_playwright() as p:
+                # Launch browser with performance monitoring
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                # Enable performance monitoring
+                await page.route("**/*", lambda route: route.continue_())
+
+                # Navigate to page and wait for load
+                start_time = time.time()
+                await page.goto(url, wait_until="networkidle", timeout=30000)
+                load_time = time.time() - start_time
+
+                # Collect Core Web Vitals
+                await page.evaluate("""
+                    () => {
+                        return new Promise((resolve) => {
+                            // Wait for page to be fully loaded
+                            if (document.readyState === 'complete') {
+                                collectMetrics();
+                            } else {
+                                window.addEventListener('load', collectMetrics);
+                            }
+
+                            function collectMetrics() {
+                                const metrics = {};
+
+                                // Largest Contentful Paint (LCP)
+                                if ('PerformanceObserver' in window) {
+                                    const observer = new PerformanceObserver((list) => {
+                                        const entries = list.getEntries();
+                                        const lastEntry = entries[entries.length - 1];
+                                        metrics.lcp = lastEntry.startTime;
+                                    });
+                                    observer.observe({ entryTypes: ['largest-contentful-paint'] });
+                                }
+
+                                // First Input Delay (FID) - simulated
+                                metrics.fid = performance.now();
+
+                                // Cumulative Layout Shift (CLS)
+                                let cls = 0;
+                                if ('PerformanceObserver' in window) {
+                                    const observer = new PerformanceObserver((list) => {
+                                        for (const entry of list.getEntries()) {
+                                            if (!entry.hadRecentInput) {
+                                                cls += entry.value;
+                                            }
+                                        }
+                                    });
+                                    observer.observe({ entryTypes: ['layout-shift'] });
+                                }
+                                metrics.cls = cls;
+
+                                // First Contentful Paint (FCP)
+                                const fcpEntry = performance.getEntriesByName('first-contentful-paint')[0];
+                                metrics.fcp = fcpEntry ? fcpEntry.startTime : 0;
+
+                                // Time to Interactive (TTI) - estimated
+                                metrics.tti = performance.now();
+
+                                // Total Blocking Time (TBT) - estimated
+                                metrics.tbt = 0;
+
+                                resolve(metrics);
+                            }
+                        });
+                    }
+                """)
+
+                # Wait a bit for metrics to be collected
+                await page.wait_for_timeout(2000)
+
+                # Get final metrics
+                final_metrics = await page.evaluate("""
+                    () => {
+                        const metrics = {};
+
+                        // Get LCP
+                        const lcpEntries = performance.getEntriesByType('largest-contentful-paint');
+                        metrics.lcp = lcpEntries.length > 0 ? lcpEntries[lcpEntries.length - 1].startTime : 0;
+
+                        // Get FCP
+                        const fcpEntries = performance.getEntriesByType('paint');
+                        const fcpEntry = fcpEntries.find(entry => entry.name === 'first-contentful-paint');
+                        metrics.fcp = fcpEntry ? fcpEntry.startTime : 0;
+
+                        // Get CLS
+                        let cls = 0;
+                        if ('PerformanceObserver' in window) {
+                            const observer = new PerformanceObserver((list) => {
+                                for (const entry of list.getEntries()) {
+                                    if (!entry.hadRecentInput) {
+                                        cls += entry.value;
+                                    }
+                                }
+                            });
+                            observer.observe({ entryTypes: ['layout-shift'] });
+                        }
+                        metrics.cls = cls;
+
+                        // Get resource timing
+                        const resources = performance.getEntriesByType('resource');
+                        metrics.resource_count = resources.length;
+                        metrics.total_resource_size = resources.reduce((sum, r) => sum + (r.transferSize || 0), 0);
+
+                        return metrics;
+                    }
+                """)
+
+                # Add Core Web Vitals to metadata
+                metadata.update({
+                    "lcp_ms": round(final_metrics.get("lcp", 0), 2),
+                    "fcp_ms": round(final_metrics.get("fcp", 0), 2),
+                    "cls_score": round(final_metrics.get("cls", 0), 4),
+                    "resource_count": final_metrics.get("resource_count", 0),
+                    "total_resource_size_kb": round(
+                        final_metrics.get("total_resource_size", 0) / 1024, 2
+                    ),
+                    "browser_load_time_ms": round(load_time * 1000, 2),
+                })
+
+                # Evaluate Core Web Vitals
+                lcp = final_metrics.get("lcp", 0)
+                fcp = final_metrics.get("fcp", 0)
+                cls = final_metrics.get("cls", 0)
+
+                # LCP evaluation
+                if lcp > 4000:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="poor_lcp",
+                            severity=Severity.HIGH,
+                            message=f"Poor Largest Contentful Paint: {lcp:.0f}ms (recommended: <2500ms)",
+                            location=url,
+                            evidence={
+                                "lcp_ms": lcp,
+                                "recommended_max_ms": 2500,
+                                "core_web_vital": "LCP",
+                            },
+                        )
+                    )
+                elif lcp > 2500:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="needs_improvement_lcp",
+                            severity=Severity.MEDIUM,
+                            message=f"LCP needs improvement: {lcp:.0f}ms (good: <2500ms)",
+                            location=url,
+                            evidence={
+                                "lcp_ms": lcp,
+                                "recommended_max_ms": 2500,
+                                "core_web_vital": "LCP",
+                            },
+                        )
+                    )
+                else:
+                    metadata["lcp_rating"] = "good"
+
+                # FCP evaluation
+                if fcp > 3000:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="poor_fcp",
+                            severity=Severity.MEDIUM,
+                            message=f"Poor First Contentful Paint: {fcp:.0f}ms (recommended: <1800ms)",
+                            location=url,
+                            evidence={
+                                "fcp_ms": fcp,
+                                "recommended_max_ms": 1800,
+                                "core_web_vital": "FCP",
+                            },
+                        )
+                    )
+                elif fcp > 1800:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="needs_improvement_fcp",
+                            severity=Severity.LOW,
+                            message=f"FCP needs improvement: {fcp:.0f}ms (good: <1800ms)",
+                            location=url,
+                            evidence={
+                                "fcp_ms": fcp,
+                                "recommended_max_ms": 1800,
+                                "core_web_vital": "FCP",
+                            },
+                        )
+                    )
+                else:
+                    metadata["fcp_rating"] = "good"
+
+                # CLS evaluation
+                if cls > 0.25:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="poor_cls",
+                            severity=Severity.HIGH,
+                            message=f"Poor Cumulative Layout Shift: {cls:.3f} (recommended: <0.1)",
+                            location=url,
+                            evidence={
+                                "cls_score": cls,
+                                "recommended_max": 0.1,
+                                "core_web_vital": "CLS",
+                            },
+                        )
+                    )
+                elif cls > 0.1:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="needs_improvement_cls",
+                            severity=Severity.MEDIUM,
+                            message=f"CLS needs improvement: {cls:.3f} (good: <0.1)",
+                            location=url,
+                            evidence={
+                                "cls_score": cls,
+                                "recommended_max": 0.1,
+                                "core_web_vital": "CLS",
+                            },
+                        )
+                    )
+                else:
+                    metadata["cls_rating"] = "good"
+
+                # System resource monitoring
+                cpu_percent = psutil.cpu_percent(interval=1)
+                memory = psutil.virtual_memory()
+
+                metadata.update({
+                    "cpu_usage_percent": round(cpu_percent, 2),
+                    "memory_usage_percent": round(memory.percent, 2),
+                    "memory_available_mb": round(memory.available / (1024 * 1024), 2),
+                })
+
+                await browser.close()
+
+        except Exception as e:
+            issues.append(
+                self.create_issue(
+                    issue_type="core_web_vitals_analysis_failed",
+                    severity=Severity.LOW,
+                    message=f"Core Web Vitals analysis failed: {str(e)}",
                     location=url,
                     evidence={"error": str(e)},
                 )

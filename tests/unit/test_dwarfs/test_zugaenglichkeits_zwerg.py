@@ -1,5 +1,7 @@
 """Tests for ZugaenglichkeitsZwerg."""
 
+from unittest.mock import patch
+
 import pytest
 
 from netzzwergenwacht.dwarfs.base import Severity
@@ -8,6 +10,11 @@ from netzzwergenwacht.dwarfs.zugaenglichkeits_zwerg import ZugaenglichkeitsZwerg
 
 class TestZugaenglichkeitsZwerg:
     """Test ZugaenglichkeitsZwerg class."""
+
+    def setup_method(self):
+        from netzzwergenwacht.dwarfs.zugaenglichkeits_zwerg import ZugaenglichkeitsZwerg
+
+        self.zwerg = ZugaenglichkeitsZwerg()
 
     def test_initialization(self):
         zwerg = ZugaenglichkeitsZwerg()
@@ -199,19 +206,170 @@ class TestZugaenglichkeitsZwerg:
         assert any(key in result.metadata for key in aria_metadata_keys)
 
     @pytest.mark.asyncio
-    async def test_eaa_specific_requirements(self):
+    async def test_form_aria_accessibility(self):
+        """Test form ARIA accessibility compliance with EU/EAA standards."""
         zwerg = ZugaenglichkeitsZwerg()
         result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for form ARIA compliance
+        form_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_form" in issue.issue_type or "required_fields" in issue.issue_type
+        ]
+        assert isinstance(form_aria_issues, list)
+
+        # Should have form ARIA metadata
+        form_aria_metadata_keys = [
+            "total_form_inputs",
+            "inputs_without_labels",
+            "required_inputs_without_aria",
+        ]
+        assert any(key in result.metadata for key in form_aria_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_live_regions_aria(self):
+        """Test live regions ARIA compliance with EU/EAA standards."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for live regions
+        live_region_issues = [
+            issue
+            for issue in result.issues
+            if "aria_live" in issue.issue_type or "live_region" in issue.issue_type
+        ]
+        assert isinstance(live_region_issues, list)
+
+        # Should have live regions metadata
+        live_region_metadata_keys = ["live_regions_count", "live_region_types"]
+        assert any(key in result.metadata for key in live_region_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_interactive_aria_elements(self):
+        """Test interactive ARIA elements keyboard accessibility."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for interactive ARIA elements
+        interactive_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_interactive" in issue.issue_type
+            or "keyboard_accessible" in issue.issue_type
+        ]
+        assert isinstance(interactive_aria_issues, list)
+
+        # Should have interactive elements metadata
+        interactive_metadata_keys = ["interactive_aria_elements"]
+        assert any(key in result.metadata for key in interactive_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_navigation_aria_compliance(self):
+        """Test navigation ARIA compliance with EU/EAA standards."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for navigation ARIA
+        navigation_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_navigation" in issue.issue_type
+            or "skip_links" in issue.issue_type
+            or "heading_structure" in issue.issue_type
+        ]
+        assert isinstance(navigation_aria_issues, list)
+
+        # Should have navigation metadata
+        navigation_metadata_keys = [
+            "skip_links_count",
+            "headings_count",
+            "heading_structure_issues",
+        ]
+        assert any(key in result.metadata for key in navigation_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_error_aria_handling(self):
+        """Test error handling ARIA compliance with EU/EAA standards."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for error ARIA handling
+        error_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_error" in issue.issue_type or "error_handling" in issue.issue_type
+        ]
+        assert isinstance(error_aria_issues, list)
+
+        # Should have error handling metadata
+        error_metadata_keys = [
+            "error_elements_count",
+            "error_elements_with_aria",
+            "error_elements_without_aria",
+        ]
+        assert any(key in result.metadata for key in error_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_eu_eaa_aria_standards_compliance(self):
+        """Test overall EU/EAA ARIA standards compliance."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should have comprehensive ARIA analysis
+        all_aria_issues = [
+            issue for issue in result.issues if "aria" in issue.issue_type
+        ]
+
+        # Check for specific EU/EAA compliance indicators
+        eaa_compliance_issues = [
+            issue
+            for issue in all_aria_issues
+            if any(
+                term in issue.evidence.get("eaa_requirement", "")
+                for term in [
+                    "Form accessibility",
+                    "Dynamic content",
+                    "Keyboard accessibility",
+                    "Navigation accessibility",
+                    "Error message accessibility",
+                ]
+            )
+        ]
+
+        # Should have WCAG guideline references
+        wcag_references = [
+            issue for issue in all_aria_issues if "wcag_guideline" in issue.evidence
+        ]
+
+        assert isinstance(all_aria_issues, list)
+        assert isinstance(eaa_compliance_issues, list)
+        assert isinstance(wcag_references, list)
+
+    @pytest.mark.asyncio
+    async def test_eaa_specific_requirements(self):
+        result = await self.zwerg.analyze("https://example.com")
 
         assert result.success
 
         # Should check for EAA-specific requirements
         eaa_issues = [issue for issue in result.issues if "eaa" in issue.issue_type]
         assert isinstance(eaa_issues, list)
-
-        # Should have EAA metadata
-        eaa_metadata_keys = ["accessibility_statement_links", "feedback_mechanisms"]
-        assert any(key in result.metadata for key in eaa_metadata_keys)
+        # Should have new EAA metadata keys
+        assert "eu_accessibility_features" in result.metadata
+        assert "eaa_compliance_score" in result.metadata
 
     @pytest.mark.asyncio
     async def test_wcag_guideline_references(self):
@@ -277,3 +435,142 @@ class TestZugaenglichkeitsZwerg:
             )
             # Either we found issues in this principle area, or there were no issues to find
             assert principle_covered or len(result.issues) > 0
+
+    @pytest.mark.asyncio
+    async def test_eaa_compliance_score(self):
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Test EAA compliance score calculation
+        assert "eaa_compliance_score" in result.metadata
+        assert isinstance(result.metadata["eaa_compliance_score"], (int, float))
+
+    @pytest.mark.asyncio
+    async def test_mobile_responsive_accessibility(self):
+        """Test mobile and responsive accessibility checks."""
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+        </head>
+        <body>
+            <button style="width: 20px; height: 20px;">Small button</button>
+            <div style="overflow-x: scroll;">Content</div>
+            <div style="position: fixed;">Fixed element</div>
+            <span style="font-size: 12px;">Small text</span>
+        </body>
+        </html>
+        """
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.headers = {"content-type": "text/html"}
+            mock_get.return_value.content = html.encode()
+
+            result = await self.zwerg.analyze("https://example.com")
+
+            # Check for mobile-specific issues
+            mobile_issues = [i for i in result.issues if "mobile" in i.issue_type]
+            assert len(mobile_issues) > 0
+
+            # Check metadata
+            assert "viewport_meta_present" in result.metadata
+            assert result.metadata["viewport_meta_present"] is True
+            assert "small_touch_targets_count" in result.metadata
+            assert "mobile_issues_detected" in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_responsive_breakpoints(self):
+        """Test responsive breakpoints detection."""
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                @media (max-width: 768px) { .mobile { display: block; } }
+                @media (min-width: 1024px) { .desktop { display: block; } }
+                .container { display: flex; }
+            </style>
+        </head>
+        <body>
+            <div class="container">Content</div>
+        </body>
+        </html>
+        """
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.headers = {"content-type": "text/html"}
+            mock_get.return_value.content = html.encode()
+
+            result = await self.zwerg.analyze("https://example.com")
+
+            # Check metadata
+            assert "media_queries_found" in result.metadata
+            assert result.metadata["media_queries_found"] > 0
+            assert "flexbox_used" in result.metadata
+            assert result.metadata["flexbox_used"] is True
+            assert "standard_breakpoints_found" in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_mobile_performance_accessibility(self):
+        """Test mobile performance accessibility checks."""
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <link rel="stylesheet" href="https://external.com/style.css">
+            <script src="https://external.com/script.js"></script>
+        </head>
+        <body>
+            <img src="large-image.jpg" width="1500" height="1000" alt="Large image">
+            <img src="small-image.jpg" width="300" height="200" alt="Small image">
+        </body>
+        </html>
+        """
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.headers = {"content-type": "text/html"}
+            mock_get.return_value.content = html.encode()
+
+            result = await self.zwerg.analyze("https://example.com")
+
+            # Check metadata
+            assert "total_images" in result.metadata
+            assert "large_images_count" in result.metadata
+            assert "external_resources_count" in result.metadata
+            assert result.metadata["external_resources_count"] > 0
+
+    @pytest.mark.asyncio
+    async def test_mobile_missing_viewport_meta(self):
+        """Test detection of missing viewport meta tag."""
+        html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Test Page</title>
+        </head>
+        <body>
+            <h1>Test Content</h1>
+        </body>
+        </html>
+        """
+
+        with patch("httpx.AsyncClient.get") as mock_get:
+            mock_get.return_value.status_code = 200
+            mock_get.return_value.headers = {"content-type": "text/html"}
+            mock_get.return_value.content = html.encode()
+
+            result = await self.zwerg.analyze("https://example.com")
+
+            # Check for missing viewport meta issue
+            viewport_issues = [i for i in result.issues if "viewport" in i.issue_type]
+            assert len(viewport_issues) > 0
+
+            # Check metadata
+            assert "viewport_meta_present" in result.metadata
+            assert result.metadata["viewport_meta_present"] is False

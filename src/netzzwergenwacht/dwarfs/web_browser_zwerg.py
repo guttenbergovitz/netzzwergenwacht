@@ -199,31 +199,19 @@ class WebBrowserZwerg(Dwarf):
                     }
                 """)
 
-                if performance_entries:
-                    metadata["resource_count"] = len(performance_entries)
-                    slow_resources = [
-                        r for r in performance_entries if r["duration"] > 1000
-                    ]
+                # Add performance metadata
+                metadata["performance_entries"] = performance_entries
 
-                    if slow_resources:
-                        issues.append(
-                            self.create_issue(
-                                issue_type="slow_loading_resources",
-                                severity=Severity.LOW,
-                                message=f"Slow loading resources detected: {len(slow_resources)} resources",
-                                location=url,
-                                evidence={
-                                    "slow_resource_count": len(slow_resources),
-                                    "sample_slow_resources": slow_resources[:3],
-                                },
-                            )
-                        )
-
-                # Check for accessibility issues using browser
-                accessibility_issues = await self._check_browser_accessibility(
+                # Perform mobile and responsive testing
+                mobile_issues, mobile_metadata = await self._test_mobile_responsive(
                     page, url
                 )
-                issues.extend(accessibility_issues)
+                issues.extend(mobile_issues)
+                metadata.update(mobile_metadata)
+
+                # Take screenshots for different viewports
+                screenshot_metadata = await self._take_responsive_screenshots(page, url)
+                metadata.update(screenshot_metadata)
 
                 await browser.close()
 
@@ -231,7 +219,7 @@ class WebBrowserZwerg(Dwarf):
             issues.append(
                 self.create_issue(
                     issue_type="browser_analysis_failed",
-                    severity=Severity.LOW,
+                    severity=Severity.MEDIUM,
                     message=f"Browser analysis failed: {str(e)}",
                     location=url,
                     evidence={"error": str(e)},
@@ -239,6 +227,187 @@ class WebBrowserZwerg(Dwarf):
             )
 
         return issues, metadata
+
+    async def _test_mobile_responsive(self, page, url: str) -> tuple[list[Issue], dict]:
+        """Test mobile and responsive design features."""
+        issues = []
+        metadata = {}
+
+        # Test different viewport sizes
+        viewports = {
+            "mobile": {"width": 375, "height": 667},
+            "tablet": {"width": 768, "height": 1024},
+            "desktop": {"width": 1920, "height": 1080},
+        }
+
+        viewport_results = {}
+
+        for device, viewport in viewports.items():
+            await page.set_viewport_size(viewport)
+            await page.wait_for_timeout(1000)  # Wait for layout to settle
+
+            # Check for horizontal scrolling
+            has_horizontal_scroll = await page.evaluate("""
+                () => {
+                    return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+                }
+            """)
+
+            # Check for touch target sizes
+            small_touch_targets = await page.evaluate("""
+                () => {
+                    const touchElements = document.querySelectorAll('button, a, input, select, [role="button"]');
+                    const smallTargets = [];
+
+                    touchElements.forEach(element => {
+                        const rect = element.getBoundingClientRect();
+                        if (rect.width < 44 || rect.height < 44) {
+                            smallTargets.push({
+                                tag: element.tagName,
+                                text: element.textContent?.substring(0, 50) || '',
+                                size: `${rect.width}x${rect.height}`
+                            });
+                        }
+                    });
+
+                    return smallTargets;
+                }
+            """)
+
+            # Check for font sizes
+            small_fonts = await page.evaluate("""
+                () => {
+                    const elements = document.querySelectorAll('*');
+                    const smallFontElements = [];
+
+                    elements.forEach(element => {
+                        const style = window.getComputedStyle(element);
+                        const fontSize = parseFloat(style.fontSize);
+                        if (fontSize < 16) {
+                            smallFontElements.push({
+                                tag: element.tagName,
+                                text: element.textContent?.substring(0, 30) || '',
+                                fontSize: fontSize
+                            });
+                        }
+                    });
+
+                    return smallFontElements.slice(0, 10); // Limit results
+                }
+            """)
+
+            viewport_results[device] = {
+                "has_horizontal_scroll": has_horizontal_scroll,
+                "small_touch_targets": small_touch_targets,
+                "small_fonts": small_fonts,
+            }
+
+            # Create issues for this viewport
+            if has_horizontal_scroll:
+                issues.append(
+                    self.create_issue(
+                        issue_type=f"mobile_horizontal_scroll_{device}",
+                        severity=Severity.MEDIUM,
+                        message=f"Mobile accessibility: Horizontal scrolling detected on {device} viewport",
+                        location=url,
+                        evidence={
+                            "viewport": viewport,
+                            "device": device,
+                            "recommendation": "Ensure content fits within viewport width",
+                        },
+                    )
+                )
+
+            if small_touch_targets:
+                issues.append(
+                    self.create_issue(
+                        issue_type=f"mobile_small_touch_targets_{device}",
+                        severity=Severity.MEDIUM,
+                        message=f"Mobile accessibility: {len(small_touch_targets)} small touch targets on {device}",
+                        location=url,
+                        evidence={
+                            "viewport": viewport,
+                            "device": device,
+                            "small_targets_count": len(small_touch_targets),
+                            "sample_targets": small_touch_targets[:3],
+                            "recommendation": "Ensure touch targets are at least 44x44px",
+                        },
+                    )
+                )
+
+            if small_fonts:
+                issues.append(
+                    self.create_issue(
+                        issue_type=f"mobile_small_fonts_{device}",
+                        severity=Severity.LOW,
+                        message=f"Mobile accessibility: {len(small_fonts)} elements with small fonts on {device}",
+                        location=url,
+                        evidence={
+                            "viewport": viewport,
+                            "device": device,
+                            "small_fonts_count": len(small_fonts),
+                            "sample_fonts": small_fonts[:3],
+                            "recommendation": "Use at least 16px font size for mobile readability",
+                        },
+                    )
+                )
+
+        metadata["viewport_testing"] = viewport_results
+
+        return issues, metadata
+
+    async def _take_responsive_screenshots(self, page, url: str) -> dict:
+        """Take screenshots for different viewport sizes and save to output directory."""
+        import os
+        from datetime import datetime
+
+        metadata = {}
+        screenshots_taken = []
+
+        # Create output directory if it doesn't exist
+        output_dir = "output"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        # Generate timestamp for unique filenames
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Clean URL for filename
+        safe_url = url.replace("://", "_").replace("/", "_").replace(".", "_")[:50]
+
+        viewports = {
+            "mobile": {"width": 375, "height": 667},
+            "tablet": {"width": 768, "height": 1024},
+            "desktop": {"width": 1920, "height": 1080},
+        }
+
+        for device, viewport in viewports.items():
+            try:
+                await page.set_viewport_size(viewport)
+                await page.wait_for_timeout(1000)  # Wait for layout to settle
+
+                # Take screenshot
+                filename = f"{output_dir}/{safe_url}_{device}_{timestamp}.png"
+                await page.screenshot(path=filename, full_page=True)
+
+                screenshots_taken.append({
+                    "device": device,
+                    "viewport": viewport,
+                    "filename": filename,
+                })
+
+            except Exception as e:
+                # Log error but continue with other viewports
+                screenshots_taken.append({
+                    "device": device,
+                    "viewport": viewport,
+                    "error": str(e),
+                })
+
+        metadata["screenshots"] = screenshots_taken
+        metadata["screenshots_directory"] = output_dir
+
+        return metadata
 
     async def _check_browser_accessibility(self, page, url: str) -> list[Issue]:
         """Check accessibility issues using browser automation."""

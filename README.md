@@ -90,82 +90,101 @@ Our analysis agents follow German naming conventions as our signature branding:
   - Network request failure monitoring
   - Performance resource loading analysis
   - Browser-based accessibility validation
+  - **Mobile & Responsive Testing**: Emulacja mobile/tablet/desktop, automatyczne screenshoty, wykrywanie problemów z viewportem, touch targets, fontami, przewijaniem
 
 - **`Sicherheits-Zwerg`** - Security analysis for SSL certificates, headers and vulnerabilities
   - SSL/TLS certificate validation and expiry checking
   - Security headers analysis (HSTS, CSP, X-Frame-Options, etc.)
-  - HTTPS enforcement validation
-  - Cipher strength and protocol version checking
-  - Information disclosure detection
+  - HTTPS enforcement and redirect analysis
+  - Certificate chain validation
+  - Security rating calculation
 
 - **`Leistungs-Zwerg`** - Performance analysis for load times, resource optimization and Core Web Vitals
-  - Page load time monitoring with performance thresholds
-  - Content size analysis and compression detection
-  - Resource optimization checks (CSS, JS, images)
-  - Caching header validation
-  - Render-blocking resource detection
-  - External resource dependency analysis
+  - Page load time monitoring and threshold analysis
+  - Resource optimization (images, CSS, JS)
+  - Compression and caching header analysis
+  - **Core Web Vitals measurement** - LCP, FCP, CLS with browser automation
+  - **System resource monitoring** - CPU and memory usage tracking
+  - Performance rating calculation
+  - Resource timing analysis
+  - Browser-based performance metrics
 
-- **`SEO-Zwerg`** - Search engine optimization and social media presence analysis
-  - Meta tags validation (title, description, keywords)
-  - Open Graph and Twitter Cards analysis
+- **`SEO-Zwerg`** - Search Engine Optimization analysis
+  - Meta tags analysis (title, description, keywords)
+  - Heading structure validation (H1-H6 hierarchy)
+  - Social media meta tags (Open Graph, Twitter Cards)
   - Structured data detection (JSON-LD, microdata)
-  - Canonical URL validation
-  - Heading structure and content quality analysis
-  - Mobile SEO optimization checks
+  - Canonical URL analysis
+  - Content quality assessment
+  - Mobile optimization checks
 
-- **`Zugaenglichkeits-Zwerg`** - EU Accessibility Act compliance and WCAG 2.1 AA testing
-  - Text alternatives for non-text content (WCAG 1.1.1)
-  - Color contrast analysis (WCAG 1.4.3, 1.4.6)
-  - Keyboard accessibility (WCAG 2.1.1, 2.1.2)
-  - Focus management and skip links (WCAG 2.4.1, 2.4.6)
-  - Language identification (WCAG 3.1.1, 3.1.2)
-  - Forms and labels validation (WCAG 3.3.2)
-  - Semantic HTML structure (WCAG 4.1.1, 4.1.2)
-  - ARIA attributes compliance
-  - EAA-specific requirements (accessibility statements, feedback mechanisms)
+- **`Zugaenglichkeits-Zwerg`** - Accessibility analysis following WCAG and EAA guidelines
+  - WCAG 2.1 compliance checking (Level A, AA, AAA)
+  - EAA (European Accessibility Act) requirements
+  - Text alternatives for images
+  - Color contrast analysis
+  - Keyboard navigation support
+  - Focus management
+  - Semantic HTML structure
+  - ARIA compliance
+  - Screen reader compatibility
+  - **Mobile & Responsive Checks**: Viewport meta, touch targets, breakpoints, font sizes, horizontal scroll, flexbox/grid, optymalizacja obrazów i zasobów
 
-- **`Inhalt-Zwerg`** - Content quality analysis for readability, grammar, and content optimization
-  - Text readability analysis (Flesch-Kincaid Reading Ease, Grade Level)
-  - Content length and quality metrics (word count, sentence structure)
-  - Duplicate content detection and similarity analysis
-  - Grammar and language quality checks (formatting, placeholders)
-  - Content structure validation (heading hierarchy, organization)
-  - Content freshness indicators and metadata analysis
+- **`Inhalt-Zwerg`** - Content quality and readability analysis
+  - Content length and structure analysis
+  - Readability scoring (Flesch-Kincaid, Flesch Reading Ease)
+  - Duplicate content detection
+  - Language quality assessment
+  - Content freshness indicators
+  - Heading structure validation
+  - Content formatting analysis
 
-#### Planned Zwerge:
-- **`Mobile-Zwerg`** - Mobile-specific testing (responsive design, touch targets, viewport)
+- **`Visual-Zwerg`** - Visual analysis and UI testing
+  - **Visual consistency** analysis (spacing, fonts, layout)
+  - **UI element detection** (buttons, forms, navigation)
+  - **Color scheme analysis** and contrast validation
+  - **Layout issues** detection (overlapping elements, overflow)
+  - **Screenshot analysis** with automated capture
+  - **Interactive element testing** and accessibility
+  - **Visual regression testing** capabilities
 
-## 🎯 Current Status: Phase 1 Complete ✅
+## 🎯 Current Status: Phase 2 Complete ✅
 
-### ✅ Foundation & Setup (Phase 0)
-- [x] Git repository and project structure
-- [x] Modern Python packaging with `uv`
-- [x] Comprehensive test suite (81 tests passing)
-- [x] Code quality tools (ruff, mypy, pre-commit)
-- [x] Rich CLI with Typer
-- [x] Modular architecture with base abstractions
-- [x] Configuration management with Pydantic
-- [x] Documentation and contributing guidelines
+**Phase 2 has been successfully completed!** All major advanced analysis features have been implemented:
 
-### ✅ Core Browser Interaction (Phase 1)
-- [x] **Playwright Integration** - Browser automation capabilities added
-- [x] **Enhanced Web-Browser-Zwerg** - Real browser analysis with Playwright
-- [x] **JavaScript Error Detection** - Console error monitoring
-- [x] **Network Request Monitoring** - Failed request detection
-- [x] **Performance Analysis** - Resource loading and timing metrics
-- [x] **Browser-based Accessibility** - Real browser accessibility validation
-- [x] **Error Handling** - Robust browser operation error management
+- ✅ **Core Web Vitals & Performance Monitoring** - LCP, FCP, CLS measurement
+- ✅ **Advanced Security Scanning** - Port scanning, service enumeration, vulnerability detection
+- ✅ **Enhanced Accessibility** - WCAG 2.1 AA, EU/EAA compliance, ARIA testing
+- ✅ **Mobile & Responsive Testing** - Viewport analysis, touch targets, screenshots
+- ✅ **Visual Analysis & UI Testing** - Consistency, elements, colors, layout analysis
 
-### 🎯 Next: Phase 2 - Advanced Analysis Features
+### 🔄 Phase 3 - LLM Integration (in progress)
 
-The browser automation foundation is now complete. Next steps include:
+- [ ] LLM-powered issue classification and prioritization
+- [ ] Intelligent recommendations and actionable insights
+- [ ] Natural language reporting
+- [ ] Context-aware analysis
+- [ ] Automated issue resolution suggestions
 
-1. **Enhanced Performance Metrics** - Core Web Vitals, Lighthouse integration
-2. **Advanced Security Scanning** - Vulnerability assessment, dependency checking
-3. **Mobile Testing** - Responsive design validation, mobile-specific checks
-4. **Screenshot & Visual Analysis** - Visual regression testing capabilities
-5. **API Testing** - Endpoint validation and performance testing
+## 🤔 API Testing Decision
+
+**API Testing & Integration was intentionally skipped** in Phase 2 due to limited value for external testing:
+
+### Why API Testing was skipped:
+- **Limited scope**: External testing can only access public endpoints
+- **Authentication barriers**: Most APIs require keys/tokens not available externally
+- **Ethical concerns**: Performance testing could be seen as DDoS attacks
+- **False positives**: Shallow testing may generate misleading results
+- **Limited business value**: External API testing provides minimal actionable insights
+
+### What was considered:
+- **Health check endpoints** (`/health`, `/status`, `/ping`)
+- **Documentation discovery** (OpenAPI/Swagger)
+- **Security headers** analysis
+- **Public endpoint** testing
+
+### Future consideration:
+API testing may be revisited in Phase 4/5 if internal testing capabilities are added.
 
 ## 🧪 Development
 
@@ -238,34 +257,39 @@ class SicherheitsZwerg(Dwarf):
         )
 ```
 
-## 🎯 Roadmap
+## 🗺️ Roadmap
 
-### Phase 1: Core Browser Interaction ✅
+### Phase 1: Core Browser Interaction ✅ **COMPLETED**
 - [x] Playwright integration for browser automation
-- [x] Basic page information gathering
-- [x] Enhanced error handling
+- [x] Enhanced Web-Browser-Zwerg with real browser analysis
+- [x] JavaScript console error detection
+- [x] Network request failure monitoring
+- [x] Browser-based accessibility validation
 
-### Phase 2: Quality Analysis
-- [x] JavaScript console error capture
-- [x] Basic SEO and accessibility checks
-- [ ] Broken link detection
-- [ ] Enhanced performance metrics
+### Phase 2: Advanced Analysis Features 🚧 **IN PROGRESS**
+- [x] **Enhanced Performance Metrics** - Core Web Vitals (LCP, FCP, CLS) with browser automation
+- [x] **System Resource Monitoring** - CPU and memory usage tracking
+- [x] **Mobile & Responsive Testing** (viewport, touch targets, breakpoints, font sizes, screenshots)
+- [x] **Visual Analysis & UI Testing** (consistency, elements, colors, layout, screenshots)
+- [x] ~~API Testing & Integration~~ (skipped - limited value for external testing)
 
-### Phase 3: LLM Intelligence
-- [ ] LLM provider integration
-- [ ] Intelligent issue classification
-- [ ] Context-aware analysis
+### Phase 3: Intelligence & Automation
+- [ ] LLM Integration - AI-powered analysis and recommendations
+- [ ] Automated Fix Suggestions - Code-level optimization recommendations
+- [ ] Trend Analysis - Historical performance tracking
+- [ ] Predictive Analytics - Performance degradation prediction
 
-### Phase 4: Enhanced Reporting
-- [ ] Multiple output formats (JSON, HTML, Markdown)
-- [ ] Alert system for critical issues
-- [ ] Historical tracking
+### Phase 4: Enterprise Features
+- [ ] Multi-site Monitoring - Batch analysis and reporting
+- [ ] Custom Rule Engine - User-defined analysis rules
+- [ ] Integration APIs - REST API for external integrations
+- [ ] Advanced Reporting - PDF reports, dashboards, alerts
 
-### Phase 5: Advanced Features
-- [ ] Scheduled monitoring
-- [ ] Custom check configurations
-- [ ] CI/CD integration
-- [ ] Web dashboard
+### Phase 5: Advanced Intelligence
+- [ ] Machine Learning Models - Pattern recognition and anomaly detection
+- [ ] Natural Language Reports - Human-readable analysis summaries
+- [ ] Competitive Analysis - Benchmarking against industry standards
+- [ ] Continuous Monitoring - Real-time website health monitoring
 
 ## 🛠️ Technology Stack
 
@@ -300,6 +324,82 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 NetzZwergenWacht aims to become the go-to solution for automated website quality monitoring, combining the power of browser automation with LLM intelligence to provide actionable insights that help development teams maintain high-quality web applications.
 
+## System dependencies
+
+This project requires the `nmap` binary to be installed on your system for advanced security scanning (port scanning). The Python package `python-nmap` is only a wrapper and does not install the actual `nmap` binary.
+
+- On macOS: `brew install nmap`
+- On Ubuntu/Debian: `sudo apt install nmap`
+- On Fedora: `sudo dnf install nmap`
+
+Make sure `nmap` is available in your PATH.
+
 ---
 
 *Built with ❤️ using modern Python practices and designed for extensibility.*
+
+## Phase 2: Advanced Analysis Features (In Progress)
+
+### ✅ Completed Features
+
+#### Core Web Vitals & Performance Monitoring
+- **LCP (Largest Contentful Paint)** measurement using Playwright
+- **FCP (First Contentful Paint)** analysis
+- **CLS (Cumulative Layout Shift)** detection
+- **System resource monitoring** (CPU, memory usage)
+- **Performance thresholds** and recommendations
+
+#### Advanced Security Scanning
+- **Port scanning** with nmap integration (TCP connect scan, no root required)
+- **Service enumeration** and database exposure detection
+- **Information disclosure** checks (robots.txt, .env, .git, etc.)
+- **Dangerous port detection** (FTP, Telnet, database ports)
+- **Security misconfiguration** identification
+
+#### Enhanced ARIA & Accessibility Compliance (EU/EAA Standards)
+- **Form ARIA accessibility** (WCAG 3.3.2 - Labels or Instructions)
+  - Form input labeling validation
+  - Required field ARIA attributes
+  - Label association checks
+- **Live regions** (WCAG 4.1.3 - Status Messages)
+  - Dynamic content accessibility
+  - Appropriate aria-live usage
+- **Interactive elements** (WCAG 2.1.1 - Keyboard)
+  - Keyboard accessibility validation
+  - Focus management for ARIA elements
+- **Navigation ARIA** (WCAG 2.4.1 - Bypass Blocks)
+  - Skip links detection
+  - Heading structure validation
+  - Landmark navigation
+- **Error handling** (WCAG 3.3.1 - Error Identification)
+  - Error message ARIA attributes
+  - aria-invalid, aria-describedby validation
+
+### 🔄 In Progress Features
+
+#### Mobile Testing & Responsive Design
+- Mobile viewport analysis
+- Touch target size validation
+- Responsive breakpoint testing
+
+#### Visual Analysis & UI Testing
+- Screenshot comparison
+- Visual regression testing
+- UI element detection
+
+#### API Testing & Integration
+- REST API endpoint discovery
+- API response validation
+- Integration testing capabilities
+
+### 📋 Planned Features
+
+#### Advanced Reporting & Analytics
+- Trend analysis and historical data
+- Custom report generation
+- Performance benchmarking
+
+#### Machine Learning Integration
+- Automated issue classification
+- Predictive maintenance
+- Anomaly detection
