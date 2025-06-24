@@ -155,6 +155,14 @@ def _display_results(results: list, verbose: bool = False) -> None:
                                 "title_length",
                                 "h1_count",
                                 "total_images",
+                                "missing_alt_count",
+                                "wcag_guideline",
+                                "eaa_requirement",
+                                "recommendation",
+                                "contrast_issues_count",
+                                "non_focusable_elements",
+                                "duplicate_ids",
+                                "invalid_roles_count",
                             ]:
                                 key_evidence.append(f"{k}: {v}")
                         evidence_str = ", ".join(key_evidence)
