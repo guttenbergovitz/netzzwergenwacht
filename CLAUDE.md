@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NetzZwergenWacht is an intelligent, automated system for analyzing and monitoring website quality using LLM-powered software agents called "Dwarfs". The system performs automated E2E interactions, comprehensive quality analysis, and generates intelligent reports with LLM insights. The project is currently in **Phase 2** with advanced analysis features.
+NetzZwergenWacht is an intelligent, automated system for analyzing and monitoring website quality using LLM-powered software agents called "Dwarfs". The system performs automated E2E interactions, comprehensive quality analysis, and generates intelligent reports with LLM insights. The project has completed **Phase 2** and is now moving to **Phase 3** with LLM integration.
 
 ## Technology Stack
 
@@ -92,7 +92,7 @@ uv run ruff check && uv run ruff format && uv run mypy src/ && uv run pytest
 
 ## Architecture
 
-The project is currently in **Phase 2** with a comprehensive modular architecture:
+The project has completed **Phase 2** and is now in **Phase 3** with a comprehensive modular architecture:
 
 ### Core Components
 
@@ -167,9 +167,34 @@ The project is currently in **Phase 2** with a comprehensive modular architectur
 - **Interactive element testing** and accessibility validation
 - **Visual regression testing** capabilities
 
-### Phase 2 In Progress Features
+### Phase 3 In Progress Features
 
-- **API Testing & Integration**
+#### LLM Integration & Intelligence
+- **LLM-powered issue classification** and prioritization
+- **Intelligent recommendations** and actionable insights
+- **Natural language reporting** with context-aware analysis
+- **Automated issue resolution** suggestions
+- **Smart issue correlation** and pattern recognition
+
+### API Testing Decision
+
+**API Testing & Integration was intentionally skipped** in Phase 2 due to limited value for external testing:
+
+#### Why API Testing was skipped:
+- **Limited scope**: External testing can only access public endpoints
+- **Authentication barriers**: Most APIs require keys/tokens not available externally
+- **Ethical concerns**: Performance testing could be seen as DDoS attacks
+- **False positives**: Shallow testing may generate misleading results
+- **Limited business value**: External API testing provides minimal actionable insights
+
+#### What was considered:
+- **Health check endpoints** (`/health`, `/status`, `/ping`)
+- **Documentation discovery** (OpenAPI/Swagger)
+- **Security headers** analysis
+- **Public endpoint** testing
+
+#### Future consideration:
+API testing may be revisited in Phase 4/5 if internal testing capabilities are added.
 
 ## System Dependencies
 
@@ -187,14 +212,18 @@ The project follows a phased approach:
 
 - **✅ Phase 0**: Foundation & Setup (completed)
 - **✅ Phase 1**: Core Browser Interaction & Basic Analysis (completed)
-- **🔄 Phase 2**: Advanced Analysis Features (in progress)
+- **✅ Phase 2**: Advanced Analysis Features (completed)
   - ✅ Core Web Vitals & Performance Monitoring
   - ✅ Advanced Security Scanning
   - ✅ Enhanced ARIA & Accessibility Compliance
   - ✅ Mobile & Responsive Testing
   - ✅ Visual Analysis & UI Testing
-  - 🔄 API Testing & Integration
-- **📋 Phase 3**: LLM Integration (planned)
+  - ✅ ~~API Testing & Integration~~ (skipped - limited value for external testing)
+- **🔄 Phase 3**: LLM Integration (in progress)
+  - 🔄 LLM-powered issue classification
+  - 🔄 Intelligent recommendations
+  - 🔄 Natural language reporting
+  - 🔄 Context-aware analysis
 - **📋 Phase 4**: Enhanced Reporting & Actions (planned)
 - **📋 Phase 5**: Configuration, Scheduling & Usability (planned)
 
