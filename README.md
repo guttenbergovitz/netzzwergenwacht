@@ -183,6 +183,22 @@ uv run mypy src/
 uv run ruff check && uv run ruff format && uv run mypy src/ && uv run pytest
 ```
 
+### Automated Ruff Commit
+
+You can use the provided helper script to automatically lint, format, stage and commit your changes in one go:
+
+```bash
+./ruff-commit.sh -m "Your commit message"
+```
+
+This script will:
+- Run `ruff check --fix` to auto-fix lint issues
+- Run `ruff format` to auto-format code
+- Stage all changes (`git add .`)
+- Commit with your message
+
+This ensures your commit always passes the pre-commit ruff hook on the first try.
+
 ### Adding New Zwerge
 
 ```python
