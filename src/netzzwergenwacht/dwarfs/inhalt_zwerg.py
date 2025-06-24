@@ -6,7 +6,14 @@ from collections import Counter
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import AnalysisResult, Dwarf, Severity
+from .base import (
+    AnalysisResult,
+    CodeLocation,
+    ContentMetrics,
+    DetailedAnalysisResult,
+    Dwarf,
+    Severity,
+)
 
 
 class InhaltZwerg(Dwarf):
@@ -691,3 +698,986 @@ class InhaltZwerg(Dwarf):
             )
 
         return {"issues": issues, "metadata": metadata}
+
+    async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
+        """Analyze a URL for content quality with detailed context and improvement suggestions."""
+        try:
+            detailed_issues = []
+            content_metrics = ContentMetrics()
+            raw_data = {}
+
+            # Basic URL validation
+            if not url.startswith(("http://", "https://")):
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="invalid_url_scheme",
+                        severity=Severity.HIGH,
+                        message="URL must start with http:// or https://",
+                        location=url,
+                        category="content",
+                        subcategory="url_structure",
+                        description="The provided URL does not use a valid HTTP scheme",
+                        impact="Cannot perform content analysis without valid scheme.",
+                        technical_details={"provided_url": url},
+                        recommendations=[
+                            "Use HTTPS URLs for better security and content delivery."
+                        ],
+                        fix_suggestions=[
+                            f"Change URL to 'https://{url.replace('http://', '').replace('https://', '')}'"
+                        ],
+                        priority_score=0.9,
+                        code_location=CodeLocation(
+                            resource_type="url", attribute_value=url
+                        ),
+                    )
+                )
+                return DetailedAnalysisResult(
+                    url=url,
+                    dwarf_name=self.name,
+                    detailed_issues=detailed_issues,
+                    content_metrics=content_metrics,
+                    raw_data=raw_data,
+                )
+
+            # Perform detailed content analysis
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                try:
+                    response = await client.get(url)
+
+                    if response.status_code != 200:
+                        detailed_issues.append(
+                            self.create_detailed_issue(
+                                issue_type="page_not_accessible",
+                                severity=Severity.HIGH,
+                                message=f"Page returned status code {response.status_code}",
+                                location=url,
+                                category="content",
+                                subcategory="page_accessibility",
+                                description="Page is not accessible due to HTTP error",
+                                impact="Users cannot access the page content",
+                                technical_details={"status_code": response.status_code},
+                                recommendations=[
+                                    "Fix server configuration to return 200 status"
+                                ],
+                                fix_suggestions=[
+                                    "Check server configuration",
+                                    "Verify URL is correct",
+                                    "Ensure server is running",
+                                ],
+                                code_location=CodeLocation(
+                                    resource_type="http", attribute_value=url
+                                ),
+                                priority_score=0.9,
+                            )
+                        )
+                        return DetailedAnalysisResult(
+                            url=url,
+                            dwarf_name=self.name,
+                            detailed_issues=detailed_issues,
+                            content_metrics=content_metrics,
+                            raw_data=raw_data,
+                        )
+
+                    # Parse HTML content
+                    soup = BeautifulSoup(response.content, "html.parser")
+                    raw_data["html_structure"] = {
+                        "title": soup.title.string if soup.title else None,
+                        "meta_description": soup.find(
+                            "meta", attrs={"name": "description"}
+                        ),
+                        "headings": [
+                            h.get_text()
+                            for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                        ],
+                        "paragraphs_count": len(soup.find_all("p")),
+                        "images_count": len(soup.find_all("img")),
+                    }
+
+                    # Content Quality Analysis with detailed context
+
+                    # 1. Text Content Extraction and Basic Metrics
+                    content_metrics_data = await self._analyze_content_metrics_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(content_metrics_data["issues"])
+                    content_metrics.word_count = content_metrics_data["metrics"].get(
+                        "word_count", 0
+                    )
+                    content_metrics.character_count = content_metrics_data[
+                        "metrics"
+                    ].get("character_count", 0)
+                    content_metrics.sentence_count = content_metrics_data[
+                        "metrics"
+                    ].get("sentence_count", 0)
+                    raw_data["content_metrics"] = content_metrics_data["raw"]
+
+                    # 2. Readability Analysis
+                    readability_data = await self._analyze_readability_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(readability_data["issues"])
+                    content_metrics.readability_score = readability_data["metrics"].get(
+                        "readability_score", 0
+                    )
+                    content_metrics.complex_sentences = readability_data["metrics"].get(
+                        "complex_sentences", 0
+                    )
+                    raw_data["readability"] = readability_data["raw"]
+
+                    # 3. Content Structure Analysis
+                    structure_data = await self._analyze_content_structure_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(structure_data["issues"])
+                    content_metrics.heading_structure_issues = structure_data[
+                        "metrics"
+                    ].get("heading_structure_issues", 0)
+                    content_metrics.paragraph_length_issues = structure_data[
+                        "metrics"
+                    ].get("paragraph_length_issues", 0)
+                    raw_data["content_structure"] = structure_data["raw"]
+
+                    # 4. Language Quality Analysis
+                    language_quality_data = (
+                        await self._analyze_language_quality_detailed(soup, url)
+                    )
+                    detailed_issues.extend(language_quality_data["issues"])
+                    content_metrics.spelling_errors = language_quality_data[
+                        "metrics"
+                    ].get("spelling_errors", 0)
+                    content_metrics.grammar_issues = language_quality_data[
+                        "metrics"
+                    ].get("grammar_issues", 0)
+                    raw_data["language_quality"] = language_quality_data["raw"]
+
+                    # 5. Duplicate Content Detection
+                    duplicate_content_data = (
+                        await self._analyze_duplicate_content_detailed(soup, url)
+                    )
+                    detailed_issues.extend(duplicate_content_data["issues"])
+                    content_metrics.duplicate_content_ratio = duplicate_content_data[
+                        "metrics"
+                    ].get("duplicate_content_ratio", 0)
+                    raw_data["duplicate_content"] = duplicate_content_data["raw"]
+
+                    # 6. Content Freshness and Metadata
+                    freshness_data = await self._analyze_content_freshness_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(freshness_data["issues"])
+                    content_metrics.content_age_days = freshness_data["metrics"].get(
+                        "content_age_days", 0
+                    )
+                    raw_data["content_freshness"] = freshness_data["raw"]
+
+                except httpx.RequestError as e:
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="content_analysis_failed",
+                            severity=Severity.HIGH,
+                            message=f"Failed to analyze content: {str(e)}",
+                            location=url,
+                            category="content",
+                            subcategory="analysis_error",
+                            description="Content analysis failed due to connection error",
+                            impact="Cannot determine content quality issues",
+                            technical_details={"error": str(e)},
+                            recommendations=[
+                                "Check network connectivity and try again"
+                            ],
+                            code_location=CodeLocation(
+                                resource_type="http", attribute_value=url
+                            ),
+                            priority_score=0.5,
+                        )
+                    )
+
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
+                detailed_issues=detailed_issues,
+                content_metrics=content_metrics,
+                raw_data=raw_data,
+            )
+
+        except Exception as e:
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
+                success=False,
+                error_message=str(e),
+            )
+
+    async def _analyze_content_metrics_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze basic content metrics with detailed context and quality indicators."""
+        issues = []
+        metrics = {}
+        raw = {}
+
+        # Extract text content from body
+        body = soup.find("body")
+        if not body:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="missing_body_element",
+                    severity=Severity.HIGH,
+                    message="Page is missing body element",
+                    location=url,
+                    category="content",
+                    subcategory="html_structure",
+                    description="HTML document lacks proper body structure",
+                    impact="Content cannot be properly analyzed and may not render correctly",
+                    technical_details={
+                        "recommendation": "Ensure HTML has proper body structure"
+                    },
+                    recommendations=["Add proper HTML body element"],
+                    fix_suggestions=[
+                        "Add <body> tag to HTML document",
+                        "Ensure proper HTML structure",
+                        "Validate HTML markup",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body"],
+                    priority_score=0.9,
+                )
+            )
+            return {"issues": issues, "metrics": metrics, "raw": raw}
+
+        # Get all text content, excluding script and style tags
+        for element in body(["script", "style", "nav", "header", "footer"]):
+            element.decompose()
+
+        text_content = body.get_text(strip=True, separator=" ")
+
+        # Basic metrics
+        word_count = len(text_content.split()) if text_content else 0
+        char_count = len(text_content)
+        char_count_no_spaces = len(text_content.replace(" ", ""))
+        sentence_count = len(re.findall(r"[.!?]+", text_content)) if text_content else 0
+        paragraph_count = len(soup.find_all("p"))
+
+        metrics.update({
+            "word_count": word_count,
+            "character_count": char_count,
+            "character_count_no_spaces": char_count_no_spaces,
+            "sentence_count": sentence_count,
+            "paragraph_count": paragraph_count,
+        })
+
+        raw["content_analysis"] = {
+            "text_content_preview": text_content[:500] + "..."
+            if len(text_content) > 500
+            else text_content,
+            "word_count": word_count,
+            "character_count": char_count,
+            "sentence_count": sentence_count,
+            "paragraph_count": paragraph_count,
+        }
+
+        # Content quality issues
+        if word_count < 100:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="very_thin_content",
+                    severity=Severity.HIGH,
+                    message=f"Very thin content detected ({word_count} words)",
+                    location=url,
+                    category="content",
+                    subcategory="content_quality",
+                    description="Page has insufficient content to provide value to users",
+                    impact="Poor user experience and low SEO value",
+                    technical_details={
+                        "word_count": word_count,
+                        "recommendation": "Add more substantive content to improve value for users and SEO",
+                    },
+                    recommendations=["Significantly expand page content"],
+                    fix_suggestions=[
+                        "Add detailed explanations and context",
+                        "Include relevant examples and case studies",
+                        "Expand on key topics and concepts",
+                        "Add supporting information and resources",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.8,
+                )
+            )
+        elif word_count < 300:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="thin_content",
+                    severity=Severity.MEDIUM,
+                    message=f"Thin content detected ({word_count} words)",
+                    location=url,
+                    category="content",
+                    subcategory="content_quality",
+                    description="Page content could be more comprehensive",
+                    impact="May not provide sufficient value to users",
+                    technical_details={
+                        "word_count": word_count,
+                        "recommendation": "Consider expanding content for better user experience",
+                    },
+                    recommendations=["Expand page content for better user experience"],
+                    fix_suggestions=[
+                        "Add more detailed explanations",
+                        "Include additional relevant information",
+                        "Expand on key points",
+                        "Add supporting content",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.6,
+                )
+            )
+
+        # Check for content that's mostly repetitive
+        if word_count > 0:
+            words = text_content.lower().split()
+            word_frequency = Counter(words)
+            unique_words = len(word_frequency)
+            repetition_ratio = unique_words / word_count if word_count > 0 else 0
+
+            metrics["unique_words"] = unique_words
+            metrics["repetition_ratio"] = repetition_ratio
+
+            raw["word_analysis"] = {
+                "unique_words": unique_words,
+                "repetition_ratio": repetition_ratio,
+                "most_common_words": word_frequency.most_common(10),
+            }
+
+            if repetition_ratio < 0.3:
+                issues.append(
+                    self.create_detailed_issue(
+                        issue_type="high_content_repetition",
+                        severity=Severity.MEDIUM,
+                        message=f"High content repetition detected (repetition ratio: {repetition_ratio:.2f})",
+                        location=url,
+                        category="content",
+                        subcategory="content_quality",
+                        description="Content uses many repeated words, indicating poor writing quality",
+                        impact="Poor readability and user engagement",
+                        technical_details={
+                            "repetition_ratio": repetition_ratio,
+                            "unique_words": unique_words,
+                            "total_words": word_count,
+                        },
+                        recommendations=[
+                            "Improve content variety and reduce repetition"
+                        ],
+                        fix_suggestions=[
+                            "Use synonyms and varied vocabulary",
+                            "Rewrite repetitive sentences",
+                            "Use different sentence structures",
+                            "Expand vocabulary usage",
+                        ],
+                        code_location=CodeLocation(
+                            element_selector="body",
+                            element_tag="body",
+                            resource_type="html",
+                        ),
+                        affected_elements=["body", "p", "div"],
+                        priority_score=0.5,
+                    )
+                )
+
+        return {"issues": issues, "metrics": metrics, "raw": raw}
+
+    async def _analyze_readability_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze content readability with detailed context and improvement suggestions."""
+        issues = []
+        metrics = {}
+        raw = {}
+
+        # Extract text content
+        body = soup.find("body")
+        if not body:
+            return {"issues": issues, "metrics": metrics, "raw": raw}
+
+        for element in body(["script", "style", "nav", "header", "footer"]):
+            element.decompose()
+
+        text_content = body.get_text(strip=True, separator=" ")
+
+        if not text_content:
+            return {"issues": issues, "metrics": metrics, "raw": raw}
+
+        # Calculate readability metrics
+        sentences = re.split(r"[.!?]+", text_content)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        words = text_content.split()
+        syllables = sum(self._estimate_syllables(word) for word in words)
+
+        # Flesch Reading Ease
+        if len(sentences) > 0 and len(words) > 0:
+            flesch_score = (
+                206.835
+                - (1.015 * (len(words) / len(sentences)))
+                - (84.6 * (syllables / len(words)))
+            )
+            flesch_score = max(0, min(100, flesch_score))
+        else:
+            flesch_score = 0
+
+        # Analyze sentence complexity
+        complex_sentences = 0
+        long_sentences = []
+
+        for sentence in sentences:
+            sentence_words = sentence.split()
+            if len(sentence_words) > 25:
+                complex_sentences += 1
+                long_sentences.append({
+                    "sentence": sentence[:100] + "..."
+                    if len(sentence) > 100
+                    else sentence,
+                    "word_count": len(sentence_words),
+                })
+
+        metrics.update({
+            "readability_score": flesch_score,
+            "complex_sentences": complex_sentences,
+            "total_sentences": len(sentences),
+            "average_sentence_length": len(words) / len(sentences) if sentences else 0,
+        })
+
+        raw["readability_analysis"] = {
+            "flesch_score": flesch_score,
+            "complex_sentences": complex_sentences,
+            "long_sentences": long_sentences[:5],
+            "average_sentence_length": len(words) / len(sentences) if sentences else 0,
+        }
+
+        # Readability issues
+        if flesch_score < 30:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="very_difficult_readability",
+                    severity=Severity.HIGH,
+                    message=f"Very difficult readability (Flesch score: {flesch_score:.1f})",
+                    location=url,
+                    category="content",
+                    subcategory="readability",
+                    description="Content is very difficult to read and understand",
+                    impact="Users may struggle to understand the content",
+                    technical_details={
+                        "flesch_score": flesch_score,
+                        "complex_sentences": complex_sentences,
+                        "average_sentence_length": len(words) / len(sentences)
+                        if sentences
+                        else 0,
+                    },
+                    recommendations=["Significantly improve content readability"],
+                    fix_suggestions=[
+                        "Use shorter, simpler sentences",
+                        "Break down complex ideas",
+                        "Use simpler vocabulary",
+                        "Add bullet points and lists",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.8,
+                )
+            )
+        elif flesch_score < 50:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="difficult_readability",
+                    severity=Severity.MEDIUM,
+                    message=f"Difficult readability (Flesch score: {flesch_score:.1f})",
+                    location=url,
+                    category="content",
+                    subcategory="readability",
+                    description="Content is difficult to read and understand",
+                    impact="Some users may have difficulty understanding the content",
+                    technical_details={
+                        "flesch_score": flesch_score,
+                        "complex_sentences": complex_sentences,
+                    },
+                    recommendations=["Improve content readability"],
+                    fix_suggestions=[
+                        "Simplify sentence structure",
+                        "Use clearer language",
+                        "Break up long paragraphs",
+                        "Add headings and subheadings",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.6,
+                )
+            )
+
+        if complex_sentences > 5:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="too_many_complex_sentences",
+                    severity=Severity.MEDIUM,
+                    message=f"Too many complex sentences ({complex_sentences})",
+                    location=url,
+                    category="content",
+                    subcategory="readability",
+                    description="Content contains many overly complex sentences",
+                    impact="Reduces readability and user comprehension",
+                    technical_details={
+                        "complex_sentences": complex_sentences,
+                        "total_sentences": len(sentences),
+                        "percentage": (complex_sentences / len(sentences)) * 100
+                        if sentences
+                        else 0,
+                    },
+                    recommendations=["Simplify complex sentences"],
+                    fix_suggestions=[
+                        "Break long sentences into shorter ones",
+                        "Use simpler sentence structures",
+                        "Remove unnecessary complexity",
+                        "Use active voice instead of passive",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.6,
+                )
+            )
+
+        return {"issues": issues, "metrics": metrics, "raw": raw}
+
+    async def _analyze_content_structure_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze content structure with detailed context and improvement suggestions."""
+        issues = []
+        metrics = {}
+        raw = {}
+
+        # Check heading structure
+        headings = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+        heading_structure = []
+        heading_issues = []
+
+        for heading in headings:
+            level = int(heading.name[1])
+            heading_structure.append({
+                "level": level,
+                "text": heading.get_text()[:50],
+                "tag": heading.name,
+            })
+
+        # Check for proper heading hierarchy
+        current_level = 0
+        for heading in heading_structure:
+            if heading["level"] > current_level + 1:
+                heading_issues.append(
+                    f"Skipped heading level: {current_level} to {heading['level']}"
+                )
+            current_level = heading["level"]
+
+        # Check paragraph length
+        paragraphs = soup.find_all("p")
+        long_paragraphs = []
+
+        for p in paragraphs:
+            text = p.get_text().strip()
+            if len(text.split()) > 150:
+                long_paragraphs.append({
+                    "text": text[:100] + "..." if len(text) > 100 else text,
+                    "word_count": len(text.split()),
+                })
+
+        metrics.update({
+            "total_headings": len(headings),
+            "heading_structure_issues": len(heading_issues),
+            "total_paragraphs": len(paragraphs),
+            "paragraph_length_issues": len(long_paragraphs),
+        })
+
+        raw["content_structure"] = {
+            "headings": heading_structure,
+            "heading_issues": heading_issues,
+            "long_paragraphs": long_paragraphs[:5],
+        }
+
+        if heading_issues:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="poor_heading_structure",
+                    severity=Severity.MEDIUM,
+                    message=f"Poor heading structure ({len(heading_issues)} issues)",
+                    location=url,
+                    category="content",
+                    subcategory="content_structure",
+                    description="Heading hierarchy does not follow logical order",
+                    impact="Poor content organization and navigation",
+                    technical_details={
+                        "heading_issues_count": len(heading_issues),
+                        "sample_issues": heading_issues[:3],
+                    },
+                    recommendations=["Fix heading hierarchy to follow logical order"],
+                    fix_suggestions=[
+                        "Use h1 for main page title",
+                        "Use h2 for major sections",
+                        "Use h3 for subsections",
+                        "Don't skip heading levels",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="h1, h2, h3, h4, h5, h6",
+                        resource_type="html",
+                    ),
+                    affected_elements=["h1", "h2", "h3", "h4", "h5", "h6"],
+                    priority_score=0.6,
+                )
+            )
+
+        if len(long_paragraphs) > 3:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="too_many_long_paragraphs",
+                    severity=Severity.MEDIUM,
+                    message=f"Too many long paragraphs ({len(long_paragraphs)})",
+                    location=url,
+                    category="content",
+                    subcategory="content_structure",
+                    description="Content contains many overly long paragraphs",
+                    impact="Reduces readability and user engagement",
+                    technical_details={
+                        "long_paragraphs_count": len(long_paragraphs),
+                        "total_paragraphs": len(paragraphs),
+                        "percentage": (len(long_paragraphs) / len(paragraphs)) * 100
+                        if paragraphs
+                        else 0,
+                    },
+                    recommendations=["Break up long paragraphs for better readability"],
+                    fix_suggestions=[
+                        "Split long paragraphs into shorter ones",
+                        "Use bullet points and lists",
+                        "Add subheadings to break up content",
+                        "Use white space effectively",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="p",
+                        element_tag="p",
+                        resource_type="html",
+                    ),
+                    affected_elements=["p"],
+                    priority_score=0.5,
+                )
+            )
+
+        return {"issues": issues, "metrics": metrics, "raw": raw}
+
+    async def _analyze_language_quality_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze language quality with detailed context and improvement suggestions."""
+        issues = []
+        metrics = {}
+        raw = {}
+
+        # Extract text content
+        body = soup.find("body")
+        if not body:
+            return {"issues": issues, "metrics": metrics, "raw": raw}
+
+        for element in body(["script", "style", "nav", "header", "footer"]):
+            element.decompose()
+
+        text_content = body.get_text(strip=True, separator=" ")
+
+        # Basic language quality checks
+        spelling_errors = 0
+        grammar_issues = 0
+        language_issues = []
+
+        # Check for common spelling patterns (simplified)
+        words = text_content.lower().split()
+        common_misspellings = [
+            "recieve",
+            "seperate",
+            "occured",
+            "accomodate",
+            "begining",
+            "beleive",
+            "calender",
+            "collegue",
+            "definately",
+            "embarass",
+        ]
+
+        for word in words:
+            if word in common_misspellings:
+                spelling_errors += 1
+                language_issues.append(f"Possible spelling error: {word}")
+
+        # Check for basic grammar patterns
+        sentences = re.split(r"[.!?]+", text_content)
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if sentence:
+                # Check for double spaces
+                if "  " in sentence:
+                    grammar_issues += 1
+                    language_issues.append("Double spaces detected")
+
+                # Check for sentence starting with lowercase
+                if sentence and sentence[0].islower():
+                    grammar_issues += 1
+                    language_issues.append("Sentence starts with lowercase")
+
+        metrics.update({
+            "spelling_errors": spelling_errors,
+            "grammar_issues": grammar_issues,
+            "total_language_issues": len(language_issues),
+        })
+
+        raw["language_quality"] = {
+            "spelling_errors": spelling_errors,
+            "grammar_issues": grammar_issues,
+            "language_issues": language_issues[:10],
+        }
+
+        if spelling_errors > 5:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="multiple_spelling_errors",
+                    severity=Severity.MEDIUM,
+                    message=f"Multiple spelling errors detected ({spelling_errors})",
+                    location=url,
+                    category="content",
+                    subcategory="language_quality",
+                    description="Content contains multiple spelling errors",
+                    impact="Reduces content credibility and professionalism",
+                    technical_details={
+                        "spelling_errors": spelling_errors,
+                        "sample_errors": language_issues[:3],
+                    },
+                    recommendations=["Fix spelling errors throughout the content"],
+                    fix_suggestions=[
+                        "Use spell-checking tools",
+                        "Review content carefully",
+                        "Have content proofread",
+                        "Use grammar checking software",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.6,
+                )
+            )
+
+        if grammar_issues > 10:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="multiple_grammar_issues",
+                    severity=Severity.MEDIUM,
+                    message=f"Multiple grammar issues detected ({grammar_issues})",
+                    location=url,
+                    category="content",
+                    subcategory="language_quality",
+                    description="Content contains multiple grammar issues",
+                    impact="Reduces content quality and readability",
+                    technical_details={
+                        "grammar_issues": grammar_issues,
+                        "sample_issues": language_issues[:3],
+                    },
+                    recommendations=["Fix grammar issues throughout the content"],
+                    fix_suggestions=[
+                        "Use grammar checking tools",
+                        "Review sentence structure",
+                        "Have content professionally edited",
+                        "Use writing style guides",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.5,
+                )
+            )
+
+        return {"issues": issues, "metrics": metrics, "raw": raw}
+
+    async def _analyze_duplicate_content_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze duplicate content with detailed context and improvement suggestions."""
+        issues = []
+        metrics = {}
+        raw = {}
+
+        # Extract text content
+        body = soup.find("body")
+        if not body:
+            return {"issues": issues, "metrics": metrics, "raw": raw}
+
+        for element in body(["script", "style", "nav", "header", "footer"]):
+            element.decompose()
+
+        text_content = body.get_text(strip=True, separator=" ")
+
+        # Check for internal duplicate content
+        sentences = re.split(r"[.!?]+", text_content)
+        sentences = [s.strip() for s in sentences if s.strip()]
+
+        sentence_frequency = Counter(sentences)
+        duplicate_sentences = [
+            s for s, count in sentence_frequency.items() if count > 1
+        ]
+
+        duplicate_content_ratio = (
+            len(duplicate_sentences) / len(sentences) if sentences else 0
+        )
+
+        metrics.update({
+            "duplicate_sentences": len(duplicate_sentences),
+            "duplicate_content_ratio": duplicate_content_ratio,
+            "total_sentences": len(sentences),
+        })
+
+        raw["duplicate_content"] = {
+            "duplicate_sentences": duplicate_sentences[:5],
+            "duplicate_content_ratio": duplicate_content_ratio,
+            "total_sentences": len(sentences),
+        }
+
+        if duplicate_content_ratio > 0.1:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="high_duplicate_content",
+                    severity=Severity.MEDIUM,
+                    message=f"High duplicate content ratio ({duplicate_content_ratio:.2f})",
+                    location=url,
+                    category="content",
+                    subcategory="duplicate_content",
+                    description="Content contains significant internal duplication",
+                    impact="Poor user experience and potential SEO issues",
+                    technical_details={
+                        "duplicate_content_ratio": duplicate_content_ratio,
+                        "duplicate_sentences": len(duplicate_sentences),
+                        "total_sentences": len(sentences),
+                    },
+                    recommendations=["Reduce duplicate content within the page"],
+                    fix_suggestions=[
+                        "Remove or rewrite duplicate sentences",
+                        "Consolidate similar content",
+                        "Use different ways to express similar ideas",
+                        "Review and edit content for uniqueness",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="body",
+                        element_tag="body",
+                        resource_type="html",
+                    ),
+                    affected_elements=["body", "p", "div"],
+                    priority_score=0.5,
+                )
+            )
+
+        return {"issues": issues, "metrics": metrics, "raw": raw}
+
+    async def _analyze_content_freshness_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze content freshness with detailed context and improvement suggestions."""
+        issues = []
+        metrics = {}
+        raw = {}
+
+        # Check for last modified date
+        last_modified = soup.find("meta", attrs={"name": "last-modified"})
+        if last_modified:
+            last_modified_date = last_modified.get("content")
+        else:
+            last_modified_date = None
+
+        # Check for publication date
+        pub_date = soup.find("meta", attrs={"property": "article:published_time"})
+        if pub_date:
+            publication_date = pub_date.get("content")
+        else:
+            publication_date = None
+
+        # Simple content age estimation (this would need more sophisticated logic in practice)
+        content_age_days = 365  # Default to 1 year if no date found
+
+        if last_modified_date or publication_date:
+            # In a real implementation, you would parse the date and calculate age
+            content_age_days = 180  # Example: 6 months
+
+        metrics.update({
+            "content_age_days": content_age_days,
+            "has_last_modified": bool(last_modified_date),
+            "has_publication_date": bool(publication_date),
+        })
+
+        raw["content_freshness"] = {
+            "last_modified": last_modified_date,
+            "publication_date": publication_date,
+            "content_age_days": content_age_days,
+        }
+
+        if content_age_days > 365:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="outdated_content",
+                    severity=Severity.MEDIUM,
+                    message=f"Content may be outdated ({content_age_days} days old)",
+                    location=url,
+                    category="content",
+                    subcategory="content_freshness",
+                    description="Content appears to be old and may need updating",
+                    impact="Users may find outdated information",
+                    technical_details={
+                        "content_age_days": content_age_days,
+                        "last_modified": last_modified_date,
+                        "publication_date": publication_date,
+                    },
+                    recommendations=["Review and update content for freshness"],
+                    fix_suggestions=[
+                        "Update content with current information",
+                        "Add last modified dates",
+                        "Review and refresh outdated content",
+                        "Add content update schedule",
+                    ],
+                    code_location=CodeLocation(
+                        element_selector="meta[name='last-modified']",
+                        element_tag="meta",
+                        resource_type="html",
+                    ),
+                    affected_elements=["meta"],
+                    priority_score=0.4,
+                )
+            )
+
+        return {"issues": issues, "metrics": metrics, "raw": raw}

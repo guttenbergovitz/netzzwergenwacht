@@ -246,3 +246,63 @@ The project follows a phased approach:
 - **Real browser testing** with Playwright
 - **Security testing** with controlled environments
 - **Accessibility testing** with WCAG compliance checks
+
+## Phase 3: Detailed Analysis & LLM Integration
+
+NetzZwergenWacht now features a **detailed analysis mode** for all Dwarf agents, designed for LLM integration and advanced, context-rich reporting.
+
+- Each Dwarf implements an `analyze_detailed` method, returning a `DetailedAnalysisResult` with:
+  - Structured issues (with code location, fix suggestions, affected elements, priority, and context)
+  - Metrics specific to the analysis type (performance, security, accessibility, content, visual, SEO)
+  - Raw data for LLMs (HTML, screenshots, network traces, etc.)
+- The CLI provides an `analyze` command that runs all Dwarfs in detailed mode and saves a comprehensive, LLM-ready JSON report in the `output/` directory.
+- This enables:
+  - LLM-powered issue classification, prioritization, and fix suggestion
+  - Natural language reporting and context-aware analysis
+  - Automated correlation of issues across all quality dimensions
+
+### Example Output Structure
+
+```json
+{
+  "url": "https://example.com",
+  "dwarf_name": "Leistungs-Zwerg",
+  "detailed_issues": [
+    {
+      "issue_type": "page_load_very_slow",
+      "severity": "high",
+      "message": "Page load time is very slow: 6500ms",
+      "category": "performance",
+      "subcategory": "page_load_time",
+      "description": "Page takes more than 5 seconds to load, which severely impacts user experience",
+      "impact": "Users will likely abandon the page, affecting conversion rates and SEO",
+      "technical_details": {"load_time_ms": 6500, "recommended_max_ms": 3000},
+      "recommendations": ["Optimize page load performance immediately"],
+      "fix_suggestions": ["Enable server-side caching", "Optimize and compress images"],
+      "priority_score": 0.9,
+      "code_location": {"resource_type": "http", "attribute_value": "https://example.com"},
+      "affected_elements": ["server_config", "assets", "caching"]
+    }
+  ],
+  "performance_metrics": {
+    "page_load_time_ms": 6500,
+    "lcp": 4200,
+    "fcp": 1800,
+    "cls": 0.12
+  },
+  "raw_data": {"performance": {"response_status": 200, ...}}
+}
+```
+
+### How to Use
+
+- Run detailed analysis:
+  ```bash
+  uv run nzw analyze https://example.com
+  # or
+  uv run netzzwergenwacht analyze https://example.com
+  ```
+- Find the LLM-ready JSON report in the `output/` directory.
+- Use this output for downstream LLM processing, reporting, or integration with other tools.
+
+All Zwerge now support this mode, making NetzZwergenWacht a powerful foundation for AI-driven website quality monitoring and automated remediation.

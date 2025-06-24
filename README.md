@@ -160,11 +160,12 @@ Our analysis agents follow German naming conventions as our signature branding:
 
 ### 🔄 Phase 3 - LLM Integration (in progress)
 
-- [ ] LLM-powered issue classification and prioritization
-- [ ] Intelligent recommendations and actionable insights
-- [ ] Natural language reporting
-- [ ] Context-aware analysis
-- [ ] Automated issue resolution suggestions
+- [x] Detailed analysis mode for all Zwerge
+- [x] LLM-ready output structure (JSON)
+- [x] CLI support for analyze command
+- [ ] LLM-powered classification, prioritization, and fix suggestion (in progress)
+- [ ] Natural language reporting (in progress)
+- [ ] Automated issue correlation (in progress)
 
 ## 🤔 API Testing Decision
 
@@ -275,10 +276,12 @@ class SicherheitsZwerg(Dwarf):
 - [x] ~~API Testing & Integration~~ (skipped - limited value for external testing)
 
 ### Phase 3: Intelligence & Automation 🔄 **IN PROGRESS**
-- [ ] LLM Integration - AI-powered analysis and recommendations
-- [ ] Automated Fix Suggestions - Code-level optimization recommendations
-- [ ] Trend Analysis - Historical performance tracking
-- [ ] Predictive Analytics - Performance degradation prediction
+- [x] Detailed analysis mode for all Zwerge
+- [x] LLM-ready output structure (JSON)
+- [x] CLI support for analyze command
+- [ ] LLM-powered classification, prioritization, and fix suggestion (in progress)
+- [ ] Natural language reporting (in progress)
+- [ ] Automated issue correlation (in progress)
 
 ### Phase 4: Enterprise Features 📋 **PLANNED**
 - [ ] Multi-site Monitoring - Batch analysis and reporting
@@ -334,6 +337,73 @@ This project requires the `nmap` binary to be installed on your system for advan
 - On Fedora: `sudo dnf install nmap`
 
 Make sure `nmap` is available in your PATH.
+
+## 🧠 Detailed Analysis & LLM Integration (Phase 3)
+
+NetzZwergenWacht now supports a new **detailed analysis mode** for all Zwerge, designed for seamless LLM integration and advanced reporting.
+
+- Each Zwerg implements an `analyze_detailed` method, returning a `DetailedAnalysisResult` with:
+  - Rich, structured issues (with code location, fix suggestions, affected elements, priority, and context)
+  - Metrics specific to the analysis type (performance, security, accessibility, content, visual, SEO)
+  - Raw data for LLMs (HTML, screenshots, network traces, etc.)
+- The CLI provides an `analyze` command that runs all Zwerge in detailed mode and saves a comprehensive, LLM-ready JSON report in the `output/` directory.
+- This enables:
+  - LLM-powered issue classification, prioritization, and fix suggestion
+  - Natural language reporting and context-aware analysis
+  - Automated correlation of issues across all quality dimensions
+
+### Example Output Structure
+
+```json
+{
+  "url": "https://example.com",
+  "dwarf_name": "Leistungs-Zwerg",
+  "detailed_issues": [
+    {
+      "issue_type": "page_load_very_slow",
+      "severity": "high",
+      "message": "Page load time is very slow: 6500ms",
+      "category": "performance",
+      "subcategory": "page_load_time",
+      "description": "Page takes more than 5 seconds to load, which severely impacts user experience",
+      "impact": "Users will likely abandon the page, affecting conversion rates and SEO",
+      "technical_details": {"load_time_ms": 6500, "recommended_max_ms": 3000},
+      "recommendations": ["Optimize page load performance immediately"],
+      "fix_suggestions": ["Enable server-side caching", "Optimize and compress images"],
+      "priority_score": 0.9,
+      "code_location": {"resource_type": "http", "attribute_value": "https://example.com"},
+      "affected_elements": ["server_config", "assets", "caching"]
+    }
+  ],
+  "performance_metrics": {
+    "page_load_time_ms": 6500,
+    "lcp": 4200,
+    "fcp": 1800,
+    "cls": 0.12
+  },
+  "raw_data": {"performance": {"response_status": 200, ...}}
+}
+```
+
+### How to Use
+
+- Run detailed analysis:
+  ```bash
+  uv run nzw analyze https://example.com
+  # or
+  uv run netzzwergenwacht analyze https://example.com
+  ```
+- Find the LLM-ready JSON report in the `output/` directory.
+- Use this output for downstream LLM processing, reporting, or integration with other tools.
+
+### Phase 3 Progress
+
+- [x] Detailed analysis mode for all Zwerge
+- [x] LLM-ready output structure (JSON)
+- [x] CLI support for analyze command
+- [ ] LLM-powered classification, prioritization, and fix suggestion (in progress)
+- [ ] Natural language reporting (in progress)
+- [ ] Automated issue correlation (in progress)
 
 ---
 
