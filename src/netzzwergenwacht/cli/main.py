@@ -10,8 +10,10 @@ from rich.table import Table
 
 from ..dwarfs.base import DwarfOrchestrator
 from ..dwarfs.leistungs_zwerg import LeistungsZwerg
+from ..dwarfs.seo_zwerg import SEOZwerg
 from ..dwarfs.sicherheits_zwerg import SicherheitsZwerg
 from ..dwarfs.web_browser_zwerg import WebBrowserZwerg
+from ..dwarfs.zugaenglichkeits_zwerg import ZugaenglichkeitsZwerg
 
 app = typer.Typer(
     help="NetzZwergenWacht - Intelligent website monitoring using LLM-powered Zwerge",
@@ -72,6 +74,8 @@ async def _run_analysis(url: str, checks: list[str] | None = None) -> list:
     orchestrator.add_dwarf(WebBrowserZwerg())
     orchestrator.add_dwarf(SicherheitsZwerg())
     orchestrator.add_dwarf(LeistungsZwerg())
+    orchestrator.add_dwarf(SEOZwerg())
+    orchestrator.add_dwarf(ZugaenglichkeitsZwerg())
 
     # TODO: Add more Zwerge based on checks parameter
 

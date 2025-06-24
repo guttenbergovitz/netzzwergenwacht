@@ -57,7 +57,9 @@ src/netzzwergenwacht/
 │   ├── base.py            # Base classes and abstractions
 │   ├── web_browser_zwerg.py # Web-Browser-Zwerg agent
 │   ├── sicherheits_zwerg.py # Sicherheits-Zwerg agent
-│   └── leistungs_zwerg.py # Leistungs-Zwerg agent
+│   ├── leistungs_zwerg.py # Leistungs-Zwerg agent
+│   ├── seo_zwerg.py       # SEO-Zwerg agent
+│   └── zugaenglichkeits_zwerg.py # Zugaenglichkeits-Zwerg agent
 ├── analyzers/             # Specific quality check implementations
 ├── config/                # Configuration management
 ├── llm/                  # LLM integration (future)
@@ -99,9 +101,26 @@ Our analysis agents follow German naming conventions as our signature branding:
   - Render-blocking resource detection
   - External resource dependency analysis
 
+- **`SEO-Zwerg`** - Search engine optimization and social media presence analysis
+  - Meta tags validation (title, description, keywords)
+  - Open Graph and Twitter Cards analysis
+  - Structured data detection (JSON-LD, microdata)
+  - Canonical URL validation
+  - Heading structure and content quality analysis
+  - Mobile SEO optimization checks
+
+- **`Zugaenglichkeits-Zwerg`** - EU Accessibility Act compliance and WCAG 2.1 AA testing
+  - Text alternatives for non-text content (WCAG 1.1.1)
+  - Color contrast analysis (WCAG 1.4.3, 1.4.6)
+  - Keyboard accessibility (WCAG 2.1.1, 2.1.2)
+  - Focus management and skip links (WCAG 2.4.1, 2.4.6)
+  - Language identification (WCAG 3.1.1, 3.1.2)
+  - Forms and labels validation (WCAG 3.3.2)
+  - Semantic HTML structure (WCAG 4.1.1, 4.1.2)
+  - ARIA attributes compliance
+  - EAA-specific requirements (accessibility statements, feedback mechanisms)
+
 #### Planned Zwerge:
-- **`Zugaenglichkeits-Zwerg`** - Accessibility testing (WCAG compliance, screen reader compatibility)
-- **`SEO-Zwerg`** - Search engine optimization (meta tags, structured data, keyword analysis)
 - **`Inhalt-Zwerg`** - Content quality analysis (readability, grammar, duplicate content)
 - **`Mobile-Zwerg`** - Mobile-specific testing (responsive design, touch targets, viewport)
 
