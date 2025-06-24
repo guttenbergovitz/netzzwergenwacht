@@ -1,13 +1,76 @@
 [project]
 name = "netzzwergenwacht"
 version = "0.1.0"
-description = "Add your description here"
+description = "Intelligent website quality monitoring using LLM-powered Dwarfs"
+authors = [{name = "Krzysztof Guttenberger", email = "krzysztof@guttenberger.com"}]
+license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+keywords = ["web", "monitoring", "quality", "automation", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Quality Assurance",
+]
+dependencies = [
+    "typer>=0.12.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "rich>=13.0.0",
+    "httpx>=0.25.0",
+    "beautifulsoup4>=4.12.0",
+    "lxml>=4.9.0",
+]
+
+[project.scripts]
+netzzwergenwacht = "netzzwergenwacht.cli.main:app"
+nzw = "netzzwergenwacht.cli.main:app"
+
+[project.urls]
+Homepage = "https://github.com/guttenbergovitz/netzzwergenwacht"
+Repository = "https://github.com/guttenbergovitz/netzzwergenwacht"
+Issues = "https://github.com/guttenbergovitz/netzzwergenwacht/issues"
 
 [dependency-groups]
 dev = [
     "pytest>=8.3.5",
     "ruff>=0.11.8",
+    "pre-commit>=3.0.0",
+    "mypy>=1.0.0",
+    "coverage>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
 ]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "N", "UP", "S", "B", "A", "C4", "PIE"]
+ignore = ["E203", "S101", "B008", "E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+addopts = ["-v", "--strict-markers"]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+source = ["src"]
+branch = true
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+explicit_package_bases = true
+mypy_path = "src"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

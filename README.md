@@ -1,94 +1,231 @@
-# Netz Zwergen Wacht
+# NetzZwergenWacht
 
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-## Overall Direction & Vision:
+> **Intelligent website quality monitoring using LLM-powered Dwarfs**
 
-NetzZwergenWacht aims to be an intelligent, automated system for analyzing and monitoring the quality of websites. It will employ "Dwarfs" – LLM-powered software agents – to proactively perform checks, identify issues, and report on the health and standards of web applications. The goal is to provide actionable insights to development teams and stakeholders, helping to maintain and improve web quality efficiently.
+NetzZwergenWacht is an automated system for analyzing and monitoring website quality. It employs "Zwerge" (German-named dwarfs) – intelligent software agents – to perform comprehensive checks, identify issues, and provide actionable insights to development teams.
 
-## Core Functional Areas:
+## 🚀 Quick Start
 
-* Automated End-to-End (E2E) Interaction: Dwarfs will navigate websites, simulating user journeys to check core functionalities and user flows.
-* Surface-Level Quality Analysis: Dwarfs will inspect websites for common technical and usability issues, such as broken links, console errors, basic SEO hygiene, and fundamental accessibility aspects. 
-* LLM-Powered Intelligence: Large Language Models will be integrated to enable Dwarfs to understand context, interpret findings, classify the severity of issues, and potentially generate human-readable summaries or suggestions. 
-* Reporting and Alerting: The system will generate clear reports detailing discovered issues and will be capable of sending alerts for critical problems. 
-* Configurable & Scheduled Monitoring: Users will be able to configure which websites the Dwarfs monitor and how frequently these checks are performed.
+### Installation & Setup
 
-## Key Technology Choices (Initial):
+```bash
+# Clone the repository
+git clone https://github.com/guttenbergovitz/netzzwergenwacht.git
+cd netzzwergenwacht
 
-Primary Language: Python 
-Project & Dependency Management: uv
-Browser Automation: Playwright
-(Future): Specific LLM APIs, databases, UI frameworks as needed.
+# Install dependencies
+uv sync
 
-## High-Level Task List / Iterative Development Steps:
+# Install development dependencies (optional)
+uv sync --dev
 
-### Phase 0: 
-#### Foundation & Setup
-1.  ~~Set up the Git repository on GitHub.~~
-2.  ~~Initialize the project using uv (uv init).~~
-3.  ~~Create an initial .gitignore file.~~
-4.  ~~Draft a basic README.md (or use this document as a starting point).~~
-5.  ~~Establish the main branch (main) and a development branch (develop).~~
+# Install pre-commit hooks (for contributors)
+uv run pre-commit install
+```
 
-### Phase 1: 
-#### Core Browser Interaction ("Dwarf's First Steps")
-1.  Integrate the Playwright library for browser automation (uv add playwright).
-2.  Install necessary browser binaries (uv run playwright install).
-3.  Develop core functions/classes for a "Browser Dwarf" to:
-    a.  Launch and manage a browser instance.
-    b.  Open a specified URL in a browser page.
-    c.  Retrieve basic page information (e.g., page title).
-    d.  Properly close the browser and page.
-4.  Create a simple command-line interface (CLI) script (e.g., main.py) to trigger these actions for a user-provided URL.
-5.  Implement basic error handling for browser operations.
+### Basic Usage
 
-### Phase 2: 
-#### Basic Surface Checks ("Dwarf's Inspection Tools")
-1.  Develop functionality for the Browser Dwarf to detect broken links (4xx, 5xx status codes) on a given page.
-2.  Implement functionality to capture and identify JavaScript errors from the browser's console.
-3.  Extend the CLI to run these specific checks.
-4.  Implement basic reporting of findings (e.g., print to console, output to a simple text file).
+```bash
+# Check a website for quality issues
+uv run netzzwergenwacht check https://example.com
 
-### Phase 3: 
-#### LLM Integration ("Dwarf Gains Intelligence")
-1.  Research and select an initial LLM provider and API.
-2.  Implement a module to securely connect to and interact with the chosen LLM API.
-3.  Design prompts for the LLM to:
-    a.  Analyze collected data (e.g., list of broken links, console errors).
-    b.  Classify the type or potential severity of identified issues.
-4.  Integrate LLM calls into the workflow: send data, receive and process LLM insights.
-5.  Update reporting to include LLM-generated classifications or summaries.
+# Use the short alias
+uv run nzw check https://example.com
 
-### Phase 4: 
-#### Enhanced Reporting & Actions ("Dwarf's Report & Alerts")
-1.  Develop a more structured reporting format (e.g., JSON, HTML, or Markdown).
-2.  Include more details in reports: URLs, issue descriptions, evidence (e.g., error messages), LLM insights.
-3.  Implement a basic notification system (e.g., email alerts for critical issues found).
+# Verbose output with detailed information
+uv run nzw check https://example.com --verbose
 
-### Phase 5: 
-#### Configuration, Scheduling & Usability ("Dwarf's Mission Control")
-1.  Refine the CLI for better usability (e.g., using Typer or Click).
-2.  Allow users to configure:
-    a.  A list of target websites/URLs to monitor.
-    b.  Types of checks to perform for each target.
-3.  Implement a basic scheduling mechanism for running checks periodically (could be OS-level cron initially, or an in-app scheduler later).
-4.  (Optional for early phases) Explore a very simple web UI for basic interaction if the CLI becomes limiting.
+# Save results to a file
+uv run nzw check https://example.com --output results.txt
 
-### Phase X: 
-#### Advanced Features & Refinements (Future Direction)
-1.  Deeper Analysis:
-    a.  More comprehensive accessibility checks (e.g., against WCAG guidelines).
-    b.  Basic SEO analysis (meta tags, heading structure, keyword presence - with LLM help).
-    c.  Collection of basic performance metrics (e.g., page load time).
-    d.  (Advanced) Visual regression testing, potentially aided by multimodal LLMs.
-2.  Workflow & Integrations:
-    a.  Integration with CI/CD pipelines to check websites post-deployment.
-    b.  Integration with issue tracking systems (e.g., JIRA, GitHub Issues) to automatically create tickets.
-3.  User Experience & Management:
-    a.  Develop a more comprehensive web dashboard for viewing results, trends, and managing monitored sites.
-    b.  Allow users to define custom test scenarios or user journeys for E2E checks.
-    c.  Implement user authentication and management if deployed as a shared service.
-4.  Scalability & Reliability:
-    a.  Optimize for handling multiple concurrent checks.
-    b.  Improve error handling and resilience of the "Dwarfs".
-    c.  Database integration for storing results, configurations, and historical data.
+# Show version information
+uv run nzw version
+```
+
+## 🏗️ Architecture
+
+NetzZwergenWacht follows a modular architecture designed for extensibility and maintainability:
+
+```
+src/netzzwergenwacht/
+├── cli/                    # Command-line interface
+├── dwarfs/                # Core analysis agents (Zwerge)
+│   ├── base.py            # Base classes and abstractions
+│   └── web_browser_zwerg.py # Web-Browser-Zwerg agent
+├── analyzers/             # Specific quality check implementations
+├── config/                # Configuration management
+├── llm/                  # LLM integration (future)
+├── reporting/            # Output formatting and reports
+└── utils/                # Shared utilities and logging
+```
+
+### Core Concepts
+
+- **Zwerge (Dwarfs)**: Intelligent German-named agents that perform specific types of analysis
+- **Issues**: Structured findings with severity levels and evidence
+- **Orchestrator**: Coordinates multiple Zwerge for comprehensive analysis
+- **Rich CLI**: User-friendly command-line interface with colored output
+
+### 🧙‍♂️ Die Zwergen-Brigade (The Dwarf Brigade)
+
+Our analysis agents follow German naming conventions as our signature branding:
+
+#### Currently Active:
+- **`Web-Browser-Zwerg`** - Analyzes websites for HTTP status, performance and basic structure
+  - HTTP status checking (4xx/5xx errors, redirects)
+  - Response time monitoring (flags >2s moderate, >5s slow)
+  - HTML structure validation (title, meta descriptions)
+  - Basic SEO analysis (title length, H1 tags)
+  - Accessibility checks (alt text, lang attributes)
+
+#### Planned Zwerge:
+- **`Sicherheits-Zwerg`** - Security analysis (SSL certificates, HTTP headers, security vulnerabilities)
+- **`Zugaenglichkeits-Zwerg`** - Accessibility testing (WCAG compliance, screen reader compatibility)
+- **`Leistungs-Zwerg`** - Performance monitoring (Core Web Vitals, loading times, optimization)
+- **`SEO-Zwerg`** - Search engine optimization (meta tags, structured data, keyword analysis)
+- **`Inhalt-Zwerg`** - Content quality analysis (readability, grammar, duplicate content)
+- **`Mobile-Zwerg`** - Mobile-specific testing (responsive design, touch targets, viewport)
+
+## 🎯 Current Status: Phase 0 Complete ✅
+
+### ✅ Foundation & Setup (Phase 0)
+- [x] Git repository and project structure
+- [x] Modern Python packaging with `uv`
+- [x] Comprehensive test suite (18 tests passing)
+- [x] Code quality tools (ruff, mypy, pre-commit)
+- [x] Rich CLI with Typer
+- [x] Modular architecture with base abstractions
+- [x] Configuration management with Pydantic
+- [x] Documentation and contributing guidelines
+
+### 🎯 Next: Phase 1 - Core Browser Interaction
+
+The foundation is now ready for implementing actual browser automation:
+
+1. **Playwright Integration** - Add browser automation capabilities
+2. **Page Information Gathering** - Retrieve titles, meta data, basic metrics
+3. **Enhanced Browser Dwarf** - Implement real web page analysis
+4. **Error Handling** - Robust browser operation error management
+
+## 🧪 Development
+
+### Running Tests
+
+```bash
+# Run all tests
+uv run pytest
+
+# Run with coverage
+uv run pytest --cov=src
+
+# Run specific test file
+uv run pytest tests/unit/test_dwarfs/test_base.py
+```
+
+### Code Quality
+
+```bash
+# Lint code
+uv run ruff check
+
+# Format code
+uv run ruff format
+
+# Type checking
+uv run mypy src/
+
+# Run all quality checks
+uv run ruff check && uv run ruff format && uv run mypy src/ && uv run pytest
+```
+
+### Adding New Zwerge
+
+```python
+from netzzwergenwacht.dwarfs.base import Dwarf, AnalysisResult, Severity
+
+class SicherheitsZwerg(Dwarf):
+    """Sicherheits-Zwerg - Analyzes websites for security vulnerabilities and best practices."""
+
+    def __init__(self):
+        super().__init__("Sicherheits-Zwerg", "Security analysis for websites")
+
+    async def analyze(self, url: str) -> AnalysisResult:
+        issues = []
+
+        # Perform security analysis here
+        # Add issues using self.create_issue()
+
+        return AnalysisResult(
+            url=url,
+            dwarf_name=self.name,
+            issues=issues
+        )
+```
+
+## 🎯 Roadmap
+
+### Phase 1: Core Browser Interaction
+- Playwright integration for browser automation
+- Basic page information gathering
+- Enhanced error handling
+
+### Phase 2: Quality Analysis
+- Broken link detection
+- JavaScript console error capture
+- Basic SEO and accessibility checks
+
+### Phase 3: LLM Intelligence
+- LLM provider integration
+- Intelligent issue classification
+- Context-aware analysis
+
+### Phase 4: Enhanced Reporting
+- Multiple output formats (JSON, HTML, Markdown)
+- Alert system for critical issues
+- Historical tracking
+
+### Phase 5: Advanced Features
+- Scheduled monitoring
+- Custom check configurations
+- CI/CD integration
+- Web dashboard
+
+## 🛠️ Technology Stack
+
+- **Language**: Python 3.12+
+- **Package Management**: uv
+- **CLI Framework**: Typer with Rich console
+- **Testing**: pytest with asyncio support
+- **Code Quality**: ruff (linting & formatting), mypy (type checking)
+- **Configuration**: Pydantic with environment variable support
+- **Future**: Playwright (browser automation), LLM APIs
+
+## 📚 Documentation
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Development guidelines and setup
+- [CLAUDE.md](CLAUDE.md) - AI assistant guidance for working with the codebase
+
+## 🤝 Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
+
+- Setting up the development environment
+- Running tests and quality checks
+- Code style and conventions
+- Submitting pull requests
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🔮 Vision
+
+NetzZwergenWacht aims to become the go-to solution for automated website quality monitoring, combining the power of browser automation with LLM intelligence to provide actionable insights that help development teams maintain high-quality web applications.
+
+---
+
+*Built with ❤️ using modern Python practices and designed for extensibility.*
