@@ -6,6 +6,8 @@ import pytest
 
 from netzzwergenwacht.dwarfs.base import (
     AnalysisResult,
+    ComprehensiveAnalysisReport,
+    DetailedAnalysisResult,
     Dwarf,
     DwarfOrchestrator,
     Issue,
