@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..dwarfs.base import DwarfOrchestrator
+from ..dwarfs.leistungs_zwerg import LeistungsZwerg
 from ..dwarfs.sicherheits_zwerg import SicherheitsZwerg
 from ..dwarfs.web_browser_zwerg import WebBrowserZwerg
 
@@ -56,9 +57,7 @@ def version():
     from .. import __author__, __version__
 
     panel = Panel(
-        f"[bold]NetzZwergenWacht[/bold]\n"
-        f"Version: {__version__}\n"
-        f"Author: {__author__}",
+        f"[bold]NetzZwergenWacht[/bold]\nVersion: {__version__}\nAuthor: {__author__}",
         title="Version Info",
         border_style="blue",
     )
@@ -72,6 +71,7 @@ async def _run_analysis(url: str, checks: list[str] | None = None) -> list:
     # Add available Zwerge
     orchestrator.add_dwarf(WebBrowserZwerg())
     orchestrator.add_dwarf(SicherheitsZwerg())
+    orchestrator.add_dwarf(LeistungsZwerg())
 
     # TODO: Add more Zwerge based on checks parameter
 

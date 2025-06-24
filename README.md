@@ -56,7 +56,8 @@ src/netzzwergenwacht/
 ├── dwarfs/                # Core analysis agents (Zwerge)
 │   ├── base.py            # Base classes and abstractions
 │   ├── web_browser_zwerg.py # Web-Browser-Zwerg agent
-│   └── sicherheits_zwerg.py # Sicherheits-Zwerg agent
+│   ├── sicherheits_zwerg.py # Sicherheits-Zwerg agent
+│   └── leistungs_zwerg.py # Leistungs-Zwerg agent
 ├── analyzers/             # Specific quality check implementations
 ├── config/                # Configuration management
 ├── llm/                  # LLM integration (future)
@@ -90,9 +91,16 @@ Our analysis agents follow German naming conventions as our signature branding:
   - Cipher strength and protocol version checking
   - Information disclosure detection
 
+- **`Leistungs-Zwerg`** - Performance analysis for load times, resource optimization and Core Web Vitals
+  - Page load time monitoring with performance thresholds
+  - Content size analysis and compression detection
+  - Resource optimization checks (CSS, JS, images)
+  - Caching header validation
+  - Render-blocking resource detection
+  - External resource dependency analysis
+
 #### Planned Zwerge:
 - **`Zugaenglichkeits-Zwerg`** - Accessibility testing (WCAG compliance, screen reader compatibility)
-- **`Leistungs-Zwerg`** - Performance monitoring (Core Web Vitals, loading times, optimization)
 - **`SEO-Zwerg`** - Search engine optimization (meta tags, structured data, keyword analysis)
 - **`Inhalt-Zwerg`** - Content quality analysis (readability, grammar, duplicate content)
 - **`Mobile-Zwerg`** - Mobile-specific testing (responsive design, touch targets, viewport)

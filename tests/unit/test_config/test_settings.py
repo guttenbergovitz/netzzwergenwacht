@@ -1,6 +1,5 @@
 """Tests for settings configuration."""
 
-
 from netzzwergenwacht.config.settings import Settings, get_settings
 
 
