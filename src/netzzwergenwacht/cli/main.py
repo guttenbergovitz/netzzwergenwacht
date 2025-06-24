@@ -28,24 +28,24 @@ console = Console()
 def check(
     url: str = typer.Argument(help="URL to analyze"),
     output: Path | None = typer.Option(
-        None, 
-        "--output", 
-        "-o", 
+        None,
+        "--output",
+        "-o",
         help="Output file path",
         dir_okay=False,
         writable=True
     ),
     output_format: str = typer.Option(
-        "text", 
-        "--format", 
-        "-f", 
+        "text",
+        "--format",
+        "-f",
         help="Output format (json, text)",
         case_sensitive=False
     ),
     verbose: bool = typer.Option(
-        False, 
-        "--verbose", 
-        "-v", 
+        False,
+        "--verbose",
+        "-v",
         help="Verbose output including technical details"
     ),
     checks: str | None = typer.Option(
