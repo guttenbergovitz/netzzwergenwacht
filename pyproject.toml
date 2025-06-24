@@ -25,6 +25,8 @@ dependencies = [
     "lxml>=4.9.0",
     "playwright>=1.52.0",
     "psutil>=7.0.0",
+    "safety>=3.2.4",
+    "python-nmap>=0.7.1",
 ]
 
 [project.scripts]

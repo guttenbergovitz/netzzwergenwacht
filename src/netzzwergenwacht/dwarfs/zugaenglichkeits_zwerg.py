@@ -745,7 +745,7 @@ class ZugaenglichkeitsZwerg(Dwarf):
         return {"issues": issues, "metadata": metadata}
 
     async def _check_aria_compliance(self, soup: BeautifulSoup, url: str) -> dict:
-        """Check ARIA usage and compliance."""
+        """Check ARIA usage and compliance with EU regulations and WCAG 2.1 AA."""
         issues = []
         metadata = {}
 
@@ -883,8 +883,381 @@ class ZugaenglichkeitsZwerg(Dwarf):
                 )
             )
 
+        # EU/EAA Standard ARIA Checks - WCAG 2.1 AA Compliance
+
+        # 1. Form Accessibility (WCAG 3.3.2 - Labels or Instructions)
+        form_aria_issues = await self._check_form_aria_accessibility(soup, url)
+        issues.extend(form_aria_issues["issues"])
+        metadata.update(form_aria_issues["metadata"])
+
+        # 2. Live Regions (WCAG 4.1.3 - Status Messages)
+        live_region_issues = await self._check_live_regions(soup, url)
+        issues.extend(live_region_issues["issues"])
+        metadata.update(live_region_issues["metadata"])
+
+        # 3. Interactive Elements (WCAG 2.1.1 - Keyboard)
+        interactive_aria_issues = await self._check_interactive_aria_elements(soup, url)
+        issues.extend(interactive_aria_issues["issues"])
+        metadata.update(interactive_aria_issues["metadata"])
+
+        # 4. Navigation and Landmarks (WCAG 2.4.1 - Bypass Blocks)
+        navigation_aria_issues = await self._check_navigation_aria(soup, url)
+        issues.extend(navigation_aria_issues["issues"])
+        metadata.update(navigation_aria_issues["metadata"])
+
+        # 5. Error Handling (WCAG 3.3.1 - Error Identification)
+        error_aria_issues = await self._check_error_aria_handling(soup, url)
+        issues.extend(error_aria_issues["issues"])
+        metadata.update(error_aria_issues["metadata"])
+
         metadata["invalid_roles_count"] = len(invalid_roles)
         metadata["broken_labelledby_count"] = len(labelledby_issues)
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_form_aria_accessibility(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Check form ARIA compliance - EU/EAA standard for form accessibility."""
+        issues = []
+        metadata = {}
+
+        # Check form inputs for proper ARIA attributes
+        form_inputs = soup.find_all(["input", "textarea", "select"])
+        inputs_without_labels = []
+        required_inputs_without_aria = []
+
+        for input_elem in form_inputs:
+            input_id = input_elem.get("id")
+            input_name = input_elem.get("name")
+            input_type = input_elem.get("type", "text")
+            is_required = input_elem.get(
+                "required"
+            ) is not None or "required" in input_elem.get("class", [])
+
+            # Check for associated label
+            has_label = False
+            if input_id:
+                label = soup.find("label", attrs={"for": input_id})
+                if label:
+                    has_label = True
+                else:
+                    # Check for aria-labelledby
+                    aria_labelledby = input_elem.get("aria-labelledby")
+                    if aria_labelledby:
+                        has_label = True
+
+            # Check for aria-label
+            aria_label = input_elem.get("aria-label")
+            if aria_label:
+                has_label = True
+
+            if not has_label:
+                inputs_without_labels.append({
+                    "type": input_type,
+                    "id": input_id,
+                    "name": input_name,
+                })
+
+            # Check for required ARIA attributes on required fields
+            if is_required:
+                aria_required = input_elem.get("aria-required")
+                if aria_required != "true":
+                    required_inputs_without_aria.append({
+                        "type": input_type,
+                        "id": input_id,
+                        "name": input_name,
+                    })
+
+        metadata.update({
+            "total_form_inputs": len(form_inputs),
+            "inputs_without_labels": len(inputs_without_labels),
+            "required_inputs_without_aria": len(required_inputs_without_aria),
+        })
+
+        if inputs_without_labels:
+            issues.append(
+                self.create_issue(
+                    issue_type="aria_form_missing_labels",
+                    severity=Severity.HIGH,
+                    message=f"ARIA Form: {len(inputs_without_labels)} form inputs missing proper labels",
+                    location=url,
+                    evidence={
+                        "missing_labels_count": len(inputs_without_labels),
+                        "sample_inputs": inputs_without_labels[:5],
+                        "wcag_guideline": "3.3.2 Labels or Instructions (Level A)",
+                        "eaa_requirement": "Form accessibility compliance",
+                        "recommendation": "Use <label>, aria-label, or aria-labelledby for all form inputs",
+                    },
+                )
+            )
+
+        if required_inputs_without_aria:
+            issues.append(
+                self.create_issue(
+                    issue_type="aria_required_fields_missing_aria",
+                    severity=Severity.MEDIUM,
+                    message=f"ARIA Form: {len(required_inputs_without_aria)} required fields missing aria-required",
+                    location=url,
+                    evidence={
+                        "required_fields_count": len(required_inputs_without_aria),
+                        "sample_fields": required_inputs_without_aria[:5],
+                        "wcag_guideline": "3.3.2 Labels or Instructions (Level A)",
+                        "recommendation": "Add aria-required='true' to required form fields",
+                    },
+                )
+            )
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_live_regions(self, soup: BeautifulSoup, url: str) -> dict:
+        """Check live regions for dynamic content - EU/EAA standard for status messages."""
+        issues = []
+        metadata = {}
+
+        # Check for live regions
+        live_regions = soup.find_all(attrs={"aria-live": True})
+        live_region_types = {}
+
+        for region in live_regions:
+            live_type = region.get("aria-live", "off")
+            live_region_types[live_type] = live_region_types.get(live_type, 0) + 1
+
+        metadata["live_regions_count"] = len(live_regions)
+        metadata["live_region_types"] = live_region_types
+
+        # Check for appropriate live region usage
+        inappropriate_live_regions = []
+        for region in live_regions:
+            live_type = region.get("aria-live")
+            # Check if live region is used appropriately
+            if live_type == "assertive" and not region.get_text(strip=True):
+                inappropriate_live_regions.append({
+                    "type": live_type,
+                    "id": region.get("id", "no-id"),
+                })
+
+        if inappropriate_live_regions:
+            issues.append(
+                self.create_issue(
+                    issue_type="aria_inappropriate_live_regions",
+                    severity=Severity.MEDIUM,
+                    message=f"ARIA Live: {len(inappropriate_live_regions)} inappropriate live region usage",
+                    location=url,
+                    evidence={
+                        "inappropriate_regions": inappropriate_live_regions[:5],
+                        "wcag_guideline": "4.1.3 Status Messages (Level AA)",
+                        "eaa_requirement": "Dynamic content accessibility",
+                        "recommendation": "Use aria-live appropriately for status messages and updates",
+                    },
+                )
+            )
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_interactive_aria_elements(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Check interactive ARIA elements for proper keyboard accessibility - EU/EAA standard."""
+        issues = []
+        metadata = {}
+
+        # Check interactive elements with ARIA roles
+        interactive_roles = {
+            "button",
+            "link",
+            "menuitem",
+            "tab",
+            "checkbox",
+            "radio",
+            "combobox",
+            "listbox",
+            "slider",
+            "spinbutton",
+            "switch",
+        }
+
+        interactive_elements = []
+        for role in interactive_roles:
+            elements = soup.find_all(attrs={"role": role})
+            interactive_elements.extend(elements)
+
+        metadata["interactive_aria_elements"] = len(interactive_elements)
+
+        # Check for proper keyboard accessibility
+        non_keyboard_accessible = []
+        for element in interactive_elements:
+            # Check if element has tabindex or is naturally focusable
+            tabindex = element.get("tabindex")
+            tag_name = element.name.lower()
+
+            # Elements that should be naturally focusable
+            naturally_focusable = tag_name in [
+                "a",
+                "button",
+                "input",
+                "select",
+                "textarea",
+            ]
+
+            if not naturally_focusable and tabindex is None:
+                non_keyboard_accessible.append({
+                    "role": element.get("role"),
+                    "tag": tag_name,
+                    "id": element.get("id", "no-id"),
+                })
+
+        if non_keyboard_accessible:
+            issues.append(
+                self.create_issue(
+                    issue_type="aria_non_keyboard_accessible",
+                    severity=Severity.HIGH,
+                    message=f"ARIA Interactive: {len(non_keyboard_accessible)} interactive elements not keyboard accessible",
+                    location=url,
+                    evidence={
+                        "non_accessible_elements": non_keyboard_accessible[:5],
+                        "wcag_guideline": "2.1.1 Keyboard (Level A)",
+                        "eaa_requirement": "Keyboard accessibility for all interactive elements",
+                        "recommendation": "Add tabindex='0' to interactive elements or use naturally focusable elements",
+                    },
+                )
+            )
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_navigation_aria(self, soup: BeautifulSoup, url: str) -> dict:
+        """Check navigation ARIA for proper landmark structure - EU/EAA standard."""
+        issues = []
+        metadata = {}
+
+        # Check for skip links (WCAG 2.4.1 - Bypass Blocks)
+        skip_links = soup.find_all(
+            "a", href=re.compile(r"#(main|content|navigation)", re.I)
+        )
+        skip_links.extend(soup.find_all("a", string=re.compile(r"skip|jump to", re.I)))
+
+        metadata["skip_links_count"] = len(skip_links)
+
+        if not skip_links:
+            issues.append(
+                self.create_issue(
+                    issue_type="aria_missing_skip_links",
+                    severity=Severity.MEDIUM,
+                    message="ARIA Navigation: No skip links found for bypassing navigation",
+                    location=url,
+                    evidence={
+                        "wcag_guideline": "2.4.1 Bypass Blocks (Level A)",
+                        "eaa_requirement": "Navigation accessibility",
+                        "recommendation": "Add skip links to main content and navigation",
+                    },
+                )
+            )
+
+        # Check for proper heading structure
+        headings = soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+        heading_structure = []
+        heading_issues = []
+
+        for heading in headings:
+            level = int(heading.name[1])
+            heading_structure.append({
+                "level": level,
+                "text": heading.get_text(strip=True)[:50],
+                "id": heading.get("id", "no-id"),
+            })
+
+        # Check for proper heading hierarchy
+        if heading_structure:
+            current_level = 0
+            for heading in heading_structure:
+                if heading["level"] > current_level + 1:
+                    heading_issues.append({
+                        "level": heading["level"],
+                        "text": heading["text"],
+                        "issue": "Skipped heading level",
+                    })
+                current_level = heading["level"]
+
+        if heading_issues:
+            issues.append(
+                self.create_issue(
+                    issue_type="aria_improper_heading_structure",
+                    severity=Severity.MEDIUM,
+                    message=f"ARIA Navigation: {len(heading_issues)} heading structure issues",
+                    location=url,
+                    evidence={
+                        "heading_issues": heading_issues[:5],
+                        "wcag_guideline": "1.3.1 Info and Relationships (Level A)",
+                        "eaa_requirement": "Content structure accessibility",
+                        "recommendation": "Maintain proper heading hierarchy (h1 > h2 > h3...)",
+                    },
+                )
+            )
+
+        metadata["headings_count"] = len(headings)
+        metadata["heading_structure_issues"] = len(heading_issues)
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_error_aria_handling(self, soup: BeautifulSoup, url: str) -> dict:
+        """Check error handling with ARIA - EU/EAA standard for error identification."""
+        issues = []
+        metadata = {}
+
+        # Check for error messages with proper ARIA
+        error_elements = soup.find_all(
+            string=re.compile(r"error|invalid|required|missing", re.I)
+        )
+        error_elements.extend(
+            soup.find_all(attrs={"class": re.compile(r"error|invalid", re.I)})
+        )
+
+        error_elements_with_aria = []
+        error_elements_without_aria = []
+
+        for error_elem in error_elements:
+            parent = error_elem.parent if hasattr(error_elem, "parent") else error_elem
+
+            # Check for ARIA error attributes
+            has_aria_invalid = parent.get("aria-invalid") == "true"
+            has_aria_describedby = parent.get("aria-describedby")
+            has_aria_live = parent.get("aria-live") in ["polite", "assertive"]
+
+            if has_aria_invalid or has_aria_describedby or has_aria_live:
+                error_elements_with_aria.append({
+                    "text": str(error_elem)[:50],
+                    "aria_attributes": {
+                        "aria-invalid": has_aria_invalid,
+                        "aria-describedby": bool(has_aria_describedby),
+                        "aria-live": bool(has_aria_live),
+                    },
+                })
+            else:
+                error_elements_without_aria.append({
+                    "text": str(error_elem)[:50],
+                })
+
+        metadata.update({
+            "error_elements_count": len(error_elements),
+            "error_elements_with_aria": len(error_elements_with_aria),
+            "error_elements_without_aria": len(error_elements_without_aria),
+        })
+
+        if error_elements_without_aria:
+            issues.append(
+                self.create_issue(
+                    issue_type="aria_error_handling_incomplete",
+                    severity=Severity.MEDIUM,
+                    message=f"ARIA Error: {len(error_elements_without_aria)} error messages without proper ARIA",
+                    location=url,
+                    evidence={
+                        "error_messages_without_aria": error_elements_without_aria[:5],
+                        "wcag_guideline": "3.3.1 Error Identification (Level A)",
+                        "eaa_requirement": "Error message accessibility",
+                        "recommendation": "Use aria-invalid, aria-describedby, or aria-live for error messages",
+                    },
+                )
+            )
 
         return {"issues": issues, "metadata": metadata}
 

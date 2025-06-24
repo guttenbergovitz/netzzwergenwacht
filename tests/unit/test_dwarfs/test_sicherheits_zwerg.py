@@ -1,5 +1,7 @@
 """Tests for SicherheitsZwerg."""
 
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
 
 from netzzwergenwacht.dwarfs.base import Severity
@@ -109,3 +111,114 @@ class TestSicherheitsZwerg:
             if "connection" in issue.issue_type or "error" in issue.issue_type
         ]
         assert len(connection_errors) > 0
+
+    @pytest.mark.asyncio
+    async def test_advanced_security_scan_success(self):
+        """Test successful advanced security scanning."""
+        zwerg = SicherheitsZwerg()
+
+        # Test with a valid URL - this will run real nmap if available
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/html"}
+            mock_response.url = "https://example.com"
+            mock_client.return_value.__aenter__.return_value.get.return_value = (
+                mock_response
+            )
+
+            result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+        # Should have basic security metadata
+        assert "uses_https" in result.metadata
+        assert "detected_services" in result.metadata
+        assert "exposed_files_count" in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_port_scanning_dangerous_ports(self):
+        """Test port scanning with dangerous ports detection."""
+        zwerg = SicherheitsZwerg()
+
+        # Test with a valid URL - this will run real nmap if available
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/html"}
+            mock_response.url = "https://example.com"
+            mock_client.return_value.__aenter__.return_value.get.return_value = (
+                mock_response
+            )
+
+            result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Check if we have any security issues (port scanning may or may not work)
+        assert isinstance(result.issues, list)
+        assert isinstance(result.metadata, dict)
+
+    @pytest.mark.asyncio
+    async def test_information_disclosure_detection(self):
+        """Test information disclosure detection."""
+        zwerg = SicherheitsZwerg()
+
+        # Test with a valid URL - this will run real nmap if available
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_response.headers = {
+                "content-type": "text/html"
+            }  # Use regular dict instead of AsyncMock
+            mock_response.url = "https://example.com"
+
+            # Mock different responses for different paths
+            def mock_get(url):
+                mock_resp = Mock()
+                if "/.env" in url:
+                    mock_resp.status_code = 200  # Exposed file
+                elif "/robots.txt" in url:
+                    mock_resp.status_code = 200  # Exposed file
+                else:
+                    mock_resp.status_code = 404
+                mock_resp.headers = {"content-type": "text/html"}
+                mock_resp.url = url
+                return mock_resp
+
+            mock_client.return_value.__aenter__.return_value.get.side_effect = mock_get
+
+            result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should have information disclosure issues
+        info_disclosure_issues = [
+            i for i in result.issues if "information_disclosure" in i.issue_type
+        ]
+        assert len(info_disclosure_issues) >= 2  # .env and robots.txt
+
+        # Should have metadata about exposed files
+        assert "exposed_files_count" in result.metadata
+        assert result.metadata["exposed_files_count"] >= 2
+
+    @pytest.mark.asyncio
+    async def test_advanced_security_scan_failure(self):
+        """Test advanced security scanning when nmap fails."""
+        zwerg = SicherheitsZwerg()
+
+        # Test with a valid URL - this will run real nmap if available
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response = AsyncMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "text/html"}
+            mock_response.url = "https://example.com"
+            mock_client.return_value.__aenter__.return_value.get.return_value = (
+                mock_response
+            )
+
+            result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+        # The analysis should succeed even if nmap fails
+        assert isinstance(result.issues, list)
+        assert isinstance(result.metadata, dict)

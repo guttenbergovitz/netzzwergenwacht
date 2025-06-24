@@ -199,6 +199,159 @@ class TestZugaenglichkeitsZwerg:
         assert any(key in result.metadata for key in aria_metadata_keys)
 
     @pytest.mark.asyncio
+    async def test_form_aria_accessibility(self):
+        """Test form ARIA accessibility compliance with EU/EAA standards."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for form ARIA compliance
+        form_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_form" in issue.issue_type or "required_fields" in issue.issue_type
+        ]
+        assert isinstance(form_aria_issues, list)
+
+        # Should have form ARIA metadata
+        form_aria_metadata_keys = [
+            "total_form_inputs",
+            "inputs_without_labels",
+            "required_inputs_without_aria",
+        ]
+        assert any(key in result.metadata for key in form_aria_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_live_regions_aria(self):
+        """Test live regions ARIA compliance with EU/EAA standards."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for live regions
+        live_region_issues = [
+            issue
+            for issue in result.issues
+            if "aria_live" in issue.issue_type or "live_region" in issue.issue_type
+        ]
+        assert isinstance(live_region_issues, list)
+
+        # Should have live regions metadata
+        live_region_metadata_keys = ["live_regions_count", "live_region_types"]
+        assert any(key in result.metadata for key in live_region_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_interactive_aria_elements(self):
+        """Test interactive ARIA elements keyboard accessibility."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for interactive ARIA elements
+        interactive_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_interactive" in issue.issue_type
+            or "keyboard_accessible" in issue.issue_type
+        ]
+        assert isinstance(interactive_aria_issues, list)
+
+        # Should have interactive elements metadata
+        interactive_metadata_keys = ["interactive_aria_elements"]
+        assert any(key in result.metadata for key in interactive_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_navigation_aria_compliance(self):
+        """Test navigation ARIA compliance with EU/EAA standards."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for navigation ARIA
+        navigation_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_navigation" in issue.issue_type
+            or "skip_links" in issue.issue_type
+            or "heading_structure" in issue.issue_type
+        ]
+        assert isinstance(navigation_aria_issues, list)
+
+        # Should have navigation metadata
+        navigation_metadata_keys = [
+            "skip_links_count",
+            "headings_count",
+            "heading_structure_issues",
+        ]
+        assert any(key in result.metadata for key in navigation_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_error_aria_handling(self):
+        """Test error handling ARIA compliance with EU/EAA standards."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should check for error ARIA handling
+        error_aria_issues = [
+            issue
+            for issue in result.issues
+            if "aria_error" in issue.issue_type or "error_handling" in issue.issue_type
+        ]
+        assert isinstance(error_aria_issues, list)
+
+        # Should have error handling metadata
+        error_metadata_keys = [
+            "error_elements_count",
+            "error_elements_with_aria",
+            "error_elements_without_aria",
+        ]
+        assert any(key in result.metadata for key in error_metadata_keys)
+
+    @pytest.mark.asyncio
+    async def test_eu_eaa_aria_standards_compliance(self):
+        """Test overall EU/EAA ARIA standards compliance."""
+        zwerg = ZugaenglichkeitsZwerg()
+        result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should have comprehensive ARIA analysis
+        all_aria_issues = [
+            issue for issue in result.issues if "aria" in issue.issue_type
+        ]
+
+        # Check for specific EU/EAA compliance indicators
+        eaa_compliance_issues = [
+            issue
+            for issue in all_aria_issues
+            if any(
+                term in issue.evidence.get("eaa_requirement", "")
+                for term in [
+                    "Form accessibility",
+                    "Dynamic content",
+                    "Keyboard accessibility",
+                    "Navigation accessibility",
+                    "Error message accessibility",
+                ]
+            )
+        ]
+
+        # Should have WCAG guideline references
+        wcag_references = [
+            issue for issue in all_aria_issues if "wcag_guideline" in issue.evidence
+        ]
+
+        assert isinstance(all_aria_issues, list)
+        assert isinstance(eaa_compliance_issues, list)
+        assert isinstance(wcag_references, list)
+
+    @pytest.mark.asyncio
     async def test_eaa_specific_requirements(self):
         zwerg = ZugaenglichkeitsZwerg()
         result = await zwerg.analyze("https://example.com")

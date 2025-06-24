@@ -310,6 +310,82 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 NetzZwergenWacht aims to become the go-to solution for automated website quality monitoring, combining the power of browser automation with LLM intelligence to provide actionable insights that help development teams maintain high-quality web applications.
 
+## System dependencies
+
+This project requires the `nmap` binary to be installed on your system for advanced security scanning (port scanning). The Python package `python-nmap` is only a wrapper and does not install the actual `nmap` binary.
+
+- On macOS: `brew install nmap`
+- On Ubuntu/Debian: `sudo apt install nmap`
+- On Fedora: `sudo dnf install nmap`
+
+Make sure `nmap` is available in your PATH.
+
 ---
 
 *Built with ❤️ using modern Python practices and designed for extensibility.*
+
+## Phase 2: Advanced Analysis Features (In Progress)
+
+### ✅ Completed Features
+
+#### Core Web Vitals & Performance Monitoring
+- **LCP (Largest Contentful Paint)** measurement using Playwright
+- **FCP (First Contentful Paint)** analysis
+- **CLS (Cumulative Layout Shift)** detection
+- **System resource monitoring** (CPU, memory usage)
+- **Performance thresholds** and recommendations
+
+#### Advanced Security Scanning
+- **Port scanning** with nmap integration (TCP connect scan, no root required)
+- **Service enumeration** and database exposure detection
+- **Information disclosure** checks (robots.txt, .env, .git, etc.)
+- **Dangerous port detection** (FTP, Telnet, database ports)
+- **Security misconfiguration** identification
+
+#### Enhanced ARIA & Accessibility Compliance (EU/EAA Standards)
+- **Form ARIA accessibility** (WCAG 3.3.2 - Labels or Instructions)
+  - Form input labeling validation
+  - Required field ARIA attributes
+  - Label association checks
+- **Live regions** (WCAG 4.1.3 - Status Messages)
+  - Dynamic content accessibility
+  - Appropriate aria-live usage
+- **Interactive elements** (WCAG 2.1.1 - Keyboard)
+  - Keyboard accessibility validation
+  - Focus management for ARIA elements
+- **Navigation ARIA** (WCAG 2.4.1 - Bypass Blocks)
+  - Skip links detection
+  - Heading structure validation
+  - Landmark navigation
+- **Error handling** (WCAG 3.3.1 - Error Identification)
+  - Error message ARIA attributes
+  - aria-invalid, aria-describedby validation
+
+### 🔄 In Progress Features
+
+#### Mobile Testing & Responsive Design
+- Mobile viewport analysis
+- Touch target size validation
+- Responsive breakpoint testing
+
+#### Visual Analysis & UI Testing
+- Screenshot comparison
+- Visual regression testing
+- UI element detection
+
+#### API Testing & Integration
+- REST API endpoint discovery
+- API response validation
+- Integration testing capabilities
+
+### 📋 Planned Features
+
+#### Advanced Reporting & Analytics
+- Trend analysis and historical data
+- Custom report generation
+- Performance benchmarking
+
+#### Machine Learning Integration
+- Automated issue classification
+- Predictive maintenance
+- Anomaly detection

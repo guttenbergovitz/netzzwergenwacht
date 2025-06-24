@@ -1,11 +1,13 @@
 """Sicherheits-Zwerg for security analysis."""
 
+import asyncio
 import socket
 import ssl
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 import httpx
+import nmap
 
 from .base import AnalysisResult, Dwarf, Issue, Severity
 
@@ -56,7 +58,7 @@ class SicherheitsZwerg(Dwarf):
                         "final_scheme": urlparse(str(response.url)).scheme,
                         "security_headers_count": len([
                             h
-                            for h in response.headers.keys()
+                            for h in list(response.headers.keys())
                             if h.lower().startswith((
                                 "x-",
                                 "strict-",
@@ -75,6 +77,18 @@ class SicherheitsZwerg(Dwarf):
                         )
                         issues.extend(ssl_issues)
                         metadata.update(ssl_metadata)
+
+                    # Advanced security scanning
+                    (
+                        advanced_issues,
+                        advanced_metadata,
+                    ) = await self._advanced_security_scan(
+                        parsed_url.hostname,
+                        parsed_url.port
+                        or (443 if parsed_url.scheme == "https" else 80),
+                    )
+                    issues.extend(advanced_issues)
+                    metadata.update(advanced_metadata)
 
                 except httpx.RequestError as e:
                     issues.append(
@@ -144,7 +158,7 @@ class SicherheitsZwerg(Dwarf):
     ) -> list[Issue]:
         """Check for missing or misconfigured security headers."""
         issues = []
-        headers = {k.lower(): v for k, v in response.headers.items()}
+        headers = {k.lower(): v for k, v in dict(response.headers).items()}
 
         # Critical security headers to check
         security_headers = {
@@ -406,6 +420,328 @@ class SicherheitsZwerg(Dwarf):
                     severity=Severity.LOW,
                     message=f"Error during SSL analysis: {str(e)}",
                     location=f"https://{hostname}",
+                    evidence={"error": str(e)},
+                )
+            )
+
+        return issues, metadata
+
+    async def _advanced_security_scan(
+        self, hostname: str, port: int
+    ) -> tuple[list[Issue], dict]:
+        """Perform advanced security scanning including port scanning and vulnerability assessment."""
+        issues = []
+        metadata = {}
+
+        try:
+            # Port scanning
+            port_scan_issues, port_metadata = await self._scan_ports(hostname, port)
+            issues.extend(port_scan_issues)
+            metadata.update(port_metadata)
+
+            # Service enumeration
+            service_issues, service_metadata = await self._enumerate_services(
+                hostname, port
+            )
+            issues.extend(service_issues)
+            metadata.update(service_metadata)
+
+            # Security misconfiguration checks
+            (
+                misconfig_issues,
+                misconfig_metadata,
+            ) = await self._check_security_misconfigurations(hostname, port)
+            issues.extend(misconfig_issues)
+            metadata.update(misconfig_metadata)
+
+        except Exception as e:
+            issues.append(
+                self.create_issue(
+                    issue_type="advanced_security_scan_failed",
+                    severity=Severity.LOW,
+                    message=f"Advanced security scan failed: {str(e)}",
+                    location=hostname,
+                    evidence={"error": str(e)},
+                )
+            )
+
+        return issues, metadata
+
+    async def _scan_ports(
+        self, hostname: str, target_port: int
+    ) -> tuple[list[Issue], dict]:
+        """Scan for open ports and potential security issues."""
+        issues = []
+        metadata = {}
+
+        try:
+            # Use nmap for port scanning in executor to avoid blocking
+            def run_nmap_scan():
+                nm = nmap.PortScanner()
+                scan_range = f"{hostname}"
+                nm.scan(scan_range, arguments="-sT -T4 --top-ports 100")
+                return nm
+
+            nm = await asyncio.get_event_loop().run_in_executor(None, run_nmap_scan)
+
+            open_ports = []
+            for host in nm.all_hosts():
+                for proto in nm[host].all_protocols():
+                    ports = nm[host][proto].keys()
+                    open_ports.extend(ports)
+
+            metadata["open_ports_count"] = len(open_ports)
+            metadata["open_ports"] = sorted(open_ports)
+
+            # Check for potentially dangerous open ports
+            dangerous_ports = {
+                21: "FTP",
+                22: "SSH",
+                23: "Telnet",
+                25: "SMTP",
+                53: "DNS",
+                80: "HTTP",
+                110: "POP3",
+                143: "IMAP",
+                443: "HTTPS",
+                3306: "MySQL",
+                5432: "PostgreSQL",
+                6379: "Redis",
+                27017: "MongoDB",
+                8080: "HTTP-Alt",
+                8443: "HTTPS-Alt",
+            }
+
+            dangerous_open_ports = []
+            for port in open_ports:
+                if port in dangerous_ports:
+                    dangerous_open_ports.append({
+                        "port": port,
+                        "service": dangerous_ports[port],
+                        "risk_level": "high"
+                        if port in [21, 23, 25, 110, 143]
+                        else "medium",
+                    })
+
+            metadata["dangerous_ports"] = dangerous_open_ports
+
+            # Create issues for dangerous ports
+            for port_info in dangerous_open_ports:
+                if port_info["risk_level"] == "high":
+                    issues.append(
+                        self.create_issue(
+                            issue_type="dangerous_port_open",
+                            severity=Severity.HIGH,
+                            message=f"Dangerous port {port_info['port']} ({port_info['service']}) is open",
+                            location=hostname,
+                            evidence={
+                                "port": port_info["port"],
+                                "service": port_info["service"],
+                                "risk_level": port_info["risk_level"],
+                                "recommendation": "Close unnecessary ports or restrict access",
+                            },
+                        )
+                    )
+                elif port_info["risk_level"] == "medium":
+                    issues.append(
+                        self.create_issue(
+                            issue_type="potentially_dangerous_port_open",
+                            severity=Severity.MEDIUM,
+                            message=f"Potentially dangerous port {port_info['port']} ({port_info['service']}) is open",
+                            location=hostname,
+                            evidence={
+                                "port": port_info["port"],
+                                "service": port_info["service"],
+                                "risk_level": port_info["risk_level"],
+                                "recommendation": "Review if this port is necessary",
+                            },
+                        )
+                    )
+
+        except Exception as e:
+            issues.append(
+                self.create_issue(
+                    issue_type="port_scan_failed",
+                    severity=Severity.LOW,
+                    message=f"Port scanning failed: {str(e)}",
+                    location=hostname,
+                    evidence={"error": str(e)},
+                )
+            )
+
+        return issues, metadata
+
+    async def _enumerate_services(
+        self, hostname: str, port: int
+    ) -> tuple[list[Issue], dict]:
+        """Enumerate services running on the target host."""
+        issues = []
+        metadata = {}
+
+        try:
+            # Try to identify services on common ports
+            common_services = {
+                80: "HTTP",
+                443: "HTTPS",
+                22: "SSH",
+                21: "FTP",
+                25: "SMTP",
+                53: "DNS",
+                3306: "MySQL",
+                5432: "PostgreSQL",
+                6379: "Redis",
+                27017: "MongoDB",
+                8080: "HTTP-Alt",
+                8443: "HTTPS-Alt",
+            }
+
+            detected_services = []
+
+            for service_port, service_name in common_services.items():
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    sock.settimeout(2)
+                    result = sock.connect_ex((hostname, service_port))
+                    sock.close()
+
+                    if result == 0:
+                        detected_services.append({
+                            "port": service_port,
+                            "service": service_name,
+                            "status": "open",
+                        })
+
+                        # Check for default credentials or misconfigurations
+                        if service_name in ["MySQL", "PostgreSQL", "Redis", "MongoDB"]:
+                            issues.append(
+                                self.create_issue(
+                                    issue_type="database_service_exposed",
+                                    severity=Severity.HIGH,
+                                    message=f"Database service {service_name} is exposed on port {service_port}",
+                                    location=hostname,
+                                    evidence={
+                                        "service": service_name,
+                                        "port": service_port,
+                                        "recommendation": "Restrict database access to internal networks only",
+                                    },
+                                )
+                            )
+
+                except OSError:
+                    # Expected behavior when services are not available
+                    continue
+
+            metadata["detected_services"] = detected_services
+            metadata["services_count"] = len(detected_services)
+
+        except Exception as e:
+            issues.append(
+                self.create_issue(
+                    issue_type="service_enumeration_failed",
+                    severity=Severity.LOW,
+                    message=f"Service enumeration failed: {str(e)}",
+                    location=hostname,
+                    evidence={"error": str(e)},
+                )
+            )
+
+        return issues, metadata
+
+    async def _check_security_misconfigurations(
+        self, hostname: str, port: int
+    ) -> tuple[list[Issue], dict]:
+        """Check for common security misconfigurations."""
+        issues = []
+        metadata = {}
+
+        try:
+            # Check for information disclosure
+            info_disclosure_checks = [
+                {
+                    "path": "/robots.txt",
+                    "description": "robots.txt file",
+                    "severity": Severity.LOW,
+                },
+                {
+                    "path": "/.well-known/security.txt",
+                    "description": "security.txt file",
+                    "severity": Severity.LOW,
+                },
+                {
+                    "path": "/sitemap.xml",
+                    "description": "sitemap.xml file",
+                    "severity": Severity.LOW,
+                },
+                {
+                    "path": "/.git/HEAD",
+                    "description": "Git repository exposure",
+                    "severity": Severity.HIGH,
+                },
+                {
+                    "path": "/.env",
+                    "description": "Environment file exposure",
+                    "severity": Severity.HIGH,
+                },
+                {
+                    "path": "/wp-config.php",
+                    "description": "WordPress configuration exposure",
+                    "severity": Severity.HIGH,
+                },
+                {
+                    "path": "/phpinfo.php",
+                    "description": "PHP info exposure",
+                    "severity": Severity.HIGH,
+                },
+                {
+                    "path": "/server-status",
+                    "description": "Apache server status",
+                    "severity": Severity.MEDIUM,
+                },
+            ]
+
+            scheme = "https" if port == 443 else "http"
+            base_url = f"{scheme}://{hostname}"
+
+            exposed_files = []
+
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                for check in info_disclosure_checks:
+                    try:
+                        response = await client.get(f"{base_url}{check['path']}")
+                        if response.status_code == 200:
+                            exposed_files.append({
+                                "path": check["path"],
+                                "description": check["description"],
+                                "severity": check["severity"].value,
+                            })
+
+                            issues.append(
+                                self.create_issue(
+                                    issue_type="information_disclosure",
+                                    severity=check["severity"],
+                                    message=f"Information disclosure: {check['description']} is accessible",
+                                    location=f"{base_url}{check['path']}",
+                                    evidence={
+                                        "path": check["path"],
+                                        "description": check["description"],
+                                        "status_code": response.status_code,
+                                        "recommendation": "Remove or restrict access to sensitive files",
+                                    },
+                                )
+                            )
+                    except httpx.RequestError:
+                        continue
+
+            metadata["exposed_files"] = exposed_files
+            metadata["exposed_files_count"] = len(exposed_files)
+
+        except Exception as e:
+            issues.append(
+                self.create_issue(
+                    issue_type="misconfiguration_check_failed",
+                    severity=Severity.LOW,
+                    message=f"Security misconfiguration check failed: {str(e)}",
+                    location=hostname,
                     evidence={"error": str(e)},
                 )
             )
