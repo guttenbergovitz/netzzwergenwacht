@@ -120,8 +120,15 @@ Our analysis agents follow German naming conventions as our signature branding:
   - ARIA attributes compliance
   - EAA-specific requirements (accessibility statements, feedback mechanisms)
 
+- **`Inhalt-Zwerg`** - Content quality analysis for readability, grammar, and content optimization
+  - Text readability analysis (Flesch-Kincaid Reading Ease, Grade Level)
+  - Content length and quality metrics (word count, sentence structure)
+  - Duplicate content detection and similarity analysis
+  - Grammar and language quality checks (formatting, placeholders)
+  - Content structure validation (heading hierarchy, organization)
+  - Content freshness indicators and metadata analysis
+
 #### Planned Zwerge:
-- **`Inhalt-Zwerg`** - Content quality analysis (readability, grammar, duplicate content)
 - **`Mobile-Zwerg`** - Mobile-specific testing (responsive design, touch targets, viewport)
 
 ## 🎯 Current Status: Phase 0 Complete ✅
@@ -129,7 +136,7 @@ Our analysis agents follow German naming conventions as our signature branding:
 ### ✅ Foundation & Setup (Phase 0)
 - [x] Git repository and project structure
 - [x] Modern Python packaging with `uv`
-- [x] Comprehensive test suite (25 tests passing)
+- [x] Comprehensive test suite (41 tests passing)
 - [x] Code quality tools (ruff, mypy, pre-commit)
 - [x] Rich CLI with Typer
 - [x] Modular architecture with base abstractions
