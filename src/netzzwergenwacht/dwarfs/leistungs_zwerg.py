@@ -82,16 +82,14 @@ class LeistungsZwerg(Dwarf):
             load_time_ms = load_time * 1000
 
             # Add performance metadata
-            metadata.update(
-                {
-                    "page_load_time_ms": round(load_time_ms, 2),
-                    "page_load_time_seconds": round(load_time, 3),
-                    "response_status": response.status_code,
-                    "content_length_bytes": len(response.content),
-                    "content_length_kb": round(len(response.content) / 1024, 2),
-                    "response_headers_count": len(response.headers),
-                }
-            )
+            metadata.update({
+                "page_load_time_ms": round(load_time_ms, 2),
+                "page_load_time_seconds": round(load_time, 3),
+                "response_status": response.status_code,
+                "content_length_bytes": len(response.content),
+                "content_length_kb": round(len(response.content) / 1024, 2),
+                "response_headers_count": len(response.headers),
+            })
 
             # Check page load time thresholds
             if load_time_ms > 5000:  # 5 seconds
@@ -292,9 +290,11 @@ class LeistungsZwerg(Dwarf):
                             w, h = int(width), int(height)
                             # Flag images larger than 1920x1080 or with high pixel count
                             if w > 1920 or h > 1080 or (w * h > 2073600):  # 1920*1080
-                                large_images.append(
-                                    {"src": src, "width": w, "height": h}
-                                )
+                                large_images.append({
+                                    "src": src,
+                                    "width": w,
+                                    "height": h,
+                                })
                         except ValueError:
                             pass
 
@@ -330,21 +330,19 @@ class LeistungsZwerg(Dwarf):
                         inline_js.append(len(script.string))
 
             # Add resource metadata
-            metadata.update(
-                {
-                    "total_images": len(images),
-                    "external_images_count": len(external_images),
-                    "images_missing_alt": len(images_without_alt),
-                    "large_images_count": len(large_images),
-                    "total_css_files": len(css_links),
-                    "external_css_count": len(external_css),
-                    "inline_css_blocks": len(inline_css),
-                    "total_js_files": len([s for s in scripts if s.get("src")]),
-                    "external_js_count": len(external_js),
-                    "inline_js_blocks": len(inline_js),
-                    "inline_js_total_size": sum(inline_js) if inline_js else 0,
-                }
-            )
+            metadata.update({
+                "total_images": len(images),
+                "external_images_count": len(external_images),
+                "images_missing_alt": len(images_without_alt),
+                "large_images_count": len(large_images),
+                "total_css_files": len(css_links),
+                "external_css_count": len(external_css),
+                "inline_css_blocks": len(inline_css),
+                "total_js_files": len([s for s in scripts if s.get("src")]),
+                "external_js_count": len(external_js),
+                "inline_js_blocks": len(inline_js),
+                "inline_js_total_size": sum(inline_js) if inline_js else 0,
+            })
 
             # Generate issues based on resource analysis
             if len(large_images) > 0:

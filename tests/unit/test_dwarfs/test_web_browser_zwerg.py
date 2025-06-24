@@ -1,6 +1,7 @@
 """Tests for WebBrowserZwerg."""
 
 import pytest
+
 from netzzwergenwacht.dwarfs.base import Severity
 from netzzwergenwacht.dwarfs.web_browser_zwerg import WebBrowserZwerg
 

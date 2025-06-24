@@ -1,6 +1,7 @@
 """Tests for ZugaenglichkeitsZwerg."""
 
 import pytest
+
 from netzzwergenwacht.dwarfs.base import Severity
 from netzzwergenwacht.dwarfs.zugaenglichkeits_zwerg import ZugaenglichkeitsZwerg
 
@@ -269,13 +270,9 @@ class TestZugaenglichkeitsZwerg:
                     any(pattern in issue_type for pattern in patterns)
                     for issue_type in issue_types
                 )
-                or len(
-                    [
-                        i
-                        for i in result.issues
-                        if any(p in i.issue_type for p in patterns)
-                    ]
-                )
+                or len([
+                    i for i in result.issues if any(p in i.issue_type for p in patterns)
+                ])
                 == 0
             )
             # Either we found issues in this principle area, or there were no issues to find

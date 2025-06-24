@@ -154,15 +154,13 @@ class InhaltZwerg(Dwarf):
         sentence_count = len(re.findall(r"[.!?]+", text_content)) if text_content else 0
         paragraph_count = len(soup.find_all("p"))
 
-        metadata.update(
-            {
-                "word_count": word_count,
-                "character_count": char_count,
-                "character_count_no_spaces": char_count_no_spaces,
-                "sentence_count": sentence_count,
-                "paragraph_count": paragraph_count,
-            }
-        )
+        metadata.update({
+            "word_count": word_count,
+            "character_count": char_count,
+            "character_count_no_spaces": char_count_no_spaces,
+            "sentence_count": sentence_count,
+            "paragraph_count": paragraph_count,
+        })
 
         # Content quality issues
         if word_count < 100:
@@ -272,16 +270,14 @@ class InhaltZwerg(Dwarf):
         )
         fk_grade = max(0, fk_grade)
 
-        metadata.update(
-            {
-                "avg_sentence_length": round(avg_sentence_length, 2),
-                "avg_word_length": round(avg_word_length, 2),
-                "avg_syllables_per_word": round(avg_syllables_per_word, 2),
-                "flesch_reading_ease": round(flesch_score, 1),
-                "flesch_kincaid_grade": round(fk_grade, 1),
-                "estimated_syllables": syllable_count,
-            }
-        )
+        metadata.update({
+            "avg_sentence_length": round(avg_sentence_length, 2),
+            "avg_word_length": round(avg_word_length, 2),
+            "avg_syllables_per_word": round(avg_syllables_per_word, 2),
+            "flesch_reading_ease": round(flesch_score, 1),
+            "flesch_kincaid_grade": round(fk_grade, 1),
+            "estimated_syllables": syllable_count,
+        })
 
         # Readability issues
         if flesch_score < 30:

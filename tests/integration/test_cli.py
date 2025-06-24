@@ -1,7 +1,8 @@
 """Integration tests for CLI functionality."""
 
-from netzzwergenwacht.cli.main import app
 from typer.testing import CliRunner
+
+from netzzwergenwacht.cli.main import app
 
 runner = CliRunner()
 

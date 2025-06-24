@@ -51,21 +51,19 @@ class SicherheitsZwerg(Dwarf):
                     response = await client.get(url)
 
                     # Add security metadata
-                    metadata.update(
-                        {
-                            "uses_https": parsed_url.scheme == "https",
-                            "final_scheme": urlparse(str(response.url)).scheme,
-                            "security_headers_count": len(
-                                [
-                                    h
-                                    for h in response.headers.keys()
-                                    if h.lower().startswith(
-                                        ("x-", "strict-", "content-security")
-                                    )
-                                ]
-                            ),
-                        }
-                    )
+                    metadata.update({
+                        "uses_https": parsed_url.scheme == "https",
+                        "final_scheme": urlparse(str(response.url)).scheme,
+                        "security_headers_count": len([
+                            h
+                            for h in response.headers.keys()
+                            if h.lower().startswith((
+                                "x-",
+                                "strict-",
+                                "content-security",
+                            ))
+                        ]),
+                    })
 
                     # Analyze security headers
                     issues.extend(await self._check_security_headers(response, url))
@@ -286,19 +284,17 @@ class SicherheitsZwerg(Dwarf):
                     version = ssock.version()
 
                     # Add SSL metadata
-                    metadata.update(
-                        {
-                            "ssl_version": version,
-                            "ssl_cipher": cipher[0] if cipher else None,
-                            "ssl_cipher_strength": cipher[2] if cipher else None,
-                            "certificate_subject": dict(
-                                x[0] for x in cert.get("subject", [])
-                            ),
-                            "certificate_issuer": dict(
-                                x[0] for x in cert.get("issuer", [])
-                            ),
-                        }
-                    )
+                    metadata.update({
+                        "ssl_version": version,
+                        "ssl_cipher": cipher[0] if cipher else None,
+                        "ssl_cipher_strength": cipher[2] if cipher else None,
+                        "certificate_subject": dict(
+                            x[0] for x in cert.get("subject", [])
+                        ),
+                        "certificate_issuer": dict(
+                            x[0] for x in cert.get("issuer", [])
+                        ),
+                    })
 
                     # Check certificate expiry
                     if "notAfter" in cert:

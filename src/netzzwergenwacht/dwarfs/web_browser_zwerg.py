@@ -47,18 +47,14 @@ class WebBrowserZwerg(Dwarf):
                     response_time = time.time() - start_time
 
                     # Add response metadata
-                    metadata.update(
-                        {
-                            "status_code": response.status_code,
-                            "response_time_ms": round(response_time * 1000, 2),
-                            "content_type": response.headers.get(
-                                "content-type", "unknown"
-                            ),
-                            "content_length": len(response.content),
-                            "final_url": str(response.url),
-                            "redirected": str(response.url) != url,
-                        }
-                    )
+                    metadata.update({
+                        "status_code": response.status_code,
+                        "response_time_ms": round(response_time * 1000, 2),
+                        "content_type": response.headers.get("content-type", "unknown"),
+                        "content_length": len(response.content),
+                        "final_url": str(response.url),
+                        "redirected": str(response.url) != url,
+                    })
 
                     # Check HTTP status
                     issues.extend(await self._check_http_status(response, url))

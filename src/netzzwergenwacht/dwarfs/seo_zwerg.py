@@ -126,12 +126,10 @@ class SEOZwerg(Dwarf):
             title = title_tag.string.strip()
             title_length = len(title)
 
-            metadata.update(
-                {
-                    "title": title,
-                    "title_length": title_length,
-                }
-            )
+            metadata.update({
+                "title": title,
+                "title_length": title_length,
+            })
 
             # Title length recommendations
             if title_length == 0:
@@ -183,12 +181,10 @@ class SEOZwerg(Dwarf):
             description = meta_desc.get("content").strip()
             desc_length = len(description)
 
-            metadata.update(
-                {
-                    "meta_description": description,
-                    "meta_description_length": desc_length,
-                }
-            )
+            metadata.update({
+                "meta_description": description,
+                "meta_description_length": desc_length,
+            })
 
             if desc_length < 120:
                 issues.append(
@@ -482,9 +478,10 @@ class SEOZwerg(Dwarf):
         if hreflang_links:
             hreflang_data = []
             for link in hreflang_links:
-                hreflang_data.append(
-                    {"hreflang": link.get("hreflang"), "href": link.get("href")}
-                )
+                hreflang_data.append({
+                    "hreflang": link.get("hreflang"),
+                    "href": link.get("href"),
+                })
             metadata["hreflang_tags"] = hreflang_data
             metadata["hreflang_count"] = len(hreflang_data)
 
@@ -558,12 +555,10 @@ class SEOZwerg(Dwarf):
         word_count = len(words)
         char_count = len(text_content.strip())
 
-        metadata.update(
-            {
-                "word_count": word_count,
-                "character_count": char_count,
-            }
-        )
+        metadata.update({
+            "word_count": word_count,
+            "character_count": char_count,
+        })
 
         if word_count < 300:
             issues.append(
@@ -591,12 +586,10 @@ class SEOZwerg(Dwarf):
             if not alt and src:
                 images_without_alt.append(src)
 
-        metadata.update(
-            {
-                "total_images": total_images,
-                "images_without_alt": len(images_without_alt),
-            }
-        )
+        metadata.update({
+            "total_images": total_images,
+            "images_without_alt": len(images_without_alt),
+        })
 
         if (
             images_without_alt and len(images_without_alt) > total_images * 0.2

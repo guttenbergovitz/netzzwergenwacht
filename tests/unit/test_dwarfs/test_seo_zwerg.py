@@ -1,6 +1,7 @@
 """Tests for SEOZwerg."""
 
 import pytest
+
 from netzzwergenwacht.dwarfs.base import Severity
 from netzzwergenwacht.dwarfs.seo_zwerg import SEOZwerg
 

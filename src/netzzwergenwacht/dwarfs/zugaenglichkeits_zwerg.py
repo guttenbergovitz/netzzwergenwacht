@@ -159,14 +159,12 @@ class ZugaenglichkeitsZwerg(Dwarf):
                 elif len(alt) > 150:
                     complex_images.append({"src": src, "alt_length": len(alt)})
 
-        metadata.update(
-            {
-                "total_images": len(images),
-                "images_without_alt": len(images_without_alt),
-                "decorative_images": len(decorative_images),
-                "complex_images": len(complex_images),
-            }
-        )
+        metadata.update({
+            "total_images": len(images),
+            "images_without_alt": len(images_without_alt),
+            "decorative_images": len(decorative_images),
+            "complex_images": len(complex_images),
+        })
 
         if images_without_alt:
             issues.append(
@@ -210,9 +208,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
             has_transcript = "transcript" in media.get("aria-describedby", "").lower()
 
             if not (has_captions or has_transcript):
-                media_without_alternatives.append(
-                    {"tag": media.name, "src": media.get("src", "embedded")}
-                )
+                media_without_alternatives.append({
+                    "tag": media.name,
+                    "src": media.get("src", "embedded"),
+                })
 
         if media_without_alternatives:
             issues.append(
@@ -252,20 +251,16 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     low_contrast in style
                     for low_contrast in ["#999", "#ccc", "#ddd", "gray", "lightgray"]
                 ):
-                    contrast_issues.append(
-                        {
-                            "element": element.name,
-                            "style": style[:100],  # Truncate for evidence
-                        }
-                    )
+                    contrast_issues.append({
+                        "element": element.name,
+                        "style": style[:100],  # Truncate for evidence
+                    })
 
-        metadata.update(
-            {
-                "elements_with_inline_styles": len(inline_styles),
-                "potential_contrast_issues": potential_issues,
-                "style_elements_count": len(style_elements),
-            }
-        )
+        metadata.update({
+            "elements_with_inline_styles": len(inline_styles),
+            "potential_contrast_issues": potential_issues,
+            "style_elements_count": len(style_elements),
+        })
 
         if contrast_issues:
             issues.append(
@@ -298,9 +293,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
                 if not element.find(["strong", "em", "b", "i"]) and not element.get(
                     "aria-label"
                 ):
-                    color_only_indicators.append(
-                        {"text": text[:50], "element": element.name}
-                    )
+                    color_only_indicators.append({
+                        "text": text[:50],
+                        "element": element.name,
+                    })
 
         if color_only_indicators:
             issues.append(
@@ -327,21 +323,23 @@ class ZugaenglichkeitsZwerg(Dwarf):
         metadata = {}
 
         # Check for interactive elements that may not be keyboard accessible
-        interactive_elements = soup.find_all(
-            ["a", "button", "input", "select", "textarea"]
-        )
+        interactive_elements = soup.find_all([
+            "a",
+            "button",
+            "input",
+            "select",
+            "textarea",
+        ])
         non_focusable_interactive = []
 
         for element in interactive_elements:
             tabindex = element.get("tabindex")
             if tabindex == "-1":
-                non_focusable_interactive.append(
-                    {
-                        "tag": element.name,
-                        "text": element.get_text(strip=True)[:50],
-                        "id": element.get("id", "no-id"),
-                    }
-                )
+                non_focusable_interactive.append({
+                    "tag": element.name,
+                    "text": element.get_text(strip=True)[:50],
+                    "id": element.get("id", "no-id"),
+                })
 
         # Check for custom interactive elements (divs, spans with click handlers)
         potential_interactive = soup.find_all(attrs={"onclick": True})
@@ -355,22 +353,18 @@ class ZugaenglichkeitsZwerg(Dwarf):
         for element in potential_interactive:
             if not element.get("tabindex") and element.get("tabindex") != "0":
                 if element.name not in ["a", "button", "input", "select", "textarea"]:
-                    inaccessible_custom_controls.append(
-                        {
-                            "tag": element.name,
-                            "text": element.get_text(strip=True)[:50],
-                            "role": element.get("role", "none"),
-                        }
-                    )
+                    inaccessible_custom_controls.append({
+                        "tag": element.name,
+                        "text": element.get_text(strip=True)[:50],
+                        "role": element.get("role", "none"),
+                    })
 
-        metadata.update(
-            {
-                "interactive_elements_count": len(interactive_elements),
-                "non_focusable_interactive": len(non_focusable_interactive),
-                "custom_interactive_elements": len(potential_interactive),
-                "inaccessible_custom_controls": len(inaccessible_custom_controls),
-            }
-        )
+        metadata.update({
+            "interactive_elements_count": len(interactive_elements),
+            "non_focusable_interactive": len(non_focusable_interactive),
+            "custom_interactive_elements": len(potential_interactive),
+            "inaccessible_custom_controls": len(inaccessible_custom_controls),
+        })
 
         if non_focusable_interactive:
             issues.append(
@@ -438,13 +432,11 @@ class ZugaenglichkeitsZwerg(Dwarf):
         for i, level in enumerate(heading_levels[1:], 1):
             prev_level = heading_levels[i - 1]
             if level > prev_level + 1:
-                hierarchy_issues.append(
-                    {
-                        "position": i,
-                        "jumped_from": f"h{prev_level}",
-                        "jumped_to": f"h{level}",
-                    }
-                )
+                hierarchy_issues.append({
+                    "position": i,
+                    "jumped_from": f"h{prev_level}",
+                    "jumped_to": f"h{level}",
+                })
 
         if hierarchy_issues:
             issues.append(
@@ -467,29 +459,29 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
         focus_trap_issues = []
         for modal in modals:
-            focusable_elements = modal.find_all(
-                ["a", "button", "input", "select", "textarea"]
-            )
+            focusable_elements = modal.find_all([
+                "a",
+                "button",
+                "input",
+                "select",
+                "textarea",
+            ])
             focusable_elements.extend(modal.find_all(attrs={"tabindex": "0"}))
 
             if (
                 len(focusable_elements) < 2
             ):  # Should have at least close button and one other element
-                focus_trap_issues.append(
-                    {
-                        "modal_id": modal.get("id", "no-id"),
-                        "focusable_count": len(focusable_elements),
-                    }
-                )
+                focus_trap_issues.append({
+                    "modal_id": modal.get("id", "no-id"),
+                    "focusable_count": len(focusable_elements),
+                })
 
-        metadata.update(
-            {
-                "skip_links_count": len(skip_to_content),
-                "heading_hierarchy_issues": len(hierarchy_issues),
-                "modal_count": len(modals),
-                "focus_trap_issues": len(focus_trap_issues),
-            }
-        )
+        metadata.update({
+            "skip_links_count": len(skip_to_content),
+            "heading_hierarchy_issues": len(hierarchy_issues),
+            "modal_count": len(modals),
+            "focus_trap_issues": len(focus_trap_issues),
+        })
 
         return {"issues": issues, "metadata": metadata}
 
@@ -535,9 +527,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
                 if not element.get("lang") and not any(
                     parent.get("lang") for parent in element.parents
                 ):
-                    potential_lang_changes.append(
-                        {"text": text[:50], "element": element.name}
-                    )
+                    potential_lang_changes.append({
+                        "text": text[:50],
+                        "element": element.name,
+                    })
 
         if (
             potential_lang_changes and len(potential_lang_changes) > 5
@@ -586,21 +579,17 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     inputs_with_labels.append(input_id)
 
             if not label_found and not aria_label and not aria_labelledby:
-                unlabeled_inputs.append(
-                    {
-                        "type": input_type,
-                        "id": input_id or "no-id",
-                        "name": input_elem.get("name", "no-name"),
-                    }
-                )
+                unlabeled_inputs.append({
+                    "type": input_type,
+                    "id": input_id or "no-id",
+                    "name": input_elem.get("name", "no-name"),
+                })
 
-        metadata.update(
-            {
-                "total_form_inputs": len(form_inputs),
-                "unlabeled_inputs": len(unlabeled_inputs),
-                "properly_labeled_inputs": len(inputs_with_labels),
-            }
-        )
+        metadata.update({
+            "total_form_inputs": len(form_inputs),
+            "unlabeled_inputs": len(unlabeled_inputs),
+            "properly_labeled_inputs": len(inputs_with_labels),
+        })
 
         if unlabeled_inputs:
             issues.append(
@@ -635,12 +624,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
             has_aria_describedby = required.get("aria-describedby")
 
             if not (has_asterisk or has_aria_label or has_aria_describedby):
-                required_without_indication.append(
-                    {
-                        "type": required.get("type", "unknown"),
-                        "id": required.get("id", "no-id"),
-                    }
-                )
+                required_without_indication.append({
+                    "type": required.get("type", "unknown"),
+                    "id": required.get("id", "no-id"),
+                })
 
         if required_without_indication:
             issues.append(
@@ -664,9 +651,15 @@ class ZugaenglichkeitsZwerg(Dwarf):
         metadata = {}
 
         # Check for semantic HTML5 elements
-        semantic_elements = soup.find_all(
-            ["main", "nav", "header", "footer", "aside", "section", "article"]
-        )
+        semantic_elements = soup.find_all([
+            "main",
+            "nav",
+            "header",
+            "footer",
+            "aside",
+            "section",
+            "article",
+        ])
         metadata["semantic_elements_count"] = len(semantic_elements)
 
         # Check for main landmark
@@ -843,13 +836,11 @@ class ZugaenglichkeitsZwerg(Dwarf):
         for element in role_elements:
             role = element.get("role").strip().lower()
             if role not in valid_roles:
-                invalid_roles.append(
-                    {
-                        "element": element.name,
-                        "invalid_role": role,
-                        "id": element.get("id", "no-id"),
-                    }
-                )
+                invalid_roles.append({
+                    "element": element.name,
+                    "invalid_role": role,
+                    "id": element.get("id", "no-id"),
+                })
 
         if invalid_roles:
             issues.append(
@@ -873,12 +864,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
             labelledby_ids = element.get("aria-labelledby").split()
             for ref_id in labelledby_ids:
                 if not soup.find(attrs={"id": ref_id}):
-                    labelledby_issues.append(
-                        {
-                            "element_id": element.get("id", "no-id"),
-                            "missing_reference": ref_id,
-                        }
-                    )
+                    labelledby_issues.append({
+                        "element_id": element.get("id", "no-id"),
+                        "missing_reference": ref_id,
+                    })
 
         if labelledby_issues:
             issues.append(

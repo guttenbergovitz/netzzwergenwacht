@@ -1,6 +1,7 @@
 """Tests for SicherheitsZwerg."""
 
 import pytest
+
 from netzzwergenwacht.dwarfs.base import Severity
 from netzzwergenwacht.dwarfs.sicherheits_zwerg import SicherheitsZwerg
 

@@ -3,6 +3,7 @@
 from datetime import datetime
 
 import pytest
+
 from netzzwergenwacht.dwarfs.base import (
     AnalysisResult,
     Dwarf,

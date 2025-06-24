@@ -1,6 +1,7 @@
 """Tests for LeistungsZwerg."""
 
 import pytest
+
 from netzzwergenwacht.dwarfs.base import Severity
 from netzzwergenwacht.dwarfs.leistungs_zwerg import LeistungsZwerg
 
