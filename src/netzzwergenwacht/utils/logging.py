@@ -45,7 +45,10 @@ def setup_structured_logging(
 
 
 def setup_logging(
-    level: str = "INFO", log_file: Path | None = None, rich_console: bool = True
+    level: str = "INFO", 
+    log_file: Path | None = None, 
+    rich_console: bool = True,
+    json_format: bool = False
 ) -> logging.Logger:
     """Set up structured logging for the application.
 
@@ -53,10 +56,24 @@ def setup_logging(
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: Optional path to log file
         rich_console: Use rich console handler for colored output
+        json_format: Enable JSON formatted logs
 
     Returns:
         Configured logger instance
     """
+    structlog.configure(
+        processors=[
+            structlog.contextvars.merge_contextvars,
+            structlog.processors.add_log_level,
+            structlog.processors.StackInfoRenderer(),
+            structlog.processors.TimeStamper(fmt="iso"),
+            structlog.processors.JSONRenderer() if json_format else structlog.dev.ConsoleRenderer()
+        ],
+        wrapper_class=structlog.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
     # Create logger
     logger = logging.getLogger("netzzwergenwacht")
     logger.setLevel(getattr(logging, level.upper()))

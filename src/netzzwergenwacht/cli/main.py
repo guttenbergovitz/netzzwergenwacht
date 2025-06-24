@@ -27,13 +27,39 @@ console = Console()
 @app.command()
 def check(
     url: str = typer.Argument(help="URL to analyze"),
-    output: Path | None = typer.Option(None, "--output", "-o", help="Output file path"),
-    output_format: str = typer.Option(
-        "text", "--format", "-f", help="Output format (json, text)"
+    output: Path | None = typer.Option(
+        None, 
+        "--output", 
+        "-o", 
+        help="Output file path",
+        dir_okay=False,
+        writable=True
     ),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    output_format: str = typer.Option(
+        "text", 
+        "--format", 
+        "-f", 
+        help="Output format (json, text)",
+        case_sensitive=False
+    ),
+    verbose: bool = typer.Option(
+        False, 
+        "--verbose", 
+        "-v", 
+        help="Verbose output including technical details"
+    ),
     checks: list[str] | None = typer.Option(
-        None, "--checks", "-c", help="Specific checks to run"
+        None, 
+        "--checks", 
+        "-c", 
+        help="Specific checks to run (comma separated)",
+        callback=lambda x: [c.strip() for c in x.split(",")] if x else None
+    ),
+    log_level: str = typer.Option(
+        "INFO",
+        "--log-level",
+        help="Logging level (DEBUG, INFO, WARNING, ERROR)",
+        case_sensitive=False
     ),
 ) -> None:
     """Run quality checks on a website."""
