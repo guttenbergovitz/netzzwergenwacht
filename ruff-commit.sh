@@ -1,5 +1,5 @@
 #!/bin/bash
-# ruff-commit.sh: Automatyczny cykl lint-format-add-commit dla ruff
+# ruff-commit.sh: Automated lint-format-add-commit cycle for ruff
 
 set -e
 
