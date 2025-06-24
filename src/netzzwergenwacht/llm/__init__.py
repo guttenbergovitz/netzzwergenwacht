@@ -23,6 +23,8 @@ class LLMProcessor:
     def __init__(self, model: str = "gpt-4-turbo"):
         self.model = model
         self.api_key = os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OPENAI_API_KEY environment variable not set")
         self.base_url = "https://api.openai.com/v1"
         self.timeout = 30.0
         

@@ -86,6 +86,11 @@ def analyze(
         "json", "--format", "-f", help="Output format (json, text)"
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
+    llm: bool = typer.Option(
+        False,
+        "--llm",
+        help="Enable LLM processing of results (requires OPENAI_API_KEY)",
+    ),
 ) -> None:
     """Run comprehensive analysis with detailed results for LLM integration."""
     console.print(f"[bold blue]Comprehensive Analysis:[/bold blue] {url}")
@@ -96,6 +101,32 @@ def analyze(
 
     # Display summary
     _display_comprehensive_summary(report, verbose)
+
+    # Process with LLM if enabled
+    if llm:
+        from ..llm import LLMProcessor
+        
+        console.print("\n[bold blue]Processing with LLM...[/bold blue]")
+        processor = LLMProcessor()
+        
+        try:
+            llm_results = asyncio.run(processor.analyze_report(report))
+            console.print("\n[bold green]LLM Analysis Summary:[/bold green]")
+            console.print(llm_results["summary"])
+            
+            if llm_results["recommendations"]:
+                console.print("\n[bold]Top Recommendations:[/bold]")
+                for i, rec in enumerate(llm_results["recommendations"], 1):
+                    console.print(f"  {i}. {rec}")
+                    
+            # Save LLM results
+            if output:
+                llm_path = output.with_suffix(".llm.json")
+                processor.save_for_llm(report, llm_path)
+                console.print(f"\n[green]LLM results saved to:[/green] {llm_path}")
+                
+        except Exception as e:
+            console.print(f"[red]LLM processing failed:[/red] {str(e)}")
 
     # Save to file if requested
     if output:
