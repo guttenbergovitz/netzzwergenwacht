@@ -55,7 +55,8 @@ src/netzzwergenwacht/
 ├── cli/                    # Command-line interface
 ├── dwarfs/                # Core analysis agents (Zwerge)
 │   ├── base.py            # Base classes and abstractions
-│   └── web_browser_zwerg.py # Web-Browser-Zwerg agent
+│   ├── web_browser_zwerg.py # Web-Browser-Zwerg agent
+│   └── sicherheits_zwerg.py # Sicherheits-Zwerg agent
 ├── analyzers/             # Specific quality check implementations
 ├── config/                # Configuration management
 ├── llm/                  # LLM integration (future)
@@ -82,8 +83,14 @@ Our analysis agents follow German naming conventions as our signature branding:
   - Basic SEO analysis (title length, H1 tags)
   - Accessibility checks (alt text, lang attributes)
 
+- **`Sicherheits-Zwerg`** - Security analysis for SSL certificates, headers and vulnerabilities
+  - SSL/TLS certificate validation and expiry checking
+  - Security headers analysis (HSTS, CSP, X-Frame-Options, etc.)
+  - HTTPS enforcement validation
+  - Cipher strength and protocol version checking
+  - Information disclosure detection
+
 #### Planned Zwerge:
-- **`Sicherheits-Zwerg`** - Security analysis (SSL certificates, HTTP headers, security vulnerabilities)
 - **`Zugaenglichkeits-Zwerg`** - Accessibility testing (WCAG compliance, screen reader compatibility)
 - **`Leistungs-Zwerg`** - Performance monitoring (Core Web Vitals, loading times, optimization)
 - **`SEO-Zwerg`** - Search engine optimization (meta tags, structured data, keyword analysis)
@@ -95,7 +102,7 @@ Our analysis agents follow German naming conventions as our signature branding:
 ### ✅ Foundation & Setup (Phase 0)
 - [x] Git repository and project structure
 - [x] Modern Python packaging with `uv`
-- [x] Comprehensive test suite (18 tests passing)
+- [x] Comprehensive test suite (25 tests passing)
 - [x] Code quality tools (ruff, mypy, pre-commit)
 - [x] Rich CLI with Typer
 - [x] Modular architecture with base abstractions

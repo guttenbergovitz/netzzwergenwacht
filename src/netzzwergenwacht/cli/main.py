@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..dwarfs.base import DwarfOrchestrator
+from ..dwarfs.sicherheits_zwerg import SicherheitsZwerg
 from ..dwarfs.web_browser_zwerg import WebBrowserZwerg
 
 app = typer.Typer(
@@ -70,6 +71,7 @@ async def _run_analysis(url: str, checks: list[str] | None = None) -> list:
 
     # Add available Zwerge
     orchestrator.add_dwarf(WebBrowserZwerg())
+    orchestrator.add_dwarf(SicherheitsZwerg())
 
     # TODO: Add more Zwerge based on checks parameter
 
