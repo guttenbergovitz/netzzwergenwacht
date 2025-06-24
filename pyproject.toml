@@ -2,7 +2,6 @@
 name = "netzzwergenwacht"
 version = "0.1.0"
 description = "Intelligent website quality monitoring using LLM-powered Dwarfs"
-dynamic = ["dependencies"]
 authors = [{name = "Krzysztof Guttenberger", email = "krzysztof@guttenberger.com"}]
 license = {text = "MIT"}
 readme = "README.md"
