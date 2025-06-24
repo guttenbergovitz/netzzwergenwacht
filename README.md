@@ -90,6 +90,7 @@ Our analysis agents follow German naming conventions as our signature branding:
   - Network request failure monitoring
   - Performance resource loading analysis
   - Browser-based accessibility validation
+  - **Mobile & Responsive Testing**: Emulacja mobile/tablet/desktop, automatyczne screenshoty, wykrywanie problemów z viewportem, touch targets, fontami, przewijaniem
 
 - **`Sicherheits-Zwerg`** - Security analysis for SSL certificates, headers and vulnerabilities
   - SSL/TLS certificate validation and expiry checking
@@ -127,6 +128,7 @@ Our analysis agents follow German naming conventions as our signature branding:
   - Semantic HTML structure
   - ARIA compliance
   - Screen reader compatibility
+  - **Mobile & Responsive Checks**: Viewport meta, touch targets, breakpoints, font sizes, horizontal scroll, flexbox/grid, optymalizacja obrazów i zasobów
 
 - **`Inhalt-Zwerg`** - Content quality and readability analysis
   - Content length and structure analysis
@@ -136,9 +138,6 @@ Our analysis agents follow German naming conventions as our signature branding:
   - Content freshness indicators
   - Heading structure validation
   - Content formatting analysis
-
-#### Planned Zwerge:
-- **`Mobile-Zwerg`** - Mobile-specific testing (responsive design, touch targets, viewport)
 
 ## 🎯 Current Status: Phase 1 Complete ✅
 
@@ -254,8 +253,7 @@ class SicherheitsZwerg(Dwarf):
 ### Phase 2: Advanced Analysis Features 🚧 **IN PROGRESS**
 - [x] **Enhanced Performance Metrics** - Core Web Vitals (LCP, FCP, CLS) with browser automation
 - [x] **System Resource Monitoring** - CPU and memory usage tracking
-- [ ] Advanced Security Scanning - Vulnerability assessment, dependency checking
-- [ ] Mobile Testing - Responsive design validation, mobile-specific checks
+- [x] **Mobile & Responsive Testing** (viewport, touch targets, breakpoints, font sizes, screenshots)
 - [ ] Screenshot & Visual Analysis - Visual regression testing capabilities
 - [ ] API Testing - Endpoint validation and performance testing
 

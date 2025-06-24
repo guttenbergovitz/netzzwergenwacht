@@ -112,6 +112,25 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     issues.extend(eaa_compliance["issues"])
                     metadata.update(eaa_compliance["metadata"])
 
+                    # Mobile and responsive accessibility testing
+                    mobile_responsive = (
+                        await self._check_mobile_responsive_accessibility(soup, url)
+                    )
+                    issues.extend(mobile_responsive["issues"])
+                    metadata.update(mobile_responsive["metadata"])
+
+                    responsive_breakpoints = await self._check_responsive_breakpoints(
+                        soup, url
+                    )
+                    issues.extend(responsive_breakpoints["issues"])
+                    metadata.update(responsive_breakpoints["metadata"])
+
+                    mobile_performance = (
+                        await self._check_mobile_performance_accessibility(soup, url)
+                    )
+                    issues.extend(mobile_performance["issues"])
+                    metadata.update(mobile_performance["metadata"])
+
                 except httpx.RequestError as e:
                     issues.append(
                         self.create_issue(
@@ -1268,69 +1287,399 @@ class ZugaenglichkeitsZwerg(Dwarf):
         issues = []
         metadata = {}
 
-        # EAA requires accessibility statements
-        accessibility_statement_links = soup.find_all(
-            "a", string=re.compile(r"accessibility|barrierefreiheit", re.I)
-        )
-        accessibility_statement_links.extend(
-            soup.find_all("a", href=re.compile(r"accessibility|barrierefreiheit", re.I))
-        )
+        # Check for EU-specific accessibility features
+        eu_accessibility_features = []
 
-        metadata["accessibility_statement_links"] = len(accessibility_statement_links)
-
-        if not accessibility_statement_links:
+        # Check for accessibility statement link
+        accessibility_links = soup.find_all(
+            "a",
+            href=re.compile(r"accessibility|barrierefreiheit|toegankelijkheid", re.I),
+        )
+        if not accessibility_links:
             issues.append(
                 self.create_issue(
                     issue_type="eaa_missing_accessibility_statement",
-                    severity=Severity.HIGH,
-                    message="EAA: No accessibility statement link found",
-                    location=url,
-                    evidence={
-                        "eaa_requirement": "Article 7 - Accessibility statement",
-                        "recommendation": "Provide a link to an accessibility statement",
-                    },
-                )
-            )
-
-        # EAA requires feedback mechanisms
-        feedback_mechanisms = soup.find_all(
-            "a", href=re.compile(r"mailto:|contact|feedback", re.I)
-        )
-        contact_forms = soup.find_all("form")
-
-        metadata["feedback_mechanisms"] = len(feedback_mechanisms) + len(contact_forms)
-
-        if len(feedback_mechanisms) + len(contact_forms) == 0:
-            issues.append(
-                self.create_issue(
-                    issue_type="eaa_missing_feedback_mechanism",
                     severity=Severity.MEDIUM,
-                    message="EAA: No clear feedback mechanism found",
+                    message="EU Accessibility Act: Missing accessibility statement link",
                     location=url,
                     evidence={
-                        "eaa_requirement": "Article 7 - Feedback mechanism",
-                        "recommendation": "Provide contact information or feedback form for accessibility issues",
+                        "requirement": "EU EAA Article 7 - Accessibility Statement",
+                        "recommendation": "Add a link to accessibility statement in footer or main navigation",
+                    },
+                )
+            )
+        else:
+            eu_accessibility_features.append("accessibility_statement")
+
+        # Check for contact information for accessibility issues
+        contact_patterns = [
+            r"accessibility.*contact|contact.*accessibility",
+            r"barrierefreiheit.*kontakt|kontakt.*barrierefreiheit",
+            r"toegankelijkheid.*contact|contact.*toegankelijkheid",
+        ]
+        contact_found = False
+        for pattern in contact_patterns:
+            if soup.find(text=re.compile(pattern, re.I)):
+                contact_found = True
+                break
+
+        if not contact_found:
+            issues.append(
+                self.create_issue(
+                    issue_type="eaa_missing_accessibility_contact",
+                    severity=Severity.MEDIUM,
+                    message="EU Accessibility Act: Missing contact information for accessibility issues",
+                    location=url,
+                    evidence={
+                        "requirement": "EU EAA Article 7 - Feedback Mechanism",
+                        "recommendation": "Provide clear contact information for accessibility feedback",
+                    },
+                )
+            )
+        else:
+            eu_accessibility_features.append("accessibility_contact")
+
+        # Check for compliance level declaration
+        compliance_patterns = [
+            r"wcag.*2\.1.*aa|wcag.*2\.1.*aaa",
+            r"conform.*wcag.*2\.1",
+            r"compliant.*wcag.*2\.1",
+        ]
+        compliance_declared = False
+        for pattern in compliance_patterns:
+            if soup.find(text=re.compile(pattern, re.I)):
+                compliance_declared = True
+                break
+
+        if not compliance_declared:
+            issues.append(
+                self.create_issue(
+                    issue_type="eaa_missing_compliance_declaration",
+                    severity=Severity.LOW,
+                    message="EU Accessibility Act: Missing WCAG compliance level declaration",
+                    location=url,
+                    evidence={
+                        "requirement": "EU EAA Article 7 - Compliance Declaration",
+                        "recommendation": "Declare WCAG 2.1 AA compliance level in accessibility statement",
+                    },
+                )
+            )
+        else:
+            eu_accessibility_features.append("compliance_declaration")
+
+        metadata.update({
+            "eu_accessibility_features": eu_accessibility_features,
+            "eaa_compliance_score": len(eu_accessibility_features) / 3 * 100,
+        })
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_mobile_responsive_accessibility(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Check mobile and responsive design accessibility features."""
+        issues = []
+        metadata = {}
+
+        # Check viewport meta tag
+        viewport_meta = soup.find("meta", attrs={"name": "viewport"})
+        if not viewport_meta:
+            issues.append(
+                self.create_issue(
+                    issue_type="mobile_missing_viewport_meta",
+                    severity=Severity.HIGH,
+                    message="Mobile accessibility: Missing viewport meta tag",
+                    location=url,
+                    evidence={
+                        "requirement": "Mobile-first responsive design",
+                        "recommendation": "Add <meta name='viewport' content='width=device-width, initial-scale=1'>",
+                    },
+                )
+            )
+        else:
+            content = viewport_meta.get("content", "")
+            if "width=device-width" not in content or "initial-scale=1" not in content:
+                issues.append(
+                    self.create_issue(
+                        issue_type="mobile_invalid_viewport_content",
+                        severity=Severity.MEDIUM,
+                        message="Mobile accessibility: Invalid viewport meta content",
+                        location=url,
+                        evidence={
+                            "current_content": content,
+                            "recommended": "width=device-width, initial-scale=1",
+                        },
+                    )
+                )
+
+        # Check for touch-friendly elements
+        touch_elements = soup.find_all(["button", "a", "input", "select"])
+        small_touch_targets = []
+
+        for element in touch_elements:
+            # Check for explicit size attributes or CSS classes that might indicate small size
+            style = element.get("style", "")
+            class_attr = element.get("class", [])
+
+            # Look for patterns that might indicate small elements
+            if any(
+                size in style.lower()
+                for size in [
+                    "width: 20px",
+                    "height: 20px",
+                    "width: 30px",
+                    "height: 30px",
+                ]
+            ):
+                small_touch_targets.append(str(element)[:100])
+            elif any(
+                cls in str(class_attr).lower() for cls in ["small", "tiny", "mini"]
+            ):
+                small_touch_targets.append(str(element)[:100])
+
+        if small_touch_targets:
+            issues.append(
+                self.create_issue(
+                    issue_type="mobile_small_touch_targets",
+                    severity=Severity.MEDIUM,
+                    message=f"Mobile accessibility: {len(small_touch_targets)} potentially small touch targets",
+                    location=url,
+                    evidence={
+                        "small_targets_count": len(small_touch_targets),
+                        "recommendation": "Ensure touch targets are at least 44x44px for mobile accessibility",
+                        "sample_elements": small_touch_targets[:3],
                     },
                 )
             )
 
-        # Check for compatibility with assistive technologies
-        # This is a basic check - full compliance would require actual AT testing
-        problematic_elements = soup.find_all(["blink", "marquee"])
-        if problematic_elements:
+        # Check for mobile-specific accessibility issues
+        mobile_issues = []
+
+        # Check for horizontal scrolling on mobile
+        if soup.find("div", style=re.compile(r"overflow-x.*scroll|overflow.*auto")):
+            mobile_issues.append("potential_horizontal_scroll")
+
+        # Check for fixed positioning that might hide content on mobile
+        fixed_elements = soup.find_all(attrs={"style": re.compile(r"position.*fixed")})
+        if fixed_elements:
+            mobile_issues.append("fixed_positioning_may_hide_content")
+
+        # Check for font sizes that might be too small on mobile
+        small_fonts = soup.find_all(attrs={"style": re.compile(r"font-size.*[0-9]px")})
+        for font in small_fonts:
+            style = font.get("style", "")
+            if re.search(r"font-size.*1[0-2]px", style):
+                mobile_issues.append("potentially_small_fonts")
+                break
+
+        if mobile_issues:
             issues.append(
                 self.create_issue(
-                    issue_type="eaa_incompatible_elements",
-                    severity=Severity.HIGH,
-                    message=f"EAA: {len(problematic_elements)} elements incompatible with assistive technologies",
+                    issue_type="mobile_accessibility_concerns",
+                    severity=Severity.MEDIUM,
+                    message=f"Mobile accessibility: {len(mobile_issues)} potential issues detected",
                     location=url,
                     evidence={
-                        "problematic_elements": [
-                            elem.name for elem in problematic_elements
-                        ],
-                        "eaa_requirement": "Compatibility with assistive technologies",
+                        "mobile_issues": mobile_issues,
+                        "recommendation": "Test on actual mobile devices and ensure content is accessible",
                     },
                 )
             )
+
+        metadata.update({
+            "viewport_meta_present": viewport_meta is not None,
+            "small_touch_targets_count": len(small_touch_targets),
+            "mobile_issues_detected": len(mobile_issues),
+        })
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_responsive_breakpoints(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Check for responsive design breakpoints and CSS media queries."""
+        issues = []
+        metadata = {}
+
+        # Check for CSS media queries in style tags
+        style_tags = soup.find_all("style")
+        media_queries = []
+
+        for style in style_tags:
+            content = style.get_text()
+            # Look for common breakpoint patterns
+            breakpoints = re.findall(
+                r"@media.*\(.*max-width.*\)|@media.*\(.*min-width.*\)", content
+            )
+            media_queries.extend(breakpoints)
+
+        # Check for external CSS files that might contain responsive styles
+        css_links = soup.find_all("link", rel="stylesheet")
+        external_css_count = len(css_links)
+
+        # Common responsive breakpoints to check for
+        common_breakpoints = {
+            "mobile": ["320px", "375px", "425px", "480px"],
+            "tablet": ["768px", "768px", "1024px"],
+            "desktop": ["1024px", "1200px", "1440px"],
+        }
+
+        found_breakpoints = []
+        for device, breakpoints in common_breakpoints.items():
+            for bp in breakpoints:
+                if any(bp in mq for mq in media_queries):
+                    found_breakpoints.append(f"{device}: {bp}")
+
+        if not media_queries and external_css_count == 0:
+            issues.append(
+                self.create_issue(
+                    issue_type="responsive_no_media_queries",
+                    severity=Severity.HIGH,
+                    message="Responsive design: No media queries or external CSS detected",
+                    location=url,
+                    evidence={
+                        "recommendation": "Implement responsive design with CSS media queries",
+                        "common_breakpoints": common_breakpoints,
+                    },
+                )
+            )
+        elif not found_breakpoints:
+            issues.append(
+                self.create_issue(
+                    issue_type="responsive_no_standard_breakpoints",
+                    severity=Severity.MEDIUM,
+                    message="Responsive design: No standard breakpoints detected",
+                    location=url,
+                    evidence={
+                        "found_media_queries": len(media_queries),
+                        "external_css_files": external_css_count,
+                        "recommendation": "Use standard breakpoints for better device compatibility",
+                    },
+                )
+            )
+
+        # Check for flexbox or grid usage
+        flexbox_used = any("display: flex" in str(style) for style in style_tags)
+        grid_used = any("display: grid" in str(style) for style in style_tags)
+
+        if not flexbox_used and not grid_used:
+            issues.append(
+                self.create_issue(
+                    issue_type="responsive_no_modern_layout",
+                    severity=Severity.LOW,
+                    message="Responsive design: No flexbox or grid layout detected",
+                    location=url,
+                    evidence={
+                        "recommendation": "Consider using flexbox or CSS grid for better responsive layouts",
+                    },
+                )
+            )
+
+        metadata.update({
+            "media_queries_found": len(media_queries),
+            "external_css_files": external_css_count,
+            "standard_breakpoints_found": found_breakpoints,
+            "flexbox_used": flexbox_used,
+            "grid_used": grid_used,
+        })
+
+        return {"issues": issues, "metadata": metadata}
+
+    async def _check_mobile_performance_accessibility(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Check mobile performance aspects that affect accessibility."""
+        issues = []
+        metadata = {}
+
+        # Check for large images without optimization
+        images = soup.find_all("img")
+        large_images = []
+
+        for img in images:
+            src = img.get("src", "")
+            # Check for common large image patterns
+            if any(pattern in src.lower() for pattern in [".jpg", ".jpeg", ".png"]):
+                # Look for size hints in attributes
+                width = img.get("width")
+                height = img.get("height")
+                if width and height:
+                    try:
+                        w, h = int(width), int(height)
+                        if w > 1200 or h > 1200:
+                            large_images.append({"src": src, "size": f"{w}x{h}"})
+                    except ValueError:
+                        pass
+
+        if large_images:
+            issues.append(
+                self.create_issue(
+                    issue_type="mobile_large_images",
+                    severity=Severity.MEDIUM,
+                    message=f"Mobile performance: {len(large_images)} potentially large images detected",
+                    location=url,
+                    evidence={
+                        "large_images_count": len(large_images),
+                        "sample_images": large_images[:3],
+                        "recommendation": "Optimize images for mobile devices and use responsive images",
+                    },
+                )
+            )
+
+        # Check for external resources that might slow down mobile
+        external_resources = []
+
+        # External scripts
+        scripts = soup.find_all("script", src=True)
+        for script in scripts:
+            src = script.get("src")
+            if src and not src.startswith(("/", "./", "../")):
+                external_resources.append(f"script: {src}")
+
+        # External stylesheets
+        stylesheets = soup.find_all("link", rel="stylesheet")
+        for stylesheet in stylesheets:
+            href = stylesheet.get("href")
+            if href and not href.startswith(("/", "./", "../")):
+                external_resources.append(f"stylesheet: {href}")
+
+        if len(external_resources) > 5:
+            issues.append(
+                self.create_issue(
+                    issue_type="mobile_too_many_external_resources",
+                    severity=Severity.MEDIUM,
+                    message=f"Mobile performance: {len(external_resources)} external resources may slow loading",
+                    location=url,
+                    evidence={
+                        "external_resources_count": len(external_resources),
+                        "sample_resources": external_resources[:5],
+                        "recommendation": "Minimize external resources and use resource hints for critical resources",
+                    },
+                )
+            )
+
+        # Check for missing resource hints
+        resource_hints = soup.find_all(
+            "link", rel=["preload", "prefetch", "dns-prefetch"]
+        )
+        if not resource_hints:
+            issues.append(
+                self.create_issue(
+                    issue_type="mobile_missing_resource_hints",
+                    severity=Severity.LOW,
+                    message="Mobile performance: No resource hints for performance optimization",
+                    location=url,
+                    evidence={
+                        "recommendation": "Use preload, prefetch, or dns-prefetch for critical resources",
+                    },
+                )
+            )
+
+        metadata.update({
+            "total_images": len(images),
+            "large_images_count": len(large_images),
+            "external_resources_count": len(external_resources),
+            "resource_hints_count": len(resource_hints),
+        })
 
         return {"issues": issues, "metadata": metadata}

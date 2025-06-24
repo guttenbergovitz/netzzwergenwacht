@@ -97,9 +97,9 @@ The project is currently in **Phase 2** with a comprehensive modular architectur
 ### Core Components
 
 - **Dwarf Agents**: Modular analysis components
-  - `WebBrowserZwerg` - Browser automation with Playwright
+  - `WebBrowserZwerg` - Browser automation with Playwright, mobile/responsive emulacja, screenshoty
   - `SicherheitsZwerg` - Security analysis and vulnerability scanning
-  - `ZugaenglichkeitsZwerg` - Accessibility compliance (WCAG 2.1 AA, EU/EAA)
+  - `ZugaenglichkeitsZwerg` - Accessibility compliance (WCAG 2.1 AA, EU/EAA), mobile/responsive checks
   - `LeistungsZwerg` - Performance analysis and Core Web Vitals
   - `SEOZwerg` - Search engine optimization analysis
   - `InhaltZwerg` - Content quality and readability analysis
@@ -147,9 +147,18 @@ The project is currently in **Phase 2** with a comprehensive modular architectur
 - **System resource monitoring** (CPU, memory usage)
 - **Performance thresholds** and recommendations
 
+#### Mobile & Responsive Testing (ZugaenglichkeitsZwerg, WebBrowserZwerg)
+- **Viewport meta** tag detection and validation
+- **Touch target size** and spacing analysis
+- **Responsive breakpoints** and media query detection
+- **Font size** checks for mobile readability
+- **Horizontal scroll** and fixed positioning detection
+- **Modern layout** (flexbox/grid) usage validation
+- **Image optimization** for mobile
+- **Automated screenshots** for mobile, tablet, desktop viewports (output/ directory)
+
 ### Phase 2 In Progress Features
 
-- **Mobile Testing & Responsive Design**
 - **Visual Analysis & UI Testing**
 - **API Testing & Integration**
 
@@ -173,7 +182,7 @@ The project follows a phased approach:
   - ✅ Core Web Vitals & Performance Monitoring
   - ✅ Advanced Security Scanning
   - ✅ Enhanced ARIA & Accessibility Compliance
-  - 🔄 Mobile Testing & Responsive Design
+  - ✅ Mobile & Responsive Testing
   - 🔄 Visual Analysis & UI Testing
   - 🔄 API Testing & Integration
 - **📋 Phase 3**: LLM Integration (planned)
