@@ -9,6 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from ..dwarfs.base import DwarfOrchestrator
+from ..dwarfs.inhalt_zwerg import InhaltZwerg
 from ..dwarfs.leistungs_zwerg import LeistungsZwerg
 from ..dwarfs.seo_zwerg import SEOZwerg
 from ..dwarfs.sicherheits_zwerg import SicherheitsZwerg
@@ -76,6 +77,7 @@ async def _run_analysis(url: str, checks: list[str] | None = None) -> list:
     orchestrator.add_dwarf(LeistungsZwerg())
     orchestrator.add_dwarf(SEOZwerg())
     orchestrator.add_dwarf(ZugaenglichkeitsZwerg())
+    orchestrator.add_dwarf(InhaltZwerg())
 
     # TODO: Add more Zwerge based on checks parameter
 
