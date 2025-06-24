@@ -31,7 +31,7 @@ def check(
     checks: list[str] | None = typer.Option(
         None, "--checks", "-c", help="Specific checks to run"
     ),
-):
+) -> None:
     """Run quality checks on a website."""
     console.print(f"[bold blue]Analyzing:[/bold blue] {url}")
 
@@ -48,14 +48,14 @@ def check(
 
 
 @app.command()
-def monitor(config_file: Path = typer.Argument(help="Configuration file path")):
+def monitor(config_file: Path = typer.Argument(help="Configuration file path")) -> None:
     """Start monitoring websites based on configuration."""
     console.print("[yellow]Monitor command not yet implemented.[/yellow]")
     console.print(f"Configuration file: {config_file}")
 
 
 @app.command()
-def version():
+def version() -> None:
     """Show version information."""
     from .. import __author__, __version__
 
@@ -179,7 +179,7 @@ def _display_results(results: list, verbose: bool = False) -> None:
             console.print(f"\n[dim]Total issues found: {len(result.issues)}[/dim]")
 
             # Issue breakdown by severity
-            severity_counts = {}
+            severity_counts: dict[str, int] = {}
             for issue in result.issues:
                 severity_counts[issue.severity.value] = (
                     severity_counts.get(issue.severity.value, 0) + 1

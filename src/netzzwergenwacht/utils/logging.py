@@ -34,7 +34,7 @@ def setup_logging(
 
     # Console handler
     if rich_console:
-        console_handler = RichHandler(
+        console_handler: logging.Handler = RichHandler(
             rich_tracebacks=True, show_time=False, show_path=False
         )
         console_handler.setFormatter(logging.Formatter("%(message)s"))

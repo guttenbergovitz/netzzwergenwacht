@@ -4,6 +4,7 @@ import time
 
 import httpx
 from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
 
 from .base import AnalysisResult, Dwarf, Issue, Severity
 
@@ -73,6 +74,14 @@ class WebBrowserZwerg(Dwarf):
                         issues.extend(await self._check_seo_basics(soup, url))
                         issues.extend(await self._check_accessibility_basics(soup, url))
 
+                        # Perform browser-based analysis with Playwright
+                        (
+                            browser_issues,
+                            browser_metadata,
+                        ) = await self._analyze_with_playwright(url)
+                        issues.extend(browser_issues)
+                        metadata.update(browser_metadata)
+
                 except httpx.RequestError as e:
                     issues.append(
                         self.create_issue(
@@ -96,6 +105,187 @@ class WebBrowserZwerg(Dwarf):
                 success=False,
                 error_message=str(e),
             )
+
+    async def _analyze_with_playwright(self, url: str) -> tuple[list[Issue], dict]:
+        """Analyze page using real browser automation with Playwright."""
+        issues = []
+        metadata = {}
+
+        try:
+            async with async_playwright() as p:
+                # Launch browser (headless for automation)
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+
+                # Set user agent
+                await page.set_extra_http_headers({
+                    "User-Agent": "NetzZwergenWacht Browser Dwarf v0.1.0"
+                })
+
+                # Navigate to page and wait for load
+                start_time = time.time()
+                response = await page.goto(
+                    url, wait_until="domcontentloaded", timeout=30000
+                )
+                load_time = time.time() - start_time
+
+                # Add browser metadata
+                metadata.update({
+                    "browser_load_time_ms": round(load_time * 1000, 2),
+                    "browser_status_code": response.status if response else None,
+                    "browser_final_url": page.url,
+                })
+
+                # Check for JavaScript console errors
+                console_errors = []
+                page.on(
+                    "console",
+                    lambda msg: console_errors.append(msg.text)
+                    if msg.type == "error"
+                    else None,
+                )
+
+                # Wait a bit for any delayed JavaScript errors
+                await page.wait_for_timeout(2000)
+
+                if console_errors:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="javascript_console_errors",
+                            severity=Severity.MEDIUM,
+                            message=f"JavaScript console errors detected: {len(console_errors)} errors",
+                            location=url,
+                            evidence={
+                                "console_error_count": len(console_errors),
+                                "sample_errors": console_errors[
+                                    :3
+                                ],  # Show first 3 errors
+                            },
+                        )
+                    )
+
+                # Check for network errors
+                failed_requests = []
+                page.on(
+                    "requestfailed", lambda request: failed_requests.append(request.url)
+                )
+
+                if failed_requests:
+                    issues.append(
+                        self.create_issue(
+                            issue_type="failed_network_requests",
+                            severity=Severity.MEDIUM,
+                            message=f"Failed network requests detected: {len(failed_requests)} requests",
+                            location=url,
+                            evidence={
+                                "failed_request_count": len(failed_requests),
+                                "sample_failed_requests": failed_requests[:3],
+                            },
+                        )
+                    )
+
+                # Check for render-blocking resources
+                performance_entries = await page.evaluate("""
+                    () => {
+                        const entries = performance.getEntriesByType('resource');
+                        return entries.filter(entry =>
+                            entry.initiatorType === 'link' ||
+                            entry.initiatorType === 'script'
+                        ).map(entry => ({
+                            name: entry.name,
+                            type: entry.initiatorType,
+                            duration: entry.duration
+                        }));
+                    }
+                """)
+
+                if performance_entries:
+                    metadata["resource_count"] = len(performance_entries)
+                    slow_resources = [
+                        r for r in performance_entries if r["duration"] > 1000
+                    ]
+
+                    if slow_resources:
+                        issues.append(
+                            self.create_issue(
+                                issue_type="slow_loading_resources",
+                                severity=Severity.LOW,
+                                message=f"Slow loading resources detected: {len(slow_resources)} resources",
+                                location=url,
+                                evidence={
+                                    "slow_resource_count": len(slow_resources),
+                                    "sample_slow_resources": slow_resources[:3],
+                                },
+                            )
+                        )
+
+                # Check for accessibility issues using browser
+                accessibility_issues = await self._check_browser_accessibility(
+                    page, url
+                )
+                issues.extend(accessibility_issues)
+
+                await browser.close()
+
+        except Exception as e:
+            issues.append(
+                self.create_issue(
+                    issue_type="browser_analysis_failed",
+                    severity=Severity.LOW,
+                    message=f"Browser analysis failed: {str(e)}",
+                    location=url,
+                    evidence={"error": str(e)},
+                )
+            )
+
+        return issues, metadata
+
+    async def _check_browser_accessibility(self, page, url: str) -> list[Issue]:
+        """Check accessibility issues using browser automation."""
+        issues = []
+
+        try:
+            # Check for focusable elements without proper labels
+            focusable_elements = await page.evaluate("""
+                () => {
+                    const focusable = document.querySelectorAll(
+                        'button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])'
+                    );
+                    const unlabeled = Array.from(focusable).filter(el => {
+                        const hasLabel = el.getAttribute('aria-label') ||
+                                       el.getAttribute('title') ||
+                                       el.textContent.trim() ||
+                                       el.querySelector('img[alt]');
+                        return !hasLabel;
+                    });
+                    return unlabeled.map(el => ({
+                        tagName: el.tagName.toLowerCase(),
+                        id: el.id || 'no-id',
+                        className: el.className || 'no-class'
+                    }));
+                }
+            """)
+
+            if focusable_elements:
+                issues.append(
+                    self.create_issue(
+                        issue_type="unlabeled_focusable_elements",
+                        severity=Severity.MEDIUM,
+                        message=f"Focusable elements without proper labels: {len(focusable_elements)} elements",
+                        location=url,
+                        evidence={
+                            "unlabeled_count": len(focusable_elements),
+                            "sample_elements": focusable_elements[:3],
+                        },
+                    )
+                )
+
+        except Exception as e:
+            # Browser accessibility check failed, but don't fail the entire analysis
+            # Log the exception for debugging purposes
+            print(f"Browser accessibility check failed for {url}: {e}")
+
+        return issues
 
     async def _check_http_status(
         self, response: httpx.Response, url: str
