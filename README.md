@@ -408,3 +408,135 @@ NetzZwergenWacht now supports a new **detailed analysis mode** for all Zwerge, d
 ---
 
 *Built with ❤️ using modern Python practices and designed for extensibility.*
+# NetzZwergenWacht
+
+[![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+
+Intelligent website quality monitoring using LLM-powered Dwarfs (analysis agents).
+
+## 🚀 Features
+
+- **Comprehensive Analysis**:
+  - ✅ Performance (Core Web Vitals, load times)
+  - 🔒 Security (SSL, headers, vulnerabilities)
+  - 🔍 SEO (meta tags, structure, content)
+  - ♿ Accessibility (WCAG 2.1, EAA)
+  - 📝 Content quality & readability
+  - 🎨 Visual consistency & UI checks
+
+- **Advanced Capabilities**:
+  - Configurable via ENV/.env files
+  - JSON logging support
+  - Detailed analysis mode for LLM integration
+  - Customizable checks per Dwarf
+  - Rich CLI output
+
+## 📦 Installation
+
+```bash
+pip install netzzwergenwacht
+```
+
+For JSON logging support:
+```bash
+pip install netzzwergenwacht[json-logging]
+```
+
+## 🛠️ Basic Usage
+
+### Quick Check
+```bash
+nzw check https://example.com
+```
+
+### Detailed Analysis (LLM-ready)
+```bash
+nzw analyze https://example.com --output report.json
+```
+
+### Monitor Mode
+```bash
+nzw monitor config.yaml
+```
+
+## ⚙️ Configuration
+
+Create `.env` file:
+```ini
+# Core Settings
+NZW_LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
+NZW_LOG_FORMAT=rich # rich, json, plain
+NZW_MAX_WORKERS=10  # Concurrent analysis threads
+
+# Security Settings  
+NZW_SCAN_PORTS=true
+NZW_ALLOW_INSECURE=false
+
+# Dwarf-specific
+NZW_DWARFS__WEB_BROWSER_ZWERG__TIMEOUT=30
+NZW_DWARFS__SICHERHEITS_ZWERG__SCAN_PORTS=true
+```
+
+## 🧑‍💻 Development
+
+### Setup
+```bash
+git clone https://github.com/guttenbergovitz/netzzwergenwacht.git
+cd netzzwergenwacht
+pip install -e .[dev]
+pre-commit install
+```
+
+### Testing
+```bash
+pytest -v --cov=src --cov-report=html
+```
+
+### Code Quality
+```bash
+ruff check src
+ruff format src
+mypy src
+```
+
+## 🧙 The Dwarf Brigade
+
+| Dwarf | Purpose | Key Checks |
+|-------|---------|------------|
+| `WebBrowserZwerg` | Core browser analysis | HTTP status, performance, basic structure |
+| `SicherheitsZwerg` | Security scanning | SSL, headers, vulnerabilities |
+| `LeistungsZwerg` | Performance metrics | Core Web Vitals, load times |
+| `SEOZwerg` | Search optimization | Meta tags, content structure |
+| `ZugaenglichkeitsZwerg` | Accessibility | WCAG 2.1, EAA compliance |
+| `InhaltZwerg` | Content quality | Readability, freshness, structure |
+| `VisualZwerg` | UI/UX analysis | Visual consistency, color contrast |
+
+## 📊 Sample Output
+
+```bash
+nzw check https://example.com --verbose
+```
+
+![Sample CLI Output](https://example.com/sample-output.png) *(placeholder image)*
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit changes (`git commit -m 'Add amazing feature'`)
+4. Push to branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+## 📜 License
+
+MIT - See [LICENSE](LICENSE) for details.
+
+## 📬 Contact
+
+- Author: Krzysztof Guttenberger
+- Email: krzysztof@guttenberger.com
+- GitHub: [@guttenbergovitz](https://github.com/guttenbergovitz)
