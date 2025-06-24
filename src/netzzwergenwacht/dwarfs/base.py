@@ -1,11 +1,14 @@
-"""Base classes for Dwarf agents."""
+"""Base classes and mixins for Dwarf agents."""
 
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Callable, TypeVar
+
+T = TypeVar('T', bound='Dwarf')
 
 
 class Severity(Enum):
@@ -361,12 +364,106 @@ class ComprehensiveAnalysisReport:
     screenshots: dict[str, str] = field(default_factory=dict)
 
 
-class Dwarf(ABC):
-    """Base class for all Dwarf agents."""
+class AnalysisMixin:
+    """Mixin for core analysis capabilities."""
+    
+    @abstractmethod
+    async def analyze(self, url: str) -> AnalysisResult:
+        """Analyze a URL and return findings."""
 
+class DetailedAnalysisMixin:
+    """Mixin for detailed analysis capabilities."""
+    
+    @abstractmethod
+    async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
+        """Analyze a URL with detailed metrics for LLM integration."""
+
+class IssueCreationMixin:
+    """Mixin for standardized issue creation."""
+    
+    def create_issue(
+        self,
+        issue_type: str,
+        severity: Severity,
+        message: str,
+        location: str,
+        evidence: dict[str, Any] | None = None,
+    ) -> Issue:
+        """Helper method to create an Issue."""
+        return Issue(
+            issue_type=issue_type,
+            severity=severity,
+            message=message,
+            location=location,
+            evidence=evidence or {},
+        )
+
+    def create_detailed_issue(
+        self,
+        issue_type: str,
+        severity: Severity,
+        message: str,
+        location: str,
+        category: str,
+        subcategory: str,
+        description: str,
+        impact: str,
+        technical_details: dict[str, Any] | None = None,
+        recommendations: list[str] | None = None,
+        evidence: dict[str, Any] | None = None,
+        priority_score: float = 0.0,
+        code_location: CodeLocation | None = None,
+        fix_suggestions: list[str] | None = None,
+        affected_elements: list[str] | None = None,
+        browser_console_errors: list[str] | None = None,
+        network_errors: list[str] | None = None,
+    ) -> DetailedIssue:
+        """Helper method to create a DetailedIssue."""
+        return DetailedIssue(
+            issue_type=issue_type,
+            severity=severity,
+            message=message,
+            location=location,
+            category=category,
+            subcategory=subcategory,
+            description=description,
+            impact=impact,
+            technical_details=technical_details or {},
+            recommendations=recommendations or [],
+            evidence=evidence or {},
+            priority_score=priority_score,
+            code_location=code_location,
+            fix_suggestions=fix_suggestions or [],
+            affected_elements=affected_elements or [],
+            browser_console_errors=browser_console_errors or [],
+            network_errors=network_errors or [],
+        )
+
+class MetricsCollector:
+    """Standardized metrics collection registry."""
+    
+    def __init__(self):
+        self._metrics_registry: dict[str, Callable[[T], Any]] = {}
+        
+    def register_metric(self, name: str, collector: Callable[[T], Any]):
+        """Register a metric collection function."""
+        self._metrics_registry[name] = collector
+        
+    def collect_all(self, dwarf: T) -> dict[str, Any]:
+        """Collect all registered metrics."""
+        return {
+            name: collector(dwarf)
+            for name, collector in self._metrics_registry.items()
+        }
+
+class Dwarf(AnalysisMixin, DetailedAnalysisMixin, IssueCreationMixin, ABC):
+    """Base class for all Dwarf agents."""
+    
     def __init__(self, name: str, description: str = ""):
         self.name = name
         self.description = description
+        self.logger = logging.getLogger(f"dwarf.{name}")
+        self.metrics = MetricsCollector()
 
     @abstractmethod
     async def analyze(self, url: str) -> AnalysisResult:

@@ -1,10 +1,47 @@
-"""Structured logging utilities."""
+"""Structured logging with Dwarf context."""
 
 import logging
 import sys
+import structlog
 from pathlib import Path
+from typing import Any
 
 from rich.logging import RichHandler
+
+def setup_structured_logging(
+    level: str = "INFO",
+    log_file: Path | None = None,
+    enable_json: bool = False
+) -> None:
+    """Configure structured logging with optional JSON output."""
+    
+    processors = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.StackInfoRenderer(),
+        structlog.dev.set_exc_info,
+        structlog.processors.TimeStamper(fmt="iso"),
+    ]
+
+    if enable_json:
+        processors.append(structlog.processors.JSONRenderer())
+    else:
+        processors.append(structlog.dev.ConsoleRenderer())
+
+    structlog.configure(
+        processors=processors,
+        wrapper_class=structlog.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    # Configure standard logging
+    logging.basicConfig(
+        level=level.upper(),
+        format="%(message)s",
+        handlers=[RichHandler()] if not enable_json else [],
+    )
 
 
 def setup_logging(
