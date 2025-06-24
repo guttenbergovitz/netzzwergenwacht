@@ -94,44 +94,48 @@ Our analysis agents follow German naming conventions as our signature branding:
 - **`Sicherheits-Zwerg`** - Security analysis for SSL certificates, headers and vulnerabilities
   - SSL/TLS certificate validation and expiry checking
   - Security headers analysis (HSTS, CSP, X-Frame-Options, etc.)
-  - HTTPS enforcement validation
-  - Cipher strength and protocol version checking
-  - Information disclosure detection
+  - HTTPS enforcement and redirect analysis
+  - Certificate chain validation
+  - Security rating calculation
 
 - **`Leistungs-Zwerg`** - Performance analysis for load times, resource optimization and Core Web Vitals
-  - Page load time monitoring with performance thresholds
-  - Content size analysis and compression detection
-  - Resource optimization checks (CSS, JS, images)
-  - Caching header validation
-  - Render-blocking resource detection
-  - External resource dependency analysis
+  - Page load time monitoring and threshold analysis
+  - Resource optimization (images, CSS, JS)
+  - Compression and caching header analysis
+  - **Core Web Vitals measurement** - LCP, FCP, CLS with browser automation
+  - **System resource monitoring** - CPU and memory usage tracking
+  - Performance rating calculation
+  - Resource timing analysis
+  - Browser-based performance metrics
 
-- **`SEO-Zwerg`** - Search engine optimization and social media presence analysis
-  - Meta tags validation (title, description, keywords)
-  - Open Graph and Twitter Cards analysis
+- **`SEO-Zwerg`** - Search Engine Optimization analysis
+  - Meta tags analysis (title, description, keywords)
+  - Heading structure validation (H1-H6 hierarchy)
+  - Social media meta tags (Open Graph, Twitter Cards)
   - Structured data detection (JSON-LD, microdata)
-  - Canonical URL validation
-  - Heading structure and content quality analysis
-  - Mobile SEO optimization checks
+  - Canonical URL analysis
+  - Content quality assessment
+  - Mobile optimization checks
 
-- **`Zugaenglichkeits-Zwerg`** - EU Accessibility Act compliance and WCAG 2.1 AA testing
-  - Text alternatives for non-text content (WCAG 1.1.1)
-  - Color contrast analysis (WCAG 1.4.3, 1.4.6)
-  - Keyboard accessibility (WCAG 2.1.1, 2.1.2)
-  - Focus management and skip links (WCAG 2.4.1, 2.4.6)
-  - Language identification (WCAG 3.1.1, 3.1.2)
-  - Forms and labels validation (WCAG 3.3.2)
-  - Semantic HTML structure (WCAG 4.1.1, 4.1.2)
-  - ARIA attributes compliance
-  - EAA-specific requirements (accessibility statements, feedback mechanisms)
+- **`Zugaenglichkeits-Zwerg`** - Accessibility analysis following WCAG and EAA guidelines
+  - WCAG 2.1 compliance checking (Level A, AA, AAA)
+  - EAA (European Accessibility Act) requirements
+  - Text alternatives for images
+  - Color contrast analysis
+  - Keyboard navigation support
+  - Focus management
+  - Semantic HTML structure
+  - ARIA compliance
+  - Screen reader compatibility
 
-- **`Inhalt-Zwerg`** - Content quality analysis for readability, grammar, and content optimization
-  - Text readability analysis (Flesch-Kincaid Reading Ease, Grade Level)
-  - Content length and quality metrics (word count, sentence structure)
-  - Duplicate content detection and similarity analysis
-  - Grammar and language quality checks (formatting, placeholders)
-  - Content structure validation (heading hierarchy, organization)
-  - Content freshness indicators and metadata analysis
+- **`Inhalt-Zwerg`** - Content quality and readability analysis
+  - Content length and structure analysis
+  - Readability scoring (Flesch-Kincaid, Flesch Reading Ease)
+  - Duplicate content detection
+  - Language quality assessment
+  - Content freshness indicators
+  - Heading structure validation
+  - Content formatting analysis
 
 #### Planned Zwerge:
 - **`Mobile-Zwerg`** - Mobile-specific testing (responsive design, touch targets, viewport)
@@ -238,34 +242,40 @@ class SicherheitsZwerg(Dwarf):
         )
 ```
 
-## 🎯 Roadmap
+## 🗺️ Roadmap
 
-### Phase 1: Core Browser Interaction ✅
+### Phase 1: Core Browser Interaction ✅ **COMPLETED**
 - [x] Playwright integration for browser automation
-- [x] Basic page information gathering
-- [x] Enhanced error handling
+- [x] Enhanced Web-Browser-Zwerg with real browser analysis
+- [x] JavaScript console error detection
+- [x] Network request failure monitoring
+- [x] Browser-based accessibility validation
 
-### Phase 2: Quality Analysis
-- [x] JavaScript console error capture
-- [x] Basic SEO and accessibility checks
-- [ ] Broken link detection
-- [ ] Enhanced performance metrics
+### Phase 2: Advanced Analysis Features 🚧 **IN PROGRESS**
+- [x] **Enhanced Performance Metrics** - Core Web Vitals (LCP, FCP, CLS) with browser automation
+- [x] **System Resource Monitoring** - CPU and memory usage tracking
+- [ ] Advanced Security Scanning - Vulnerability assessment, dependency checking
+- [ ] Mobile Testing - Responsive design validation, mobile-specific checks
+- [ ] Screenshot & Visual Analysis - Visual regression testing capabilities
+- [ ] API Testing - Endpoint validation and performance testing
 
-### Phase 3: LLM Intelligence
-- [ ] LLM provider integration
-- [ ] Intelligent issue classification
-- [ ] Context-aware analysis
+### Phase 3: Intelligence & Automation
+- [ ] LLM Integration - AI-powered analysis and recommendations
+- [ ] Automated Fix Suggestions - Code-level optimization recommendations
+- [ ] Trend Analysis - Historical performance tracking
+- [ ] Predictive Analytics - Performance degradation prediction
 
-### Phase 4: Enhanced Reporting
-- [ ] Multiple output formats (JSON, HTML, Markdown)
-- [ ] Alert system for critical issues
-- [ ] Historical tracking
+### Phase 4: Enterprise Features
+- [ ] Multi-site Monitoring - Batch analysis and reporting
+- [ ] Custom Rule Engine - User-defined analysis rules
+- [ ] Integration APIs - REST API for external integrations
+- [ ] Advanced Reporting - PDF reports, dashboards, alerts
 
-### Phase 5: Advanced Features
-- [ ] Scheduled monitoring
-- [ ] Custom check configurations
-- [ ] CI/CD integration
-- [ ] Web dashboard
+### Phase 5: Advanced Intelligence
+- [ ] Machine Learning Models - Pattern recognition and anomaly detection
+- [ ] Natural Language Reports - Human-readable analysis summaries
+- [ ] Competitive Analysis - Benchmarking against industry standards
+- [ ] Continuous Monitoring - Real-time website health monitoring
 
 ## 🛠️ Technology Stack
 

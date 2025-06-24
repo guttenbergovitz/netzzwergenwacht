@@ -1,5 +1,7 @@
 """Tests for LeistungsZwerg."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from netzzwergenwacht.dwarfs.base import Severity
@@ -132,3 +134,141 @@ class TestLeistungsZwerg:
         assert "content_length_kb" in result.metadata
         assert result.metadata["content_length_bytes"] > 0
         assert result.metadata["content_length_kb"] > 0
+
+    @pytest.mark.asyncio
+    @patch("netzzwergenwacht.dwarfs.leistungs_zwerg.async_playwright")
+    async def test_core_web_vitals_analysis_success(self, mock_playwright):
+        """Test successful Core Web Vitals analysis."""
+        zwerg = LeistungsZwerg()
+
+        # Mock Playwright context
+        mock_context = AsyncMock()
+        mock_browser = AsyncMock()
+        mock_page = AsyncMock()
+        mock_response = AsyncMock()
+
+        mock_response.status = 200
+        mock_page.url = "https://example.com"
+        mock_page.goto.return_value = mock_response
+        mock_page.evaluate.return_value = {
+            "lcp": 1500,
+            "fcp": 800,
+            "cls": 0.05,
+            "resource_count": 10,
+            "total_resource_size": 50000,
+        }
+        mock_browser.new_page.return_value = mock_page
+        mock_context.chromium.launch.return_value = mock_browser
+        mock_playwright.return_value.__aenter__.return_value = mock_context
+
+        # Test with a valid URL
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response_http = AsyncMock()
+            mock_response_http.status_code = 200
+            mock_response_http.headers = {"content-type": "text/html"}
+            mock_response_http.content = (
+                b"<html><head><title>Test</title></head><body></body></html>"
+            )
+            mock_response_http.url = "https://example.com"
+            mock_client.return_value.__aenter__.return_value.get.return_value = (
+                mock_response_http
+            )
+
+            result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+        assert "lcp_ms" in result.metadata
+        assert "fcp_ms" in result.metadata
+        assert "cls_score" in result.metadata
+        assert "cpu_usage_percent" in result.metadata
+        assert "memory_usage_percent" in result.metadata
+
+    @pytest.mark.asyncio
+    @patch("netzzwergenwacht.dwarfs.leistungs_zwerg.async_playwright")
+    async def test_core_web_vitals_poor_performance(self, mock_playwright):
+        """Test Core Web Vitals analysis with poor performance metrics."""
+        zwerg = LeistungsZwerg()
+
+        # Mock Playwright context
+        mock_context = AsyncMock()
+        mock_browser = AsyncMock()
+        mock_page = AsyncMock()
+        mock_response = AsyncMock()
+
+        mock_response.status = 200
+        mock_page.url = "https://example.com"
+        mock_page.goto.return_value = mock_response
+        # Mock both evaluate calls - first for initial metrics, second for final metrics
+        mock_page.evaluate.side_effect = [
+            None,  # First call returns None (async function)
+            {
+                "lcp": 5000,  # Poor LCP
+                "fcp": 3500,  # Poor FCP (>3000)
+                "cls": 0.3,  # Poor CLS
+                "resource_count": 50,
+                "total_resource_size": 200000,
+            },
+        ]
+        mock_browser.new_page.return_value = mock_page
+        mock_context.chromium.launch.return_value = mock_browser
+        mock_playwright.return_value.__aenter__.return_value = mock_context
+
+        # Test with a valid URL
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response_http = AsyncMock()
+            mock_response_http.status_code = 200
+            mock_response_http.headers = {"content-type": "text/html"}
+            mock_response_http.content = (
+                b"<html><head><title>Test</title></head><body></body></html>"
+            )
+            mock_response_http.url = "https://example.com"
+            mock_client.return_value.__aenter__.return_value.get.return_value = (
+                mock_response_http
+            )
+
+            result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+
+        # Should have poor performance issues
+        poor_lcp_issues = [i for i in result.issues if i.issue_type == "poor_lcp"]
+        poor_fcp_issues = [i for i in result.issues if i.issue_type == "poor_fcp"]
+        poor_cls_issues = [i for i in result.issues if i.issue_type == "poor_cls"]
+
+        assert len(poor_lcp_issues) == 1
+        assert len(poor_fcp_issues) == 1
+        assert len(poor_cls_issues) == 1
+
+    @pytest.mark.asyncio
+    @patch("netzzwergenwacht.dwarfs.leistungs_zwerg.async_playwright")
+    async def test_core_web_vitals_analysis_failure(self, mock_playwright):
+        """Test Core Web Vitals analysis when browser automation fails."""
+        zwerg = LeistungsZwerg()
+
+        # Mock Playwright to raise an exception
+        mock_playwright.side_effect = Exception("Browser launch failed")
+
+        # Test with a valid URL
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_response_http = AsyncMock()
+            mock_response_http.status_code = 200
+            mock_response_http.headers = {"content-type": "text/html"}
+            mock_response_http.content = (
+                b"<html><head><title>Test</title></head><body></body></html>"
+            )
+            mock_response_http.url = "https://example.com"
+            mock_client.return_value.__aenter__.return_value.get.return_value = (
+                mock_response_http
+            )
+
+            result = await zwerg.analyze("https://example.com")
+
+        assert result.success
+        # Should have core web vitals analysis failed issue
+        failed_issues = [
+            i
+            for i in result.issues
+            if i.issue_type == "core_web_vitals_analysis_failed"
+        ]
+        assert len(failed_issues) == 1
+        assert failed_issues[0].severity == Severity.LOW
