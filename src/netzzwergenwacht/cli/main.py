@@ -48,12 +48,11 @@ def check(
         "-v", 
         help="Verbose output including technical details"
     ),
-    checks: list[str] | None = typer.Option(
-        None, 
-        "--checks", 
-        "-c", 
+    checks: str | None = typer.Option(
+        None,
+        "--checks",
+        "-c",
         help="Specific checks to run (comma separated)",
-        callback=lambda x: [c.strip() for c in x.split(",")] if x else None
     ),
     log_level: str = typer.Option(
         "INFO",
@@ -141,20 +140,28 @@ def version() -> None:
     console.print(panel)
 
 
-async def _run_analysis(url: str, checks: list[str] | None = None) -> list:
+async def _run_analysis(url: str, checks: str | None = None) -> list:
     """Run analysis using Dwarf orchestrator."""
     orchestrator = DwarfOrchestrator()
 
-    # Add available Zwerge
-    orchestrator.add_dwarf(WebBrowserZwerg())
-    orchestrator.add_dwarf(SicherheitsZwerg())
-    orchestrator.add_dwarf(LeistungsZwerg())
-    orchestrator.add_dwarf(SEOZwerg())
-    orchestrator.add_dwarf(ZugaenglichkeitsZwerg())
-    orchestrator.add_dwarf(InhaltZwerg())
-    orchestrator.add_dwarf(VisualZwerg())
+    # Convert checks string to list if provided
+    check_list = [c.strip() for c in checks.split(",")] if checks else None
 
-    # TODO: Add more Zwerge based on checks parameter
+    # Add available Zwerge based on checks parameter
+    if not check_list or "web" in check_list:
+        orchestrator.add_dwarf(WebBrowserZwerg())
+    if not check_list or "security" in check_list:
+        orchestrator.add_dwarf(SicherheitsZwerg())
+    if not check_list or "performance" in check_list:
+        orchestrator.add_dwarf(LeistungsZwerg())
+    if not check_list or "seo" in check_list:
+        orchestrator.add_dwarf(SEOZwerg())
+    if not check_list or "accessibility" in check_list:
+        orchestrator.add_dwarf(ZugaenglichkeitsZwerg())
+    if not check_list or "content" in check_list:
+        orchestrator.add_dwarf(InhaltZwerg())
+    if not check_list or "visual" in check_list:
+        orchestrator.add_dwarf(VisualZwerg())
 
     return await orchestrator.analyze_url(url)
 
