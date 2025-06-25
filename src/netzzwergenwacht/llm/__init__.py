@@ -131,60 +131,147 @@ class LLMProcessor:
     def _prepare_report_summary(
         self, report: ComprehensiveAnalysisReport
     ) -> dict[str, Any]:
-        """Prepare a concise report summary for LLM consumption."""
-        # Extract key insights from each dwarf
+        """Prepare a detailed report summary for LLM consumption with full issue context."""
+        # Extract detailed insights from each dwarf
         dwarf_summaries = []
+        all_detailed_issues = []
+
         for result in report.dwarf_results:
             if not result.success:
+                dwarf_summaries.append({
+                    "dwarf": result.dwarf_name,
+                    "status": "failed",
+                    "error": result.error_message,
+                    "issues": [],
+                })
                 continue
 
-            critical_issues = [
-                i for i in result.detailed_issues if i.severity.value == "critical"
-            ]
-            high_issues = [
-                i for i in result.detailed_issues if i.severity.value == "high"
-            ]
+            # Convert detailed issues to LLM-friendly format
+            issues_for_llm = []
+            for issue in result.detailed_issues:
+                issue_data = {
+                    "type": issue.issue_type,
+                    "severity": issue.severity.value,
+                    "message": issue.message,
+                    "location": issue.location,
+                    "category": issue.category,
+                    "subcategory": issue.subcategory,
+                    "description": issue.description,
+                    "impact": issue.impact,
+                    "priority_score": issue.priority_score,
+                    "recommendations": issue.recommendations,
+                    "fix_suggestions": issue.fix_suggestions,
+                    "technical_details": issue.technical_details,
+                }
+
+                # Add location context if available
+                if issue.code_location:
+                    location_context = {}
+                    if issue.code_location.element_selector:
+                        location_context["element"] = (
+                            issue.code_location.element_selector
+                        )
+                    if issue.code_location.element_tag:
+                        location_context["tag"] = issue.code_location.element_tag
+                    if issue.code_location.element_id:
+                        location_context["id"] = issue.code_location.element_id
+                    if issue.code_location.element_class:
+                        location_context["class"] = issue.code_location.element_class
+                    if issue.code_location.attribute_name:
+                        location_context["attribute"] = (
+                            issue.code_location.attribute_name
+                        )
+                    if issue.code_location.resource_type:
+                        location_context["resource_type"] = (
+                            issue.code_location.resource_type
+                        )
+                    if issue.code_location.url_path:
+                        location_context["url_path"] = issue.code_location.url_path
+                    if issue.code_location.full_element:
+                        location_context["html_element"] = (
+                            issue.code_location.full_element
+                        )
+
+                    if location_context:
+                        issue_data["location_context"] = location_context
+
+                # Add affected elements
+                if issue.affected_elements:
+                    issue_data["affected_elements"] = issue.affected_elements
+
+                issues_for_llm.append(issue_data)
+                all_detailed_issues.append(issue_data)
 
             dwarf_summaries.append({
                 "dwarf": result.dwarf_name,
+                "status": "success",
                 "total_issues": len(result.detailed_issues),
-                "critical_issues": len(critical_issues),
-                "high_issues": len(high_issues),
-                "top_critical_issues": [
-                    {
-                        "type": issue.issue_type,
-                        "message": issue.message,
-                        "impact": issue.impact,
-                        "priority": issue.priority_score,
-                    }
-                    for issue in critical_issues[:3]
-                ],
-                "top_high_issues": [
-                    {
-                        "type": issue.issue_type,
-                        "message": issue.message,
-                        "impact": issue.impact,
-                        "priority": issue.priority_score,
-                    }
-                    for issue in high_issues[:2]
-                ],
+                "issues_by_severity": {
+                    "critical": len([
+                        i
+                        for i in result.detailed_issues
+                        if i.severity.value == "critical"
+                    ]),
+                    "high": len([
+                        i for i in result.detailed_issues if i.severity.value == "high"
+                    ]),
+                    "medium": len([
+                        i
+                        for i in result.detailed_issues
+                        if i.severity.value == "medium"
+                    ]),
+                    "low": len([
+                        i for i in result.detailed_issues if i.severity.value == "low"
+                    ]),
+                },
+                "issues": issues_for_llm,
             })
+
+        # Sort all issues by priority for focused analysis
+        priority_issues = sorted(
+            all_detailed_issues, key=lambda x: x.get("priority_score", 0), reverse=True
+        )
 
         return {
             "url": report.url,
+            "analysis_duration": report.analysis_duration_seconds,
             "overall_score": report.overall_score,
-            "total_issues": report.total_issues,
-            "critical_issues": report.critical_issues,
-            "high_issues": report.high_issues,
-            "medium_issues": report.medium_issues,
-            "low_issues": report.low_issues,
-            "issues_by_category": report.issues_by_category,
-            "dwarf_analysis": dwarf_summaries,
+            "summary_stats": {
+                "total_issues": report.total_issues,
+                "critical_issues": report.critical_issues,
+                "high_issues": report.high_issues,
+                "medium_issues": report.medium_issues,
+                "low_issues": report.low_issues,
+                "issues_by_category": report.issues_by_category,
+                "issues_by_dwarf": report.issues_by_dwarf,
+            },
+            "priority_issues": priority_issues[:10],  # Top 10 highest priority issues
+            "dwarf_results": dwarf_summaries,
+            "actionable_insights": {
+                "immediate_fixes": [
+                    issue
+                    for issue in priority_issues[:5]
+                    if issue.get("severity") in ["critical", "high"]
+                    and issue.get("fix_suggestions")
+                ],
+                "quick_wins": [
+                    issue
+                    for issue in priority_issues
+                    if issue.get("severity") in ["medium", "low"]
+                    and len(issue.get("fix_suggestions", [])) > 0
+                    and any(
+                        keyword in str(issue.get("fix_suggestions", [])).lower()
+                        for keyword in ["add header", "add meta", "add title", "change"]
+                    )
+                ][:5],
+            },
         }
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the LLM."""
         return """You are a senior web quality analyst with expertise in website performance, security, accessibility, and SEO.
+
+You will receive a detailed website analysis report with specific issues, their exact locations, and technical details. Use this information to provide actionable, specific guidance.
 
 Analyze the provided website quality report and provide a comprehensive analysis with the following sections:
 
@@ -192,40 +279,42 @@ Analyze the provided website quality report and provide a comprehensive analysis
 Provide a 3-4 sentence overview of the website's overall quality, highlighting the most significant findings and the overall quality level.
 
 ## 2. Critical Issues Requiring Immediate Attention
-List the 3 most urgent issues that need immediate action, explaining:
-- What the problem is
-- Why it's critical for business/users
-- Immediate impact if not fixed
+For each critical/high priority issue, specify:
+- **Exact Problem**: What is broken and where (include HTML elements, file paths, line numbers if available)
+- **Location**: Specific location in code/HTML (use location_context data)
+- **Business Impact**: Why it's critical for business/users
+- **Immediate Fix**: Exact code/configuration changes needed (use fix_suggestions)
 
-## 3. Priority Recommendations
-Provide 5-7 prioritized recommendations with:
-- Clear action items
-- Expected business impact
-- Estimated effort level (Low/Medium/High)
-- Timeline recommendation (Immediate/Short-term/Medium-term)
+## 3. Specific Technical Fixes
+For the top 5-7 highest priority issues, provide:
+- **Issue**: Brief description and severity
+- **Exact Location**: HTML element, attribute, or configuration file
+- **Code Fix**: Specific HTML/CSS/config changes needed
+- **Implementation**: Step-by-step instructions
+- **Effort Level**: Low/Medium/High
+- **Timeline**: Immediate/Short-term/Medium-term
 
 ## 4. Technical Analysis by Category
-Break down findings by:
-- **Performance**: Load times, Core Web Vitals, optimization opportunities
-- **Security**: Vulnerabilities, SSL issues, headers, exposures
-- **Accessibility**: WCAG compliance, mobile usability, user experience
-- **SEO & Content**: Search optimization, content quality, structure
-- **Visual & UX**: Design consistency, layout issues, user interface
+Break down findings by category, being specific about:
+- **Performance**: Exact metrics, specific optimizations with code examples
+- **Security**: Missing headers with exact header values to add
+- **Accessibility**: Specific HTML elements needing alt text, ARIA labels, etc.
+- **SEO & Content**: Exact meta tags, title lengths, missing elements
+- **Visual & UX**: Specific CSS fixes, overlapping elements, layout issues
 
-## 5. Business Impact Assessment
-Explain how the identified issues affect:
-- User experience and conversion rates
-- Search engine rankings
-- Brand reputation and trust
-- Potential security risks
+## 5. Quick Wins (Low Effort, High Impact)
+List issues that can be fixed quickly with copy-paste solutions:
+- Exact HTML/CSS code to add
+- Configuration changes
+- Header additions with specific values
 
-## 6. Implementation Roadmap
-Suggest a phased approach:
-- **Phase 1 (Immediate - 1-2 weeks)**: Critical fixes
+## 6. Step-by-Step Implementation Guide
+Provide a prioritized checklist with:
+- **Phase 1 (Immediate - 1-2 weeks)**: Critical fixes with exact code
 - **Phase 2 (Short-term - 1 month)**: High-impact improvements
 - **Phase 3 (Medium-term - 2-3 months)**: Long-term optimizations
 
-Focus on actionable insights that developers and business stakeholders can understand and act upon."""
+IMPORTANT: Always reference specific locations, HTML elements, and provide copy-paste ready code fixes when possible. Use the location_context, fix_suggestions, and technical_details provided in the report data."""
 
     def _extract_recommendations(
         self, analysis: str, report: ComprehensiveAnalysisReport
