@@ -98,27 +98,60 @@ def analyze(
     if llm:
         from ..llm import LLMProcessor
 
-        console.print("\n[bold blue]Processing with LLM...[/bold blue]")
-        processor = LLMProcessor()
+        console.print("\n[bold blue]🤖 Initializing LLM Analysis...[/bold blue]")
 
         try:
-            llm_results = asyncio.run(processor.analyze_report(report))
-            console.print("\n[bold green]LLM Analysis Summary:[/bold green]")
-            console.print(llm_results["summary"])
+            processor = LLMProcessor()
+            console.print(f"[dim]Model: {processor.model}[/dim]")
 
-            if llm_results["recommendations"]:
-                console.print("\n[bold]Top Recommendations:[/bold]")
-                for i, rec in enumerate(llm_results["recommendations"], 1):
-                    console.print(f"  {i}. {rec}")
+            llm_results = asyncio.run(processor.analyze_report(report))
+
+            if llm_results.get("success", False):
+                console.print("\n[bold green]✅ LLM Analysis Complete![/bold green]")
+
+                # Show usage and cost info
+                if "usage" in llm_results:
+                    usage = llm_results["usage"]
+                    console.print(
+                        f"[dim]Tokens used: {usage['total_tokens']} (${usage['cost']:.4f})[/dim]"
+                    )
+
+                # Display the full LLM analysis
+                console.print("\n[bold cyan]📋 Detailed LLM Analysis:[/bold cyan]")
+                console.print(llm_results["analysis"])
+
+                # Show extracted recommendations if any
+                if llm_results["recommendations"]:
+                    console.print(
+                        "\n[bold yellow]💡 Key Recommendations:[/bold yellow]"
+                    )
+                    for i, rec in enumerate(llm_results["recommendations"], 1):
+                        console.print(f"  {i}. {rec}")
+
+                # Show priority actions
+                if llm_results["priority_actions"]:
+                    console.print("\n[bold red]🚨 Priority Actions:[/bold red]")
+                    for i, action in enumerate(llm_results["priority_actions"], 1):
+                        console.print(f"  {i}. {action}")
+            else:
+                console.print(
+                    "\n[yellow]⚠️ LLM analysis failed, using fallback analysis[/yellow]"
+                )
+                console.print(llm_results["summary"])
 
             # Save LLM results
             if output:
                 llm_path = output.with_suffix(".llm.json")
                 processor.save_for_llm(report, llm_path)
-                console.print(f"\n[green]LLM results saved to:[/green] {llm_path}")
+                console.print(f"\n[green]💾 LLM results saved to:[/green] {llm_path}")
 
+        except ValueError as e:
+            # This is likely the API key missing error
+            console.print(f"\n[yellow]⚠️ {str(e)}[/yellow]")
+            console.print("[dim]Continuing with standard analysis without LLM...[/dim]")
         except Exception as e:
-            console.print(f"[red]LLM processing failed:[/red] {str(e)}")
+            console.print(f"\n[red]❌ Unexpected LLM error:[/red] {str(e)}")
+            console.print("[dim]Continuing with standard analysis...[/dim]")
 
     # Save to file if requested
     if output:

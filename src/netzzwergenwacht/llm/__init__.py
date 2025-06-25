@@ -25,12 +25,26 @@ class LLMProcessor:
     def __init__(self, model: str = "gpt-4o-mini"):
         self.model = model
         self.api_key = os.getenv("OPENAI_API_KEY")
+
+        # Enhanced logging about LLM setup
         if not self.api_key:
-            logger.warning("OPENAI_API_KEY not set. LLM features will be disabled.")
+            logger.warning("🔑 OPENAI_API_KEY not found in environment variables")
+            logger.info(
+                "💡 To enable LLM features, set: export OPENAI_API_KEY='your-key-here'"
+            )
             raise ValueError("OPENAI_API_KEY environment variable not set")
+
+        # Mask API key for logging (show only first 8 chars)
+        masked_key = f"{self.api_key[:8]}..." if len(self.api_key) > 8 else "***"
+        logger.info(f"🤖 LLM initialized with model: {self.model}")
+        logger.info(f"🔑 Using OpenAI API key: {masked_key}")
 
         self.client = AsyncOpenAI(api_key=self.api_key)
         self.timeout = 30.0
+
+        # Estimate costs per token for the model
+        self.cost_per_1k_input_tokens = self._get_model_costs()[0]
+        self.cost_per_1k_output_tokens = self._get_model_costs()[1]
 
     async def analyze_report(
         self, report: ComprehensiveAnalysisReport
@@ -40,6 +54,16 @@ class LLMProcessor:
             raise LLMError("OPENAI_API_KEY environment variable not set")
 
         report_summary = self._prepare_report_summary(report)
+
+        # Calculate input tokens (rough estimation)
+        input_text = self._get_system_prompt() + json.dumps(report_summary)
+        estimated_input_tokens = len(input_text.split()) * 1.3  # rough estimation
+
+        logger.info(f"📊 Sending request to {self.model}")
+        logger.info(f"📝 Estimated input tokens: ~{estimated_input_tokens:.0f}")
+        logger.info(
+            f"💰 Estimated input cost: ~${estimated_input_tokens * self.cost_per_1k_input_tokens / 1000:.4f}"
+        )
 
         try:
             response = await self.client.chat.completions.create(
@@ -52,7 +76,24 @@ class LLMProcessor:
                     },
                 ],
                 temperature=0.2,
-                max_tokens=2000,
+                max_tokens=3000,  # Increased for more detailed output
+            )
+
+            # Log actual usage
+            usage = response.usage
+            logger.info("✅ LLM request completed successfully")
+            logger.info(
+                f"📊 Token usage - Input: {usage.prompt_tokens}, Output: {usage.completion_tokens}, Total: {usage.total_tokens}"
+            )
+
+            input_cost = usage.prompt_tokens * self.cost_per_1k_input_tokens / 1000
+            output_cost = (
+                usage.completion_tokens * self.cost_per_1k_output_tokens / 1000
+            )
+            total_cost = input_cost + output_cost
+
+            logger.info(
+                f"💰 Actual cost - Input: ${input_cost:.4f}, Output: ${output_cost:.4f}, Total: ${total_cost:.4f}"
             )
 
             analysis_text = response.choices[0].message.content
@@ -65,10 +106,18 @@ class LLMProcessor:
                 "priority_actions": self._extract_priority_actions(
                     analysis_text, report
                 ),
+                "usage": {
+                    "input_tokens": usage.prompt_tokens,
+                    "output_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                    "cost": total_cost,
+                },
+                "success": True,
             }
 
         except Exception as e:
-            logger.error(f"LLM processing failed: {str(e)}")
+            logger.error(f"❌ LLM processing failed: {str(e)}")
+            logger.info("🔄 Falling back to basic analysis without LLM")
             # Fallback to basic analysis
             return {
                 "model": "fallback",
@@ -76,6 +125,7 @@ class LLMProcessor:
                 "summary": self._generate_summary(report),
                 "recommendations": self._generate_recommendations(report),
                 "priority_actions": self._generate_priority_actions(report),
+                "success": False,
             }
 
     def _prepare_report_summary(
@@ -136,20 +186,46 @@ class LLMProcessor:
         """Get the system prompt for the LLM."""
         return """You are a senior web quality analyst with expertise in website performance, security, accessibility, and SEO.
 
-Analyze the provided website quality report and provide:
+Analyze the provided website quality report and provide a comprehensive analysis with the following sections:
 
-1. **Executive Summary** (2-3 sentences): Overall website quality assessment
-2. **Critical Actions** (max 3): Most urgent issues requiring immediate attention
-3. **Recommendations** (max 5): Prioritized improvements with business impact
-4. **Technical Insights** (2-3 key findings): Important technical observations
+## 1. Executive Summary
+Provide a 3-4 sentence overview of the website's overall quality, highlighting the most significant findings and the overall quality level.
 
-Focus on:
-- Business impact of issues
-- Actionable, specific recommendations
-- Prioritization based on severity and user impact
-- Clear, non-technical language for stakeholders
+## 2. Critical Issues Requiring Immediate Attention
+List the 3 most urgent issues that need immediate action, explaining:
+- What the problem is
+- Why it's critical for business/users
+- Immediate impact if not fixed
 
-Format your response as structured text, not JSON."""
+## 3. Priority Recommendations
+Provide 5-7 prioritized recommendations with:
+- Clear action items
+- Expected business impact
+- Estimated effort level (Low/Medium/High)
+- Timeline recommendation (Immediate/Short-term/Medium-term)
+
+## 4. Technical Analysis by Category
+Break down findings by:
+- **Performance**: Load times, Core Web Vitals, optimization opportunities
+- **Security**: Vulnerabilities, SSL issues, headers, exposures
+- **Accessibility**: WCAG compliance, mobile usability, user experience
+- **SEO & Content**: Search optimization, content quality, structure
+- **Visual & UX**: Design consistency, layout issues, user interface
+
+## 5. Business Impact Assessment
+Explain how the identified issues affect:
+- User experience and conversion rates
+- Search engine rankings
+- Brand reputation and trust
+- Potential security risks
+
+## 6. Implementation Roadmap
+Suggest a phased approach:
+- **Phase 1 (Immediate - 1-2 weeks)**: Critical fixes
+- **Phase 2 (Short-term - 1 month)**: High-impact improvements
+- **Phase 3 (Medium-term - 2-3 months)**: Long-term optimizations
+
+Focus on actionable insights that developers and business stakeholders can understand and act upon."""
 
     def _extract_recommendations(
         self, analysis: str, report: ComprehensiveAnalysisReport
@@ -281,6 +357,22 @@ Format your response as structured text, not JSON."""
                     )
 
         return actions[:3]
+
+    def _get_model_costs(self) -> tuple[float, float]:
+        """Get cost per 1K tokens for input and output for the current model.
+
+        Returns:
+            Tuple of (input_cost_per_1k, output_cost_per_1k) in USD
+        """
+        # Pricing as of December 2024 (in USD per 1K tokens)
+        model_costs = {
+            "gpt-4o-mini": (0.00015, 0.0006),  # Very economical
+            "gpt-4o": (0.0025, 0.01),  # More powerful but expensive
+            "gpt-4-turbo": (0.01, 0.03),  # Previous generation
+            "gpt-3.5-turbo": (0.0005, 0.0015),  # Legacy but cheap
+        }
+
+        return model_costs.get(self.model, (0.001, 0.003))  # Default fallback
 
     def save_for_llm(self, report: ComprehensiveAnalysisReport, path: Path) -> None:
         """Save report in LLM-friendly JSON format."""
