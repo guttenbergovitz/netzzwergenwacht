@@ -75,13 +75,18 @@ def analyze(
     url: str = typer.Argument(help="URL to analyze"),
     output: Path | None = typer.Option(None, "--output", "-o", help="Output file path"),
     output_format: str = typer.Option(
-        "json", "--format", "-f", help="Output format (json, text)"
+        "json", "--format", "-f", help="Output format (json, text, pdf)"
     ),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
     llm: bool = typer.Option(
         False,
         "--llm",
         help="Enable LLM processing of results (requires OPENAI_API_KEY)",
+    ),
+    pdf_type: str = typer.Option(
+        "comprehensive",
+        "--pdf-type",
+        help="PDF report type (executive, technical, comprehensive)",
     ),
 ) -> None:
     """Run comprehensive analysis with detailed results for LLM integration."""
@@ -94,8 +99,11 @@ def analyze(
     # Display summary
     _display_comprehensive_summary(report, verbose)
 
-    # Process with LLM if enabled
-    if llm:
+    # Store LLM results for PDF integration
+    llm_results = {}
+
+    # Process with LLM if enabled OR if PDF format is requested (auto-enable LLM for PDF)
+    if llm or output_format.lower() == "pdf":
         from ..llm import LLMProcessor
 
         console.print("\n[bold blue]🤖 Initializing LLM Analysis...[/bold blue]")
@@ -116,31 +124,36 @@ def analyze(
                         f"[dim]Tokens used: {usage['total_tokens']} (${usage['cost']:.4f})[/dim]"
                     )
 
-                # Display the full LLM analysis
-                console.print("\n[bold cyan]📋 Detailed LLM Analysis:[/bold cyan]")
-                console.print(llm_results["analysis"])
+                # Display the full LLM analysis only if explicitly requested (not for auto-PDF)
+                if llm:
+                    console.print("\n[bold cyan]📋 Detailed LLM Analysis:[/bold cyan]")
+                    console.print(llm_results["analysis"])
 
-                # Show extracted recommendations if any
-                if llm_results["recommendations"]:
+                    # Show extracted recommendations if any
+                    if llm_results["recommendations"]:
+                        console.print(
+                            "\n[bold yellow]💡 Key Recommendations:[/bold yellow]"
+                        )
+                        for i, rec in enumerate(llm_results["recommendations"], 1):
+                            console.print(f"  {i}. {rec}")
+
+                    # Show priority actions
+                    if llm_results["priority_actions"]:
+                        console.print("\n[bold red]🚨 Priority Actions:[/bold red]")
+                        for i, action in enumerate(llm_results["priority_actions"], 1):
+                            console.print(f"  {i}. {action}")
+                elif output_format.lower() == "pdf":
                     console.print(
-                        "\n[bold yellow]💡 Key Recommendations:[/bold yellow]"
+                        "\n[dim]🤖 LLM analysis will be integrated into PDF report[/dim]"
                     )
-                    for i, rec in enumerate(llm_results["recommendations"], 1):
-                        console.print(f"  {i}. {rec}")
-
-                # Show priority actions
-                if llm_results["priority_actions"]:
-                    console.print("\n[bold red]🚨 Priority Actions:[/bold red]")
-                    for i, action in enumerate(llm_results["priority_actions"], 1):
-                        console.print(f"  {i}. {action}")
             else:
                 console.print(
                     "\n[yellow]⚠️ LLM analysis failed, using fallback analysis[/yellow]"
                 )
                 console.print(llm_results["summary"])
 
-            # Save LLM results
-            if output:
+            # Save LLM results if explicitly requested
+            if output and llm:
                 llm_path = output.with_suffix(".llm.json")
                 processor.save_for_llm(report, llm_path)
                 console.print(f"\n[green]💾 LLM results saved to:[/green] {llm_path}")
@@ -148,16 +161,26 @@ def analyze(
         except ValueError as e:
             # This is likely the API key missing error
             console.print(f"\n[yellow]⚠️ {str(e)}[/yellow]")
-            console.print("[dim]Continuing with standard analysis without LLM...[/dim]")
+            if output_format.lower() == "pdf":
+                console.print("[dim]PDF will be generated without LLM content[/dim]")
+            else:
+                console.print(
+                    "[dim]Continuing with standard analysis without LLM...[/dim]"
+                )
         except Exception as e:
             console.print(f"\n[red]❌ Unexpected LLM error:[/red] {str(e)}")
-            console.print("[dim]Continuing with standard analysis...[/dim]")
+            if output_format.lower() == "pdf":
+                console.print("[dim]PDF will be generated without LLM content[/dim]")
+            else:
+                console.print("[dim]Continuing with standard analysis...[/dim]")
 
     # Save to file if requested
     if output:
         # Ensure output directory exists
         output_path = _ensure_output_path(output)
-        _save_comprehensive_results(report, output_path, output_format)
+        _save_comprehensive_results(
+            report, output_path, output_format, pdf_type, llm_results
+        )
         console.print(f"[green]Detailed results saved to:[/green] {output_path}")
     else:
         # Auto-generate filename if not provided
@@ -172,7 +195,9 @@ def analyze(
         )
         auto_filename = f"analysis_{url_safe}_{timestamp}.{output_format}"
         output_path = _ensure_output_path(Path(auto_filename))
-        _save_comprehensive_results(report, output_path, output_format)
+        _save_comprehensive_results(
+            report, output_path, output_format, pdf_type, llm_results
+        )
         console.print(f"[green]Auto-saved detailed results to:[/green] {output_path}")
 
 
@@ -722,7 +747,11 @@ def _display_comprehensive_summary(
 
 
 def _save_comprehensive_results(
-    report: ComprehensiveAnalysisReport, output_path: Path, output_format: str
+    report: ComprehensiveAnalysisReport,
+    output_path: Path,
+    output_format: str,
+    pdf_type: str = "comprehensive",
+    llm_results: dict | None = None,
 ) -> None:
     """Save comprehensive results to a file."""
     if output_format.lower() == "json":
@@ -730,6 +759,13 @@ def _save_comprehensive_results(
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(report, f, default=str, indent=2, ensure_ascii=False)
+    elif output_format.lower() == "pdf":
+        from ..reporting import PDFReportGenerator
+
+        generator = PDFReportGenerator(
+            report_type=pdf_type, llm_results=llm_results or {}
+        )
+        generator.generate_report(report, output_path)
     else:
         with open(output_path, "w", encoding="utf-8") as f:
             f.write("NetzZwergenWacht Comprehensive Analysis Report\n")
