@@ -6,7 +6,15 @@ import httpx
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 
-from .base import AnalysisResult, Dwarf, Issue, Severity
+from .base import (
+    AnalysisResult,
+    CodeLocation,
+    DetailedAnalysisResult,
+    Dwarf,
+    Issue,
+    PerformanceMetrics,
+    Severity,
+)
 
 
 class WebBrowserZwerg(Dwarf):
@@ -102,6 +110,227 @@ class WebBrowserZwerg(Dwarf):
                 url=url,
                 dwarf_name=self.name,
                 issues=[],
+                success=False,
+                error_message=str(e),
+            )
+
+    async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
+        """Analyze a URL using HTTP requests, HTML parsing, and browser automation with detailed context."""
+        try:
+            detailed_issues = []
+            perf_metrics = PerformanceMetrics()
+            raw_data = {}
+
+            # Basic URL validation
+            if not url.startswith(("http://", "https://")):
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="invalid_url_scheme",
+                        severity=Severity.HIGH,
+                        message="URL must start with http:// or https://",
+                        location=url,
+                        category="performance",
+                        subcategory="url_structure",
+                        description="The provided URL does not use a valid HTTP scheme",
+                        impact="Cannot analyze website without valid scheme.",
+                        technical_details={"provided_url": url},
+                        recommendations=[
+                            "Use HTTPS URLs for better security and compatibility."
+                        ],
+                        fix_suggestions=[
+                            f"Change URL to 'https://{url.replace('http://', '').replace('https://', '')}'"
+                        ],
+                        priority_score=0.9,
+                        code_location=CodeLocation(
+                            resource_type="url", attribute_value=url
+                        ),
+                    )
+                )
+                return DetailedAnalysisResult(
+                    url=url,
+                    dwarf_name=self.name,
+                    detailed_issues=detailed_issues,
+                    performance_metrics=perf_metrics,
+                    raw_data=raw_data,
+                )
+
+            # Perform HTTP request and analysis
+            start_time = time.time()
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                try:
+                    response = await client.get(url, follow_redirects=True)
+                    response_time = time.time() - start_time
+
+                    # Performance metrics
+                    perf_metrics.response_time_ms = round(response_time * 1000, 2)
+                    perf_metrics.page_load_time_ms = round(response_time * 1000, 2)
+                    perf_metrics.total_size_bytes = len(response.content)
+                    perf_metrics.performance_score = None  # Placeholder
+
+                    # Raw data
+                    raw_data["http_status_code"] = response.status_code
+                    raw_data["headers"] = dict(response.headers)
+                    raw_data["content_length"] = len(response.content)
+                    raw_data["final_url"] = str(response.url)
+
+                    # HTTP status issue
+                    if response.status_code >= 400:
+                        detailed_issues.append(
+                            self.create_detailed_issue(
+                                issue_type="http_error_status",
+                                severity=Severity.CRITICAL,
+                                message=f"HTTP error status: {response.status_code}",
+                                location=url,
+                                category="performance",
+                                subcategory="http_status",
+                                description=f"The server returned HTTP status {response.status_code}",
+                                impact="Page is not accessible to users or bots.",
+                                technical_details={"status_code": response.status_code},
+                                recommendations=[
+                                    "Fix the server error or misconfiguration."
+                                ],
+                                code_location=CodeLocation(
+                                    resource_type="http",
+                                    attribute_value=str(response.status_code),
+                                ),
+                                priority_score=1.0,
+                            )
+                        )
+
+                    # Response time issue
+                    if response_time > 5:
+                        detailed_issues.append(
+                            self.create_detailed_issue(
+                                issue_type="slow_response_time",
+                                severity=Severity.HIGH,
+                                message=f"Slow response time: {response_time:.2f}s",
+                                location=url,
+                                category="performance",
+                                subcategory="response_time",
+                                description="The server responded slowly.",
+                                impact="Slow pages reduce user satisfaction and SEO ranking.",
+                                technical_details={
+                                    "response_time_seconds": response_time
+                                },
+                                recommendations=[
+                                    "Optimize server performance or use CDN."
+                                ],
+                                code_location=CodeLocation(
+                                    resource_type="http", attribute_value=url
+                                ),
+                                priority_score=0.8,
+                            )
+                        )
+
+                    # Parse HTML and perform content checks
+                    if "text/html" in response.headers.get("content-type", ""):
+                        soup = BeautifulSoup(response.content, "lxml")
+                        title = soup.title.string.strip() if soup.title else None
+                        perf_metrics.image_count = len(soup.find_all("img"))
+                        perf_metrics.css_count = len(
+                            soup.find_all("link", rel="stylesheet")
+                        )
+                        perf_metrics.js_count = len(soup.find_all("script"))
+                        raw_data["html_title"] = title
+
+                        # Title missing
+                        if not title:
+                            detailed_issues.append(
+                                self.create_detailed_issue(
+                                    issue_type="missing_title_tag",
+                                    severity=Severity.HIGH,
+                                    message="Missing <title> tag in HTML.",
+                                    location=url,
+                                    category="performance",
+                                    subcategory="html_structure",
+                                    description="No <title> tag found in the HTML head.",
+                                    impact="SEO and usability are negatively affected.",
+                                    technical_details={},
+                                    recommendations=[
+                                        "Add a <title> tag to the <head> section."
+                                    ],
+                                    code_location=CodeLocation(
+                                        element_selector="head",
+                                        element_tag="head",
+                                        resource_type="html",
+                                    ),
+                                    priority_score=0.9,
+                                )
+                            )
+
+                        # Meta description missing
+                        meta_desc = soup.find("meta", attrs={"name": "description"})
+                        if not meta_desc:
+                            detailed_issues.append(
+                                self.create_detailed_issue(
+                                    issue_type="missing_meta_description",
+                                    severity=Severity.MEDIUM,
+                                    message="Missing meta description tag.",
+                                    location=url,
+                                    category="performance",
+                                    subcategory="html_structure",
+                                    description="No meta description tag found in the HTML head.",
+                                    impact="SEO and search result appearance are negatively affected.",
+                                    technical_details={},
+                                    recommendations=[
+                                        "Add a <meta name='description'> tag to the <head> section."
+                                    ],
+                                    code_location=CodeLocation(
+                                        element_selector="head",
+                                        element_tag="head",
+                                        resource_type="html",
+                                    ),
+                                    priority_score=0.7,
+                                )
+                            )
+
+                        # TODO: Add more detailed HTML checks as needed
+
+                        # Browser-based analysis with Playwright
+                        (
+                            browser_issues,
+                            browser_metadata,
+                            browser_raw,
+                        ) = await self._analyze_with_playwright_detailed(url)
+                        detailed_issues.extend(browser_issues)
+                        raw_data["browser"] = browser_raw
+                        for k, v in browser_metadata.items():
+                            setattr(perf_metrics, k, v)
+
+                except httpx.RequestError as e:
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="request_failed",
+                            severity=Severity.CRITICAL,
+                            message=f"Failed to connect to website: {str(e)}",
+                            location=url,
+                            category="performance",
+                            subcategory="http_request",
+                            description="HTTP request failed.",
+                            impact="Page could not be analyzed.",
+                            technical_details={"error": str(e)},
+                            recommendations=[
+                                "Check network connectivity and server status."
+                            ],
+                            code_location=CodeLocation(
+                                resource_type="http", attribute_value=url
+                            ),
+                            priority_score=1.0,
+                        )
+                    )
+
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
+                detailed_issues=detailed_issues,
+                performance_metrics=perf_metrics,
+                raw_data=raw_data,
+            )
+
+        except Exception as e:
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
                 success=False,
                 error_message=str(e),
             )
@@ -227,6 +456,118 @@ class WebBrowserZwerg(Dwarf):
             )
 
         return issues, metadata
+
+    async def _analyze_with_playwright_detailed(self, url: str):
+        """Analyze page using Playwright and return detailed issues, metrics, and raw data."""
+        issues = []
+        metadata = {}
+        raw = {}
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.set_extra_http_headers({
+                    "User-Agent": "NetzZwergenWacht Browser Dwarf v0.1.0"
+                })
+                response = await page.goto(
+                    url, wait_until="domcontentloaded", timeout=30000
+                )
+                load_time = await page.evaluate(
+                    "performance.timing.loadEventEnd - performance.timing.navigationStart"
+                )
+                metadata["browser_load_time_ms"] = load_time
+                metadata["browser_status_code"] = response.status if response else None
+                metadata["browser_final_url"] = page.url
+                raw["browser_final_url"] = page.url
+
+                # JS console errors
+                console_errors = []
+                page.on(
+                    "console",
+                    lambda msg: console_errors.append(msg.text)
+                    if msg.type == "error"
+                    else None,
+                )
+                await page.wait_for_timeout(2000)
+                if console_errors:
+                    issues.append(
+                        self.create_detailed_issue(
+                            issue_type="javascript_console_errors",
+                            severity=Severity.MEDIUM,
+                            message=f"JavaScript console errors detected: {len(console_errors)} errors",
+                            location=url,
+                            category="performance",
+                            subcategory="javascript",
+                            description="JavaScript errors were detected in the browser console.",
+                            impact="May break functionality or UX.",
+                            technical_details={
+                                "console_error_count": len(console_errors),
+                                "sample_errors": console_errors[:3],
+                            },
+                            recommendations=[
+                                "Fix JavaScript errors in the browser console."
+                            ],
+                            code_location=CodeLocation(
+                                resource_type="js", url_path=url
+                            ),
+                            browser_console_errors=console_errors,
+                            priority_score=0.7,
+                        )
+                    )
+                raw["console_errors"] = console_errors
+
+                # Network errors
+                failed_requests = []
+                page.on(
+                    "requestfailed", lambda request: failed_requests.append(request.url)
+                )
+                if failed_requests:
+                    issues.append(
+                        self.create_detailed_issue(
+                            issue_type="failed_network_requests",
+                            severity=Severity.MEDIUM,
+                            message=f"Failed network requests detected: {len(failed_requests)} requests",
+                            location=url,
+                            category="performance",
+                            subcategory="network",
+                            description="Some network requests failed during page load.",
+                            impact="Missing resources may break page functionality or appearance.",
+                            technical_details={
+                                "failed_request_count": len(failed_requests),
+                                "sample_failed_requests": failed_requests[:3],
+                            },
+                            recommendations=[
+                                "Check resource URLs and server availability."
+                            ],
+                            code_location=CodeLocation(
+                                resource_type="network", url_path=url
+                            ),
+                            network_errors=failed_requests,
+                            priority_score=0.6,
+                        )
+                    )
+                raw["failed_requests"] = failed_requests
+
+                # TODO: Add more browser-based checks (viewport, screenshots, etc.)
+
+        except Exception as e:
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="browser_analysis_failed",
+                    severity=Severity.MEDIUM,
+                    message=f"Browser-based analysis failed: {str(e)}",
+                    location=url,
+                    category="performance",
+                    subcategory="browser",
+                    description="Browser automation failed.",
+                    impact="Some dynamic issues may not be detected.",
+                    technical_details={"error": str(e)},
+                    recommendations=["Check Playwright setup and page compatibility."],
+                    code_location=CodeLocation(resource_type="browser", url_path=url),
+                    priority_score=0.5,
+                )
+            )
+        return issues, metadata, raw
 
     async def _test_mobile_responsive(self, page, url: str) -> tuple[list[Issue], dict]:
         """Test mobile and responsive design features."""

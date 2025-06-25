@@ -6,7 +6,14 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import AnalysisResult, Dwarf, Severity
+from .base import (
+    AnalysisResult,
+    CodeLocation,
+    DetailedAnalysisResult,
+    Dwarf,
+    SEOMetrics,
+    Severity,
+)
 
 
 class SEOZwerg(Dwarf):
@@ -16,6 +23,395 @@ class SEOZwerg(Dwarf):
         super().__init__(
             name="SEO-Zwerg",
             description="SEO analysis for meta tags, structured data and social media optimization",
+        )
+
+    def _get_category(self) -> str:
+        """Get the category for this dwarf's issues."""
+        return "seo"
+
+    async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
+        """Analyze a URL for SEO issues with detailed location information."""
+        try:
+            detailed_issues = []
+            seo_metrics = SEOMetrics()
+
+            # Basic URL validation
+            if not url.startswith(("http://", "https://")):
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="invalid_url_scheme",
+                        severity=Severity.HIGH,
+                        message="URL must start with http:// or https://",
+                        location=url,
+                        category="seo",
+                        subcategory="url_structure",
+                        description="The provided URL does not use a valid HTTP scheme",
+                        impact="This prevents proper SEO analysis and may affect search engine indexing",
+                        technical_details={"provided_url": url},
+                        recommendations=["Use HTTPS URLs for better SEO and security"],
+                        fix_suggestions=[
+                            f"Change URL from '{url}' to 'https://{url.replace('http://', '').replace('https://', '')}'"
+                        ],
+                        priority_score=0.9,
+                    )
+                )
+                return DetailedAnalysisResult(
+                    url=url,
+                    dwarf_name=self.name,
+                    detailed_issues=detailed_issues,
+                    seo_metrics=seo_metrics,
+                )
+
+            # Perform detailed SEO analysis
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                try:
+                    response = await client.get(url)
+
+                    if response.status_code != 200:
+                        detailed_issues.append(
+                            self.create_detailed_issue(
+                                issue_type="page_not_accessible",
+                                severity=Severity.HIGH,
+                                message=f"Page returned status code {response.status_code}",
+                                location=url,
+                                category="seo",
+                                subcategory="page_accessibility",
+                                description=f"The page is not accessible with status code {response.status_code}",
+                                impact="This prevents search engines from indexing the page properly",
+                                technical_details={"status_code": response.status_code},
+                                recommendations=[
+                                    "Fix the server error or redirect issue"
+                                ],
+                                priority_score=0.8,
+                            )
+                        )
+                        return DetailedAnalysisResult(
+                            url=url,
+                            dwarf_name=self.name,
+                            detailed_issues=detailed_issues,
+                            seo_metrics=seo_metrics,
+                        )
+
+                    # Parse HTML content
+                    soup = BeautifulSoup(response.content, "html.parser")
+
+                    # Analyze meta tags with detailed location
+                    meta_analysis = await self._analyze_meta_tags_detailed(soup, url)
+                    detailed_issues.extend(meta_analysis["issues"])
+                    seo_metrics = meta_analysis["metrics"]
+
+                    # Analyze Open Graph and Twitter Cards
+                    social_analysis = await self._analyze_social_meta_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(social_analysis["issues"])
+
+                    # Analyze structured data
+                    structured_data_analysis = (
+                        await self._analyze_structured_data_detailed(soup, url)
+                    )
+                    detailed_issues.extend(structured_data_analysis["issues"])
+
+                    # Analyze canonical URLs and links
+                    link_analysis = await self._analyze_links_detailed(soup, url)
+                    detailed_issues.extend(link_analysis["issues"])
+
+                    # Analyze content quality
+                    content_analysis = await self._analyze_content_quality_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(content_analysis["issues"])
+
+                except httpx.RequestError as e:
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="seo_analysis_failed",
+                            severity=Severity.HIGH,
+                            message=f"Failed to analyze SEO: {str(e)}",
+                            location=url,
+                            category="seo",
+                            subcategory="analysis_error",
+                            description="The SEO analysis failed due to a network or request error",
+                            impact="Unable to identify SEO issues on this page",
+                            technical_details={"error": str(e)},
+                            recommendations=[
+                                "Check network connectivity and try again"
+                            ],
+                            priority_score=0.7,
+                        )
+                    )
+
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
+                detailed_issues=detailed_issues,
+                seo_metrics=seo_metrics,
+            )
+
+        except Exception as e:
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
+                success=False,
+                error_message=str(e),
+            )
+
+    async def _analyze_meta_tags_detailed(self, soup: BeautifulSoup, url: str) -> dict:
+        """Analyze meta tags for SEO optimization with detailed location information."""
+        issues = []
+        metrics = SEOMetrics()
+
+        # Title tag analysis with detailed location
+        title_tag = soup.find("title")
+        if title_tag and title_tag.string:
+            title = title_tag.string.strip()
+            title_length = len(title)
+
+            metrics.title_length = title_length
+
+            # Get detailed location information
+            title_location = self._get_element_location(title_tag, "title")
+
+            if title_length == 0:
+                issues.append(
+                    self.create_detailed_issue(
+                        issue_type="empty_title",
+                        severity=Severity.HIGH,
+                        message="Title tag is empty",
+                        location=url,
+                        category="seo",
+                        subcategory="meta_tags",
+                        description="The title tag exists but contains no text",
+                        impact="This severely impacts SEO as search engines rely heavily on title tags",
+                        technical_details={"title_length": title_length},
+                        recommendations=["Add descriptive text to the title tag"],
+                        fix_suggestions=[
+                            "<title>Your Page Title Here</title>",
+                            f"<title>Add a descriptive title for {urlparse(url).netloc}</title>",
+                        ],
+                        code_location=title_location,
+                        affected_elements=["title"],
+                        priority_score=0.95,
+                    )
+                )
+            elif title_length < 30:
+                issues.append(
+                    self.create_detailed_issue(
+                        issue_type="title_too_short",
+                        severity=Severity.MEDIUM,
+                        message=f"Title is too short ({title_length} chars, recommended: 30-60)",
+                        location=url,
+                        category="seo",
+                        subcategory="meta_tags",
+                        description="The title tag is too short for optimal SEO",
+                        impact="Short titles may not provide enough context for search engines and users",
+                        technical_details={
+                            "title_length": title_length,
+                            "title": title,
+                        },
+                        recommendations=["Expand the title to be more descriptive"],
+                        fix_suggestions=[
+                            f"<title>{title} - Additional Context Here</title>",
+                            f"<title>More Descriptive Title for {urlparse(url).netloc}</title>",
+                        ],
+                        code_location=title_location,
+                        affected_elements=["title"],
+                        priority_score=0.6,
+                    )
+                )
+            elif title_length > 60:
+                issues.append(
+                    self.create_detailed_issue(
+                        issue_type="title_too_long",
+                        severity=Severity.MEDIUM,
+                        message=f"Title is too long ({title_length} chars, recommended: 30-60)",
+                        location=url,
+                        category="seo",
+                        subcategory="meta_tags",
+                        description="The title tag is too long and may be truncated in search results",
+                        impact="Long titles may be cut off in search engine results pages",
+                        technical_details={
+                            "title_length": title_length,
+                            "title": title,
+                        },
+                        recommendations=[
+                            "Shorten the title to fit within recommended length"
+                        ],
+                        fix_suggestions=[
+                            f"<title>{title[:50]}...</title>",
+                            "<title>Shorter, More Concise Title</title>",
+                        ],
+                        code_location=title_location,
+                        affected_elements=["title"],
+                        priority_score=0.5,
+                    )
+                )
+        else:
+            # Find the head tag to provide context
+            head_tag = soup.find("head")
+            head_location = (
+                self._get_element_location(head_tag, "head") if head_tag else None
+            )
+
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="missing_title",
+                    severity=Severity.CRITICAL,
+                    message="Page is missing title tag",
+                    location=url,
+                    category="seo",
+                    subcategory="meta_tags",
+                    description="The page does not have a title tag in the HTML head",
+                    impact="This is critical for SEO as search engines cannot properly index the page",
+                    technical_details={},
+                    recommendations=["Add a title tag to the HTML head section"],
+                    fix_suggestions=[
+                        "<head><title>Your Page Title</title>...</head>",
+                        "<title>Descriptive Title for Your Page</title>",
+                    ],
+                    code_location=head_location,
+                    affected_elements=["head", "title"],
+                    priority_score=1.0,
+                )
+            )
+
+        # Meta description analysis with detailed location
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        if meta_desc and meta_desc.get("content"):
+            description = meta_desc.get("content").strip()
+            desc_length = len(description)
+
+            metrics.description_length = desc_length
+
+            # Get detailed location information
+            desc_location = self._get_element_location(
+                meta_desc, "meta[name='description']"
+            )
+
+            if desc_length < 120:
+                issues.append(
+                    self.create_detailed_issue(
+                        issue_type="meta_description_too_short",
+                        severity=Severity.MEDIUM,
+                        message=f"Meta description is too short ({desc_length} chars, recommended: 120-160)",
+                        location=url,
+                        category="seo",
+                        subcategory="meta_tags",
+                        description="The meta description is too short for optimal SEO",
+                        impact="Short descriptions may not provide enough information in search results",
+                        technical_details={
+                            "description_length": desc_length,
+                            "description": description,
+                        },
+                        recommendations=[
+                            "Expand the meta description to be more descriptive"
+                        ],
+                        fix_suggestions=[
+                            f'<meta name="description" content="{description} - Additional context and details about this page...">',
+                            '<meta name="description" content="A comprehensive description of what this page offers to users...">',
+                        ],
+                        code_location=desc_location,
+                        affected_elements=["meta[name='description']"],
+                        priority_score=0.5,
+                    )
+                )
+            elif desc_length > 160:
+                issues.append(
+                    self.create_detailed_issue(
+                        issue_type="meta_description_too_long",
+                        severity=Severity.LOW,
+                        message=f"Meta description is too long ({desc_length} chars, recommended: 120-160)",
+                        location=url,
+                        category="seo",
+                        subcategory="meta_tags",
+                        description="The meta description is too long and may be truncated",
+                        impact="Long descriptions may be cut off in search engine results",
+                        technical_details={
+                            "description_length": desc_length,
+                            "description": description,
+                        },
+                        recommendations=[
+                            "Shorten the meta description to fit within recommended length"
+                        ],
+                        fix_suggestions=[
+                            f'<meta name="description" content="{description[:150]}...">',
+                            '<meta name="description" content="Shorter, more concise description...">',
+                        ],
+                        code_location=desc_location,
+                        affected_elements=["meta[name='description']"],
+                        priority_score=0.3,
+                    )
+                )
+        else:
+            # Find the head tag to provide context
+            head_tag = soup.find("head")
+            head_location = (
+                self._get_element_location(head_tag, "head") if head_tag else None
+            )
+
+            issues.append(
+                self.create_detailed_issue(
+                    issue_type="missing_meta_description",
+                    severity=Severity.HIGH,
+                    message="Page is missing meta description",
+                    location=url,
+                    category="seo",
+                    subcategory="meta_tags",
+                    description="The page does not have a meta description tag",
+                    impact="Search engines may not display proper descriptions in search results",
+                    technical_details={},
+                    recommendations=[
+                        "Add a meta description tag to the HTML head section"
+                    ],
+                    fix_suggestions=[
+                        '<meta name="description" content="A descriptive summary of this page content">',
+                        '<meta name="description" content="What users can expect to find on this page">',
+                    ],
+                    code_location=head_location,
+                    affected_elements=["head", "meta[name='description']"],
+                    priority_score=0.8,
+                )
+            )
+
+        return {"issues": issues, "metrics": metrics}
+
+    def _get_element_location(self, element, element_type: str) -> CodeLocation | None:
+        """Get detailed location information for an HTML element."""
+        if not element:
+            return None
+
+        # Get the parent elements for context
+        parent = element.parent
+
+        # Build context strings
+        context_before = ""
+        context_after = ""
+
+        if parent:
+            # Get siblings for context
+            siblings = list(parent.children)
+            try:
+                element_index = siblings.index(element)
+                if element_index > 0:
+                    context_before = str(siblings[element_index - 1])[:100]
+                if element_index < len(siblings) - 1:
+                    context_after = str(siblings[element_index + 1])[:100]
+            except ValueError:
+                pass
+
+        return CodeLocation(
+            element_selector=element_type,
+            element_tag=element.name,
+            element_id=element.get("id"),
+            element_class=element.get("class", [""])[0]
+            if element.get("class")
+            else None,
+            attribute_name=list(element.attrs.keys())[0] if element.attrs else None,
+            attribute_value=list(element.attrs.values())[0] if element.attrs else None,
+            context_before=context_before,
+            context_after=context_after,
+            full_element=str(element)[:500],  # Limit to 500 chars
+            resource_type="html",
         )
 
     async def analyze(self, url: str) -> AnalysisResult:
@@ -611,3 +1007,29 @@ class SEOZwerg(Dwarf):
             )
 
         return {"issues": issues, "metadata": metadata}
+
+    async def _analyze_social_meta_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze social media meta tags with detailed location information."""
+        # TODO: Implement detailed social meta analysis
+        return {"issues": []}
+
+    async def _analyze_structured_data_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze structured data with detailed location information."""
+        # TODO: Implement detailed structured data analysis
+        return {"issues": []}
+
+    async def _analyze_links_detailed(self, soup: BeautifulSoup, url: str) -> dict:
+        """Analyze links and canonical URLs with detailed location information."""
+        # TODO: Implement detailed link analysis
+        return {"issues": []}
+
+    async def _analyze_content_quality_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict:
+        """Analyze content quality with detailed location information."""
+        # TODO: Implement detailed content quality analysis
+        return {"issues": []}

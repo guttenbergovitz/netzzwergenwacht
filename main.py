@@ -1,14 +1,35 @@
 """Backward compatibility entry point for the CLI."""
 
-from src.netzzwergenwacht.cli.main import app
+import sys
+import warnings
+from importlib.metadata import version
+
+try:
+    from netzzwergenwacht.cli.main import app
+except ImportError:
+    from src.netzzwergenwacht.cli.main import app  # Fallback for dev
+
+
+def show_deprecation_warning():
+    """Show deprecation warning for legacy entry point."""
+    warnings.warn(
+        "Legacy main.py entry point is deprecated and will be removed in v1.0. "
+        f"Use 'netzzwergenwacht' (v{version('netzzwergenwacht')}) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    print("⚠️  Deprecation Warning: Using legacy entry point")
 
 
 def main():
     """Legacy main function - redirects to new CLI."""
-    print(
-        "⚠️  Using legacy main.py - consider using 'netzzwergenwacht' or 'nzw' command instead"
-    )
-    app()
+    show_deprecation_warning()
+
+    try:
+        app()
+    except Exception as e:
+        print(f"Error: {str(e)}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

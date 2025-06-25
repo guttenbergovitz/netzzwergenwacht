@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-NetzZwergenWacht is an intelligent, automated system for analyzing and monitoring website quality using LLM-powered software agents called "Dwarfs". The system performs automated E2E interactions, comprehensive quality analysis, and generates intelligent reports with LLM insights. The project has completed **Phase 2** and is now moving to **Phase 3** with LLM integration.
+NetzZwergenWacht is an intelligent, automated system for analyzing and monitoring website quality using LLM-powered software agents called "Dwarfs". The system performs automated E2E interactions, comprehensive quality analysis, and generates intelligent reports with LLM insights. The project has completed **Phase 3** with full LLM integration.
 
 ## Technology Stack
 
@@ -14,6 +14,7 @@ NetzZwergenWacht is an intelligent, automated system for analyzing and monitorin
 - **HTTP Client**: httpx
 - **HTML Parsing**: BeautifulSoup
 - **Security Scanning**: nmap, safety
+- **LLM Integration**: OpenAI API (requires OPENAI_API_KEY environment variable)
 - **Testing**: pytest
 - **Linting**: ruff
 - **Type Checking**: mypy
@@ -53,17 +54,36 @@ uv run python main.py  # Shows deprecation warning
 
 ### Basic Usage Examples
 ```bash
-# Check a website
-uv run netzzwergenwacht check https://example.com
+# Quick check a website
+uv run nzw check https://example.com
+
+# Comprehensive analysis with LLM integration
+uv run nzw analyze https://example.com --llm
 
 # Check with verbose output
 uv run nzw check https://example.com --verbose
 
 # Save results to file
-uv run nzw check https://example.com --output results.txt
+uv run nzw check https://example.com --output results.json --format json
 
 # Show version
 uv run nzw version
+```
+
+### LLM-Powered Analysis
+```bash
+# Set up OpenAI API key for enhanced analysis
+export OPENAI_API_KEY="your-api-key-here"
+
+# Run comprehensive LLM analysis with intelligent insights
+uv run nzw analyze https://example.com --llm
+
+# This provides:
+# - Specific technical fixes with exact code locations
+# - Copy-paste ready solutions and configuration changes
+# - Prioritized implementation roadmaps
+# - Business impact assessments
+# - Real-time cost tracking and token usage
 ```
 
 ### Testing and Quality
@@ -92,7 +112,7 @@ uv run ruff check && uv run ruff format && uv run mypy src/ && uv run pytest
 
 ## Architecture
 
-The project has completed **Phase 2** and is now in **Phase 3** with a comprehensive modular architecture:
+The project has completed **Phase 3** with comprehensive LLM integration and a modular architecture:
 
 ### Core Components
 
@@ -167,14 +187,16 @@ The project has completed **Phase 2** and is now in **Phase 3** with a comprehen
 - **Interactive element testing** and accessibility validation
 - **Visual regression testing** capabilities
 
-### Phase 3 In Progress Features
+### Phase 3 Completed Features ✅
 
 #### LLM Integration & Intelligence
-- **LLM-powered issue classification** and prioritization
-- **Intelligent recommendations** and actionable insights
-- **Natural language reporting** with context-aware analysis
-- **Automated issue resolution** suggestions
-- **Smart issue correlation** and pattern recognition
+- **✅ LLM-powered issue classification** and prioritization with OpenAI integration
+- **✅ Intelligent recommendations** with specific technical fixes and exact code
+- **✅ Natural language reporting** with detailed location context and implementation guides
+- **✅ Automated issue resolution** suggestions with copy-paste ready solutions
+- **✅ Smart issue correlation** and priority scoring across all quality dimensions
+- **✅ Cost tracking and model information** display with real-time usage monitoring
+- **✅ Enhanced error handling** and fallback mechanisms for robust operation
 
 ### API Testing Decision
 
@@ -206,6 +228,20 @@ This project requires the `nmap` binary to be installed on your system for advan
 
 Make sure `nmap` is available in your PATH.
 
+## LLM Integration Setup
+
+For LLM-powered analysis capabilities, you need to set up OpenAI API access:
+
+```bash
+# Set your OpenAI API key
+export OPENAI_API_KEY="your-api-key-here"
+
+# Or add to .env file
+echo "OPENAI_API_KEY=your-api-key-here" >> .env
+```
+
+The LLM integration provides enhanced analysis insights, intelligent issue prioritization, and natural language recommendations.
+
 ## Development Phases
 
 The project follows a phased approach:
@@ -219,11 +255,13 @@ The project follows a phased approach:
   - ✅ Mobile & Responsive Testing
   - ✅ Visual Analysis & UI Testing
   - ✅ ~~API Testing & Integration~~ (skipped - limited value for external testing)
-- **🔄 Phase 3**: LLM Integration (in progress)
-  - 🔄 LLM-powered issue classification
-  - 🔄 Intelligent recommendations
-  - 🔄 Natural language reporting
-  - 🔄 Context-aware analysis
+- **✅ Phase 3**: LLM Integration (completed)
+  - ✅ OpenAI API integration with cost tracking
+  - ✅ LLM processor for comprehensive report analysis
+  - ✅ LLM-powered issue classification and prioritization
+  - ✅ Intelligent recommendations with specific technical fixes
+  - ✅ Natural language reporting with exact code locations
+  - ✅ Context-aware analysis with copy-paste ready solutions
 - **📋 Phase 4**: Enhanced Reporting & Actions (planned)
 - **📋 Phase 5**: Configuration, Scheduling & Usability (planned)
 
@@ -246,3 +284,118 @@ The project follows a phased approach:
 - **Real browser testing** with Playwright
 - **Security testing** with controlled environments
 - **Accessibility testing** with WCAG compliance checks
+
+## Phase 3: Detailed Analysis & LLM Integration
+
+NetzZwergenWacht now features a **detailed analysis mode** for all Dwarf agents, designed for LLM integration and advanced, context-rich reporting.
+
+- Each Dwarf implements an `analyze_detailed` method, returning a `DetailedAnalysisResult` with:
+  - Structured issues (with code location, fix suggestions, affected elements, priority, and context)
+  - Metrics specific to the analysis type (performance, security, accessibility, content, visual, SEO)
+  - Raw data for LLMs (HTML, screenshots, network traces, etc.)
+- The CLI provides an `analyze` command that runs all Dwarfs in detailed mode and saves a comprehensive, LLM-ready JSON report in the `output/` directory.
+- This enables:
+  - LLM-powered issue classification, prioritization, and fix suggestion
+  - Natural language reporting and context-aware analysis
+  - Automated correlation of issues across all quality dimensions
+
+### Example Output Structure
+
+```json
+{
+  "url": "https://example.com",
+  "dwarf_name": "Leistungs-Zwerg",
+  "detailed_issues": [
+    {
+      "issue_type": "page_load_very_slow",
+      "severity": "high",
+      "message": "Page load time is very slow: 6500ms",
+      "category": "performance",
+      "subcategory": "page_load_time",
+      "description": "Page takes more than 5 seconds to load, which severely impacts user experience",
+      "impact": "Users will likely abandon the page, affecting conversion rates and SEO",
+      "technical_details": {"load_time_ms": 6500, "recommended_max_ms": 3000},
+      "recommendations": ["Optimize page load performance immediately"],
+      "fix_suggestions": ["Enable server-side caching", "Optimize and compress images"],
+      "priority_score": 0.9,
+      "code_location": {"resource_type": "http", "attribute_value": "https://example.com"},
+      "affected_elements": ["server_config", "assets", "caching"]
+    }
+  ],
+  "performance_metrics": {
+    "page_load_time_ms": 6500,
+    "lcp": 4200,
+    "fcp": 1800,
+    "cls": 0.12
+  },
+  "raw_data": {"performance": {"response_status": 200, ...}}
+}
+```
+
+### How to Use LLM Features
+
+```bash
+# Set up OpenAI API key
+export OPENAI_API_KEY="your-api-key-here"
+
+# Run detailed analysis with LLM integration
+uv run nzw analyze https://example.com --llm
+
+# Example LLM output:
+# 🤖 LLM initialized with model: gpt-4o-mini
+# 🔑 Using OpenAI API key: sk-1a2b3c...
+# 📊 Sending request to gpt-4o-mini
+# ✅ LLM Analysis Complete!
+# Tokens used: 11389 ($0.0024)
+#
+# 📋 Detailed LLM Analysis:
+# ## 2. Critical Issues Requiring Immediate Attention
+# ### Issue 1: Missing Meta Description
+# - **Exact Problem**: The page is missing a meta description tag.
+# - **Location**: `<head>` section of the HTML.
+# - **Immediate Fix**: Add the following code:
+#   ```html
+#   <meta name="description" content="A descriptive summary">
+#   ```
+```
+
+### LLM Integration Features
+
+- **Enhanced Context**: LLM receives full technical details including exact HTML element locations, specific code fixes, priority scores, and business impact
+- **Cost Tracking**: Real-time token usage and cost display with model information
+- **Intelligent Analysis**: Provides specific technical fixes, implementation roadmaps, and copy-paste ready solutions
+- **Fallback Mechanisms**: Graceful handling when LLM services are unavailable
+- **Model Selection**: Uses economical gpt-4o-mini by default for cost-effective analysis
+
+All Zwerge now support detailed analysis mode, making NetzZwergenWacht a powerful foundation for AI-driven website quality monitoring and automated remediation.
+
+## Command Differences: `check` vs `analyze`
+
+The system provides two distinct analysis modes with different purposes and output formats:
+
+### `check` Command - Quick Analysis
+- **Purpose**: Fast basic website quality check
+- **Output**: Simple `Issue` objects with minimal context
+- **Format**: Human-readable CLI output or basic JSON
+- **Use Case**: Quick health checks, CI/CD pipelines, automated monitoring
+- **Features**: Identifies problems with basic severity and location information
+
+### `analyze` Command - Comprehensive Analysis
+- **Purpose**: In-depth analysis designed for LLM integration and detailed reporting
+- **Output**: Rich `DetailedIssue` objects with extensive context
+- **Format**: LLM-ready JSON with full technical details
+- **Use Case**: Development teams, security audits, comprehensive quality assessments
+- **Features**:
+  - Exact code locations with `CodeLocation` objects
+  - Detailed fix suggestions with copy-paste ready solutions
+  - Business impact analysis and priority scoring
+  - Implementation roadmaps and step-by-step guides
+  - Raw data capture (HTML, screenshots, network traces)
+  - Optional LLM processing with `--llm` flag
+
+### Example Difference
+
+**`check` finds**: "Missing meta description"
+**`analyze` finds**: "Missing meta description" + exact location in HTML + concrete fix suggestions + business impact + priority score + implementation steps + LLM analysis
+
+The `analyze` command is specifically designed for **Phase 3 LLM integration** and provides the structured, detailed data that enables intelligent AI-powered recommendations.

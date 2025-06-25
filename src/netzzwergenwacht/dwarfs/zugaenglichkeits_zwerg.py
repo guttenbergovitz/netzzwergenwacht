@@ -5,7 +5,14 @@ import re
 import httpx
 from bs4 import BeautifulSoup
 
-from .base import AnalysisResult, Dwarf, Severity
+from .base import (
+    AccessibilityMetrics,
+    AnalysisResult,
+    CodeLocation,
+    DetailedAnalysisResult,
+    Dwarf,
+    Severity,
+)
 
 
 class ZugaenglichkeitsZwerg(Dwarf):
@@ -151,6 +158,239 @@ class ZugaenglichkeitsZwerg(Dwarf):
                 url=url,
                 dwarf_name=self.name,
                 issues=[],
+                success=False,
+                error_message=str(e),
+            )
+
+    async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
+        """Analyze a URL for accessibility compliance with detailed context and improvement suggestions."""
+        try:
+            detailed_issues = []
+            accessibility_metrics = AccessibilityMetrics()
+            raw_data = {}
+
+            # Basic URL validation
+            if not url.startswith(("http://", "https://")):
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="invalid_url_scheme",
+                        severity=Severity.HIGH,
+                        message="URL must start with http:// or https://",
+                        location=url,
+                        category="accessibility",
+                        subcategory="url_structure",
+                        description="The provided URL does not use a valid HTTP scheme",
+                        impact="Cannot perform accessibility analysis without valid scheme.",
+                        technical_details={"provided_url": url},
+                        recommendations=[
+                            "Use HTTPS URLs for better security and accessibility."
+                        ],
+                        fix_suggestions=[
+                            f"Change URL to 'https://{url.replace('http://', '').replace('https://', '')}'"
+                        ],
+                        priority_score=0.9,
+                        code_location=CodeLocation(
+                            resource_type="url", attribute_value=url
+                        ),
+                    )
+                )
+                return DetailedAnalysisResult(
+                    url=url,
+                    dwarf_name=self.name,
+                    detailed_issues=detailed_issues,
+                    accessibility_metrics=accessibility_metrics,
+                    raw_data=raw_data,
+                )
+
+            # Perform detailed accessibility analysis
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                try:
+                    response = await client.get(url)
+
+                    if response.status_code != 200:
+                        detailed_issues.append(
+                            self.create_detailed_issue(
+                                issue_type="page_not_accessible",
+                                severity=Severity.HIGH,
+                                message=f"Page returned status code {response.status_code}",
+                                location=url,
+                                category="accessibility",
+                                subcategory="page_accessibility",
+                                description="Page is not accessible due to HTTP error",
+                                impact="Users cannot access the page content",
+                                technical_details={"status_code": response.status_code},
+                                recommendations=[
+                                    "Fix server configuration to return 200 status"
+                                ],
+                                fix_suggestions=[
+                                    "Check server configuration",
+                                    "Verify URL is correct",
+                                    "Ensure server is running",
+                                ],
+                                code_location=CodeLocation(
+                                    resource_type="http", attribute_value=url
+                                ),
+                                priority_score=0.9,
+                            )
+                        )
+                        return DetailedAnalysisResult(
+                            url=url,
+                            dwarf_name=self.name,
+                            detailed_issues=detailed_issues,
+                            accessibility_metrics=accessibility_metrics,
+                            raw_data=raw_data,
+                        )
+
+                    # Parse HTML content
+                    soup = BeautifulSoup(response.content, "html.parser")
+                    raw_data["html_structure"] = {
+                        "title": soup.title.string if soup.title else None,
+                        "headings": [
+                            h.get_text()
+                            for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                        ],
+                        "forms_count": len(soup.find_all("form")),
+                        "images_count": len(soup.find_all("img")),
+                        "links_count": len(soup.find_all("a")),
+                    }
+
+                    # WCAG 2.1 AA Compliance Checks with detailed context
+
+                    # 1. Perceivable
+                    text_alternatives = await self._check_text_alternatives_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(text_alternatives["issues"])
+                    accessibility_metrics.images_without_alt = text_alternatives[
+                        "metrics"
+                    ].get("images_without_alt", 0)
+                    accessibility_metrics.total_images = text_alternatives[
+                        "metrics"
+                    ].get("total_images", 0)
+                    raw_data["text_alternatives"] = text_alternatives["raw"]
+
+                    color_contrast = await self._check_color_contrast_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(color_contrast["issues"])
+                    accessibility_metrics.low_contrast_elements = color_contrast[
+                        "metrics"
+                    ].get("low_contrast_elements", 0)
+                    raw_data["color_contrast"] = color_contrast["raw"]
+
+                    # 2. Operable
+                    keyboard_access = await self._check_keyboard_accessibility_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(keyboard_access["issues"])
+                    accessibility_metrics.keyboard_inaccessible = keyboard_access[
+                        "metrics"
+                    ].get("keyboard_inaccessible", 0)
+                    raw_data["keyboard_accessibility"] = keyboard_access["raw"]
+
+                    focus_management = await self._check_focus_management_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(focus_management["issues"])
+                    accessibility_metrics.focus_issues = focus_management[
+                        "metrics"
+                    ].get("focus_issues", 0)
+                    raw_data["focus_management"] = focus_management["raw"]
+
+                    # 3. Understandable
+                    language_identification = (
+                        await self._check_language_identification_detailed(soup, url)
+                    )
+                    detailed_issues.extend(language_identification["issues"])
+                    accessibility_metrics.language_issues = language_identification[
+                        "metrics"
+                    ].get("language_issues", 0)
+                    raw_data["language_identification"] = language_identification["raw"]
+
+                    forms_labels = await self._check_forms_and_labels_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(forms_labels["issues"])
+                    accessibility_metrics.form_issues = forms_labels["metrics"].get(
+                        "form_issues", 0
+                    )
+                    raw_data["forms_and_labels"] = forms_labels["raw"]
+
+                    # 4. Robust
+                    semantic_structure = await self._check_semantic_structure_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(semantic_structure["issues"])
+                    accessibility_metrics.semantic_issues = semantic_structure[
+                        "metrics"
+                    ].get("semantic_issues", 0)
+                    raw_data["semantic_structure"] = semantic_structure["raw"]
+
+                    aria_compliance = await self._check_aria_compliance_detailed(
+                        soup, url
+                    )
+                    detailed_issues.extend(aria_compliance["issues"])
+                    accessibility_metrics.aria_issues = aria_compliance["metrics"].get(
+                        "aria_issues", 0
+                    )
+                    raw_data["aria_compliance"] = aria_compliance["raw"]
+
+                    # EAA-specific requirements
+                    eaa_compliance = (
+                        await self._check_eaa_specific_requirements_detailed(soup, url)
+                    )
+                    detailed_issues.extend(eaa_compliance["issues"])
+                    accessibility_metrics.eaa_issues = eaa_compliance["metrics"].get(
+                        "eaa_issues", 0
+                    )
+                    raw_data["eaa_compliance"] = eaa_compliance["raw"]
+
+                    # Mobile and responsive accessibility testing
+                    mobile_responsive = (
+                        await self._check_mobile_responsive_accessibility_detailed(
+                            soup, url
+                        )
+                    )
+                    detailed_issues.extend(mobile_responsive["issues"])
+                    accessibility_metrics.mobile_issues = mobile_responsive[
+                        "metrics"
+                    ].get("mobile_issues", 0)
+                    raw_data["mobile_responsive"] = mobile_responsive["raw"]
+
+                except httpx.RequestError as e:
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="accessibility_analysis_failed",
+                            severity=Severity.HIGH,
+                            message=f"Failed to analyze accessibility: {str(e)}",
+                            location=url,
+                            category="accessibility",
+                            subcategory="analysis_error",
+                            description="Accessibility analysis failed due to connection error",
+                            impact="Cannot determine accessibility compliance",
+                            technical_details={"error": str(e)},
+                            recommendations=[
+                                "Check network connectivity and try again"
+                            ],
+                            code_location=CodeLocation(
+                                resource_type="http", attribute_value=url
+                            ),
+                            priority_score=0.5,
+                        )
+                    )
+
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
+                detailed_issues=detailed_issues,
+                accessibility_metrics=accessibility_metrics,
+                raw_data=raw_data,
+            )
+
+        except Exception as e:
+            return DetailedAnalysisResult(
+                url=url,
+                dwarf_name=self.name,
                 success=False,
                 error_message=str(e),
             )

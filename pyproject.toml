@@ -20,6 +20,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "rich>=13.0.0",
+    "structlog>=23.0.0",
     "httpx>=0.25.0",
     "beautifulsoup4>=4.12.0",
     "lxml>=4.9.0",
@@ -28,7 +29,11 @@ dependencies = [
     "safety>=3.2.4",
     "python-nmap>=0.7.1",
     "pillow>=10.0.0",
+    "openai>=1.91.0",
 ]
+
+[project.optional-dependencies]
+json-logging = ["orjson>=3.0.0"]
 
 [project.scripts]
 netzzwergenwacht = "netzzwergenwacht.cli.main:app"
