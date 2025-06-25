@@ -35,10 +35,7 @@ class MockDwarf(Dwarf):
         )
 
         return AnalysisResult(
-            url=url,
-            dwarf_name=self.name,
-            issues=[issue],
-            metadata={"test": "data"}
+            url=url, dwarf_name=self.name, issues=[issue], metadata={"test": "data"}
         )
 
     def _get_category(self) -> str:
@@ -86,8 +83,8 @@ class TestDwarf:
         dwarf = MockDwarf()
         assert dwarf.name == "Mock Dwarf"
         assert dwarf.description == "A mock dwarf for testing"
-        assert hasattr(dwarf, 'metrics')
-        assert hasattr(dwarf, 'logger')
+        assert hasattr(dwarf, "metrics")
+        assert hasattr(dwarf, "logger")
 
     def test_create_issue(self):
         dwarf = MockDwarf()
@@ -109,6 +106,7 @@ class TestDwarf:
     async def test_analyze_abstract_method(self):
         """Test that analyze() is abstract and must be implemented."""
         with pytest.raises(TypeError):
+
             class InvalidDwarf(Dwarf):
                 pass
 
@@ -119,7 +117,7 @@ class TestDwarf:
         """Test the default analyze_detailed implementation."""
         dwarf = MockDwarf()
         result = await dwarf.analyze_detailed("https://example.com")
-        
+
         assert isinstance(result, DetailedAnalysisResult)
         assert result.url == "https://example.com"
         assert result.dwarf_name == dwarf.name
@@ -128,16 +126,16 @@ class TestDwarf:
     def test_metrics_collection(self):
         """Test metrics collector registration and collection."""
         dwarf = MockDwarf()
-        
+
         # Register a test metric
         def test_metric(d):
             return {"test": 42}
-            
+
         dwarf.metrics.register_metric("test_metric", test_metric)
-        
+
         # Collect metrics
         metrics = dwarf.metrics.collect_all(dwarf)
-        
+
         assert "test_metric" in metrics
         assert metrics["test_metric"] == {"test": 42}
 
@@ -156,10 +154,10 @@ class TestDwarfOrchestrator:
     def test_add_multiple_dwarfs(self):
         orchestrator = DwarfOrchestrator()
         dwarfs = [MockDwarf() for _ in range(3)]
-        
+
         for dwarf in dwarfs:
             orchestrator.add_dwarf(dwarf)
-            
+
         assert len(orchestrator.dwarfs) == 3
         assert all(d in orchestrator.dwarfs for d in dwarfs)
 

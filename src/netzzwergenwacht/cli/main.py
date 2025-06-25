@@ -28,25 +28,17 @@ console = Console()
 def check(
     url: str = typer.Argument(help="URL to analyze"),
     output: Path | None = typer.Option(
-        None,
-        "--output",
-        "-o",
-        help="Output file path",
-        dir_okay=False,
-        writable=True
+        None, "--output", "-o", help="Output file path", dir_okay=False, writable=True
     ),
     output_format: str = typer.Option(
         "text",
         "--format",
         "-f",
         help="Output format (json, text)",
-        case_sensitive=False
+        case_sensitive=False,
     ),
     verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Verbose output including technical details"
+        False, "--verbose", "-v", help="Verbose output including technical details"
     ),
     checks: str | None = typer.Option(
         None,
@@ -58,7 +50,7 @@ def check(
         "INFO",
         "--log-level",
         help="Logging level (DEBUG, INFO, WARNING, ERROR)",
-        case_sensitive=False
+        case_sensitive=False,
     ),
 ) -> None:
     """Run quality checks on a website."""
@@ -105,26 +97,26 @@ def analyze(
     # Process with LLM if enabled
     if llm:
         from ..llm import LLMProcessor
-        
+
         console.print("\n[bold blue]Processing with LLM...[/bold blue]")
         processor = LLMProcessor()
-        
+
         try:
             llm_results = asyncio.run(processor.analyze_report(report))
             console.print("\n[bold green]LLM Analysis Summary:[/bold green]")
             console.print(llm_results["summary"])
-            
+
             if llm_results["recommendations"]:
                 console.print("\n[bold]Top Recommendations:[/bold]")
                 for i, rec in enumerate(llm_results["recommendations"], 1):
                     console.print(f"  {i}. {rec}")
-                    
+
             # Save LLM results
             if output:
                 llm_path = output.with_suffix(".llm.json")
                 processor.save_for_llm(report, llm_path)
                 console.print(f"\n[green]LLM results saved to:[/green] {llm_path}")
-                
+
         except Exception as e:
             console.print(f"[red]LLM processing failed:[/red] {str(e)}")
 
@@ -396,17 +388,19 @@ def _display_comprehensive_summary(
                 acc_table.add_column("Metric", style="cyan")
                 acc_table.add_column("Value", style="white")
 
-                if result.accessibility_metrics.wcag_issues:
+                if result.accessibility_metrics.aria_issues:
                     acc_table.add_row(
-                        "WCAG Issues", str(result.accessibility_metrics.wcag_issues)
+                        "ARIA Issues", str(result.accessibility_metrics.aria_issues)
                     )
-                if result.accessibility_metrics.eaa_issues:
+                if result.accessibility_metrics.semantic_structure_issues:
                     acc_table.add_row(
-                        "EAA Issues", str(result.accessibility_metrics.eaa_issues)
+                        "Semantic Issues",
+                        str(result.accessibility_metrics.semantic_structure_issues),
                     )
-                if result.accessibility_metrics.mobile_issues:
+                if result.accessibility_metrics.touch_target_issues:
                     acc_table.add_row(
-                        "Mobile Issues", str(result.accessibility_metrics.mobile_issues)
+                        "Touch Target Issues",
+                        str(result.accessibility_metrics.touch_target_issues),
                     )
                 if result.accessibility_metrics.contrast_issues:
                     acc_table.add_row(

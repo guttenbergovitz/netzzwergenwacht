@@ -3,12 +3,13 @@
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
-T = TypeVar('T', bound='Dwarf')
+T = TypeVar("T", bound="Dwarf")
 
 
 class Severity(Enum):
@@ -366,21 +367,23 @@ class ComprehensiveAnalysisReport:
 
 class AnalysisMixin:
     """Mixin for core analysis capabilities."""
-    
+
     @abstractmethod
     async def analyze(self, url: str) -> AnalysisResult:
         """Analyze a URL and return findings."""
 
+
 class DetailedAnalysisMixin:
     """Mixin for detailed analysis capabilities."""
-    
+
     @abstractmethod
     async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
         """Analyze a URL with detailed metrics for LLM integration."""
 
+
 class IssueCreationMixin:
     """Mixin for standardized issue creation."""
-    
+
     def create_issue(
         self,
         issue_type: str,
@@ -439,26 +442,27 @@ class IssueCreationMixin:
             network_errors=network_errors or [],
         )
 
+
 class MetricsCollector:
     """Standardized metrics collection registry."""
-    
-    def __init__(self):
-        self._metrics_registry: dict[str, Callable[[T], Any]] = {}
-        
-    def register_metric(self, name: str, collector: Callable[[T], Any]):
+
+    def __init__(self) -> None:
+        self._metrics_registry: dict[str, Callable[[Any], Any]] = {}
+
+    def register_metric(self, name: str, collector: Callable[[Any], Any]) -> None:
         """Register a metric collection function."""
         self._metrics_registry[name] = collector
-        
-    def collect_all(self, dwarf: T) -> dict[str, Any]:
+
+    def collect_all(self, dwarf: Any) -> dict[str, Any]:
         """Collect all registered metrics."""
         return {
-            name: collector(dwarf)
-            for name, collector in self._metrics_registry.items()
+            name: collector(dwarf) for name, collector in self._metrics_registry.items()
         }
+
 
 class Dwarf(AnalysisMixin, DetailedAnalysisMixin, IssueCreationMixin, ABC):
     """Base class for all Dwarf agents."""
-    
+
     def __init__(self, name: str, description: str = ""):
         self.name = name
         self.description = description
@@ -574,7 +578,7 @@ class Dwarf(AnalysisMixin, DetailedAnalysisMixin, IssueCreationMixin, ABC):
 class DwarfOrchestrator:
     """Orchestrates multiple Dwarf agents."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.dwarfs: list[Dwarf] = []
 
     def add_dwarf(self, dwarf: Dwarf) -> None:
@@ -586,7 +590,7 @@ class DwarfOrchestrator:
         tasks = [dwarf.analyze(url) for dwarf in self.dwarfs]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        processed_results = []
+        processed_results: list[AnalysisResult] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 # Create error result for failed analysis
@@ -614,7 +618,7 @@ class DwarfOrchestrator:
 
         analysis_duration = time.time() - start_time
 
-        processed_results = []
+        processed_results: list[DetailedAnalysisResult] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 # Create error result for failed analysis
@@ -649,7 +653,7 @@ class DwarfOrchestrator:
             severity_counts[issue.severity.value] += 1
 
         # Count issues by category
-        issues_by_category = {}
+        issues_by_category: dict[str, int] = {}
         issues_by_dwarf = {}
         for result in results:
             dwarf_issues = len(result.detailed_issues)

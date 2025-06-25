@@ -2,19 +2,17 @@
 
 import logging
 import sys
-import structlog
 from pathlib import Path
-from typing import Any
 
+import structlog
 from rich.logging import RichHandler
 
+
 def setup_structured_logging(
-    level: str = "INFO",
-    log_file: Path | None = None,
-    enable_json: bool = False
+    level: str = "INFO", log_file: Path | None = None, enable_json: bool = False
 ) -> None:
     """Configure structured logging with optional JSON output."""
-    
+
     processors = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
@@ -45,10 +43,10 @@ def setup_structured_logging(
 
 
 def setup_logging(
-    level: str = "INFO", 
-    log_file: Path | None = None, 
+    level: str = "INFO",
+    log_file: Path | None = None,
     rich_console: bool = True,
-    json_format: bool = False
+    json_format: bool = False,
 ) -> logging.Logger:
     """Set up structured logging for the application.
 
@@ -67,7 +65,9 @@ def setup_logging(
             structlog.processors.add_log_level,
             structlog.processors.StackInfoRenderer(),
             structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.JSONRenderer() if json_format else structlog.dev.ConsoleRenderer()
+            structlog.processors.JSONRenderer()
+            if json_format
+            else structlog.dev.ConsoleRenderer(),
         ],
         wrapper_class=structlog.BoundLogger,
         context_class=dict,

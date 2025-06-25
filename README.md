@@ -470,7 +470,7 @@ NZW_LOG_LEVEL=INFO  # DEBUG, INFO, WARNING, ERROR
 NZW_LOG_FORMAT=rich # rich, json, plain
 NZW_MAX_WORKERS=10  # Concurrent analysis threads
 
-# Security Settings  
+# Security Settings
 NZW_SCAN_PORTS=true
 NZW_ALLOW_INSECURE=false
 
@@ -537,6 +537,6 @@ MIT - See [LICENSE](LICENSE) for details.
 
 ## 📬 Contact
 
-- Author: Krzysztof Guttenberger
-- Email: krzysztof@guttenberger.com
+- Author: GTBGZ
+- Email: guttenbergovitz@gmail.com
 - GitHub: [@guttenbergovitz](https://github.com/guttenbergovitz)

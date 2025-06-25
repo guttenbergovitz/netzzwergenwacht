@@ -14,6 +14,7 @@ NetzZwergenWacht is an intelligent, automated system for analyzing and monitorin
 - **HTTP Client**: httpx
 - **HTML Parsing**: BeautifulSoup
 - **Security Scanning**: nmap, safety
+- **LLM Integration**: OpenAI API (requires OPENAI_API_KEY environment variable)
 - **Testing**: pytest
 - **Linting**: ruff
 - **Type Checking**: mypy
@@ -206,6 +207,20 @@ This project requires the `nmap` binary to be installed on your system for advan
 
 Make sure `nmap` is available in your PATH.
 
+## LLM Integration Setup
+
+For LLM-powered analysis capabilities, you need to set up OpenAI API access:
+
+```bash
+# Set your OpenAI API key
+export OPENAI_API_KEY="your-api-key-here"
+
+# Or add to .env file
+echo "OPENAI_API_KEY=your-api-key-here" >> .env
+```
+
+The LLM integration provides enhanced analysis insights, intelligent issue prioritization, and natural language recommendations.
+
 ## Development Phases
 
 The project follows a phased approach:
@@ -220,6 +235,8 @@ The project follows a phased approach:
   - ✅ Visual Analysis & UI Testing
   - ✅ ~~API Testing & Integration~~ (skipped - limited value for external testing)
 - **🔄 Phase 3**: LLM Integration (in progress)
+  - ✅ OpenAI API integration implemented
+  - ✅ LLM processor for report analysis
   - 🔄 LLM-powered issue classification
   - 🔄 Intelligent recommendations
   - 🔄 Natural language reporting

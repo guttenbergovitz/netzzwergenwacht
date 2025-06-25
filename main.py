@@ -16,7 +16,7 @@ def show_deprecation_warning():
         "Legacy main.py entry point is deprecated and will be removed in v1.0. "
         f"Use 'netzzwergenwacht' (v{version('netzzwergenwacht')}) instead.",
         DeprecationWarning,
-        stacklevel=2
+        stacklevel=2,
     )
     print("⚠️  Deprecation Warning: Using legacy entry point")
 
@@ -24,7 +24,7 @@ def show_deprecation_warning():
 def main():
     """Legacy main function - redirects to new CLI."""
     show_deprecation_warning()
-    
+
     try:
         app()
     except Exception as e:
