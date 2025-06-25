@@ -324,10 +324,14 @@ class SicherheitsZwerg(Dwarf):
                         not_after_str = cert["notAfter"]
                         # Parse the certificate date (format: 'Oct  1 12:00:00 2024 GMT')
                         try:
-                            not_after = datetime.strptime(
-                                not_after_str, "%b %d %H:%M:%S %Y %Z"
+                            # Remove the timezone part and parse as naive datetime
+                            # SSL certificate dates are always in GMT/UTC
+                            date_without_tz = not_after_str.replace(" GMT", "").strip()
+                            not_after_naive = datetime.strptime(
+                                date_without_tz, "%b %d %H:%M:%S %Y"
                             )
-                            not_after = not_after.replace(tzinfo=UTC)
+                            # Since certificate dates are in GMT/UTC, assign UTC timezone
+                            not_after = not_after_naive.replace(tzinfo=UTC)
                             now = datetime.now(UTC)
                             days_until_expiry = (not_after - now).days
 
@@ -1095,12 +1099,22 @@ class SicherheitsZwerg(Dwarf):
                     metrics["certificate_valid"] = True
 
                     # Check certificate expiry
-                    not_after = datetime.strptime(
-                        cert["notAfter"], "%b %d %H:%M:%S %Y %Z"
+                    not_after_str = cert["notAfter"]
+                    # Remove the timezone part and parse as naive datetime
+                    # SSL certificate dates are always in GMT/UTC
+                    date_without_tz = not_after_str.replace(" GMT", "").strip()
+                    not_after_naive = datetime.strptime(
+                        date_without_tz, "%b %d %H:%M:%S %Y"
                     )
-                    days_until_expiry = (not_after - datetime.now(UTC)).days
+                    # Since certificate dates are in GMT/UTC, assign UTC timezone
+                    not_after = not_after_naive.replace(tzinfo=UTC)
+                    now = datetime.now(UTC)
+                    days_until_expiry = (not_after - now).days
                     metrics["certificate_expiry_days"] = days_until_expiry
-                    metrics["certificate_issuer"] = dict(cert["issuer"])
+                    # Convert certificate issuer tuple structure to dict
+                    metrics["certificate_issuer"] = dict(
+                        x[0] for x in cert.get("issuer", [])
+                    )
 
                     if days_until_expiry < 30:
                         issues.append(
@@ -1116,7 +1130,9 @@ class SicherheitsZwerg(Dwarf):
                                 technical_details={
                                     "expiry_date": not_after.isoformat(),
                                     "days_until_expiry": days_until_expiry,
-                                    "issuer": dict(cert["issuer"]),
+                                    "issuer": dict(
+                                        x[0] for x in cert.get("issuer", [])
+                                    ),
                                 },
                                 recommendations=[
                                     "Renew SSL certificate before expiration"
