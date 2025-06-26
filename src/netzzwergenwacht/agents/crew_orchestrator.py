@@ -9,6 +9,16 @@ from langchain_openai import ChatOpenAI
 
 from ..dwarfs.base import ComprehensiveAnalysisReport
 from ..utils.logging import get_logger
+from .accessibility_agent import AccessibilityExpertAgent
+from .content_agent import ContentExpertAgent
+from .monitoring_agent import MonitoringExpertAgent
+from .performance_agent import PerformanceExpertAgent
+from .reporting_agent import ReportingExpertAgent
+from .rule_engine_agent import RuleEngineExpertAgent
+from .security_agent import SecurityExpertAgent
+from .seo_agent import SEOExpertAgent
+from .visual_agent import VisualExpertAgent
+from .web_browser_agent import WebBrowserExpertAgent
 
 logger = get_logger("crew_orchestrator")
 
@@ -38,46 +48,44 @@ class WebAnalysisCrew:
         """Create specialized expert agents."""
 
         # Security Expert Agent
-        security_agent = Agent(
-            role="Senior Web Security Analyst",
-            goal="Identify critical security vulnerabilities and provide actionable remediation steps",
-            backstory="""You are a cybersecurity expert with 15+ years of experience in web application security.
-            You specialize in OWASP Top 10, SSL/TLS security, security headers, and vulnerability assessment.
-            You understand the business impact of security issues and can prioritize them effectively.
-            You provide specific, actionable remediation steps with exact code examples.""",
-            llm=self.llm,
-            verbose=True,
-            allow_delegation=False,
-            max_iter=3,
-        )
+        security_agent_instance = SecurityExpertAgent(llm=self.llm)
+        security_agent = security_agent_instance.create_agent()
 
         # Performance Expert Agent
-        performance_agent = Agent(
-            role="Senior Performance Engineer",
-            goal="Analyze website performance and Core Web Vitals, providing optimization strategies",
-            backstory="""You are a web performance expert with deep knowledge of Core Web Vitals,
-            browser rendering, network optimization, and performance budgets. You understand how
-            performance impacts user experience, SEO rankings, and conversion rates.
-            You provide specific optimization techniques with measurable improvements.""",
-            llm=self.llm,
-            verbose=True,
-            allow_delegation=False,
-            max_iter=3,
-        )
+        performance_agent_instance = PerformanceExpertAgent(llm=self.llm)
+        performance_agent = performance_agent_instance.create_agent()
 
         # Accessibility Expert Agent
-        accessibility_agent = Agent(
-            role="Senior Accessibility Consultant",
-            goal="Ensure WCAG 2.1 AA compliance and identify accessibility barriers",
-            backstory="""You are an accessibility expert certified in WCAG 2.1 AA/AAA guidelines
-            and EU Accessibility Act compliance. You understand assistive technologies, screen readers,
-            and inclusive design principles. You can identify accessibility barriers and provide
-            specific ARIA and HTML remediation strategies.""",
-            llm=self.llm,
-            verbose=True,
-            allow_delegation=False,
-            max_iter=3,
-        )
+        accessibility_agent_instance = AccessibilityExpertAgent(llm=self.llm)
+        accessibility_agent = accessibility_agent_instance.create_agent()
+
+        # SEO Expert Agent
+        seo_agent_instance = SEOExpertAgent(llm=self.llm)
+        seo_agent = seo_agent_instance.create_agent()
+
+        # Content Expert Agent
+        content_agent_instance = ContentExpertAgent(llm=self.llm)
+        content_agent = content_agent_instance.create_agent()
+
+        # Visual Expert Agent
+        visual_agent_instance = VisualExpertAgent(llm=self.llm)
+        visual_agent = visual_agent_instance.create_agent()
+
+        # Web Browser Expert Agent
+        web_browser_agent_instance = WebBrowserExpertAgent(llm=self.llm)
+        web_browser_agent = web_browser_agent_instance.create_agent()
+
+        # Reporting Expert Agent
+        reporting_agent_instance = ReportingExpertAgent(llm=self.llm)
+        reporting_agent = reporting_agent_instance.create_agent()
+
+        # Monitoring Expert Agent
+        monitoring_agent_instance = MonitoringExpertAgent(llm=self.llm)
+        monitoring_agent = monitoring_agent_instance.create_agent()
+
+        # Rule Engine Expert Agent
+        rule_engine_agent_instance = RuleEngineExpertAgent(llm=self.llm)
+        rule_engine_agent = rule_engine_agent_instance.create_agent()
 
         # Analysis Coordinator Agent
         coordinator_agent = Agent(
@@ -97,6 +105,13 @@ class WebAnalysisCrew:
             security_agent,
             performance_agent,
             accessibility_agent,
+            seo_agent,
+            content_agent,
+            visual_agent,
+            web_browser_agent,
+            reporting_agent,
+            monitoring_agent,
+            rule_engine_agent,
             coordinator_agent,
         ]
         logger.info(f"✅ Created {len(self.agents)} specialist agents")
@@ -137,11 +152,11 @@ class WebAnalysisCrew:
             URL: {report_data.get("url", "N/A")}
 
             Your analysis should:
-            1. Identify performance bottlenecks and their root causes
-            2. Correlate performance issues with user experience impact
-            3. Provide specific optimization strategies with expected improvements
-            4. Prioritize optimizations by impact vs effort ratio
-            5. Include code examples and configuration changes
+            1. Identify performance bottlenecks and their root causes.
+            2. Correlate performance issues with user experience impact.
+            3. Provide specific optimization strategies with expected improvements.
+            4. Prioritize optimizations by impact vs effort ratio.
+            5. Include code examples and configuration changes.
 
             Focus on measurable performance improvements.
             """,
@@ -159,11 +174,11 @@ class WebAnalysisCrew:
             URL: {report_data.get("url", "N/A")}
 
             Your analysis should:
-            1. Assess WCAG 2.1 AA compliance gaps
-            2. Identify barriers for users with disabilities
-            3. Provide specific ARIA and HTML remediation strategies
-            4. Prioritize fixes by user impact and implementation complexity
-            5. Include code examples for accessibility improvements
+            1. Assess WCAG 2.1 AA compliance gaps.
+            2. Identify barriers for users with disabilities.
+            3. Provide specific ARIA and HTML remediation strategies.
+            4. Prioritize fixes by user impact and implementation complexity.
+            5. Include code examples for accessibility improvements.
 
             Focus on inclusive design and assistive technology compatibility.
             """,
@@ -171,10 +186,176 @@ class WebAnalysisCrew:
             expected_output="Detailed accessibility compliance roadmap",
         )
 
+        # SEO Analysis Task
+        seo_task = Task(
+            description=f"""
+            Analyze the SEO findings from this website analysis:
+
+            SEO Issues: {report_data.get("seo_issues", [])}
+            SEO Metrics: {report_data.get("seo_metrics", {})}
+            URL: {report_data.get("url", "N/A")}
+
+            Your analysis should:
+            1. Identify critical SEO issues and opportunities.
+            2. Provide specific on-page and technical SEO recommendations.
+            3. Suggest content optimization strategies.
+            4. Prioritize SEO improvements by potential impact on organic traffic.
+            5. Include examples for meta tags, heading structure, and structured data.
+
+            Focus on improving search engine visibility and ranking.
+            """,
+            agent=self.agents[3],  # SEO agent
+            expected_output="Detailed SEO analysis with prioritized optimization strategies",
+        )
+
+        # Content Analysis Task
+        content_task = Task(
+            description=f"""
+            Analyze the content findings from this website analysis:
+
+            Content Issues: {report_data.get("content_issues", [])}
+            Content Metrics: {report_data.get("content_metrics", {})}
+            URL: {report_data.get("url", "N/A")}
+
+            Your analysis should:
+            1. Assess content quality, readability, and freshness.
+            2. Identify duplicate content and structural issues.
+            3. Provide recommendations for improving language quality and user engagement.
+            4. Suggest content formatting and heading structure improvements.
+
+            Focus on enhancing the overall quality and effectiveness of the website's content.
+            """,
+            agent=self.agents[4],  # Content agent
+            expected_output="Detailed content analysis with recommendations for quality and readability",
+        )
+
+        # Visual Analysis Task
+        visual_task = Task(
+            description=f"""
+            Analyze the visual findings from this website analysis:
+
+            Visual Issues: {report_data.get("visual_issues", [])}
+            Visual Metrics: {report_data.get("visual_metrics", {})}
+            URL: {report_data.get("url", "N/A")}
+
+            Your analysis should:
+            1. Assess visual consistency, UI element detection, and layout issues.
+            2. Provide recommendations for improving color schemes, typography, and overall visual appeal.
+            3. Identify and suggest fixes for overlapping elements, overflow problems, and responsive design issues.
+
+            Focus on enhancing the visual quality and user experience of the website.
+            """,
+            agent=self.agents[5],  # Visual agent
+            expected_output="Detailed visual analysis with recommendations for design and UI/UX improvements",
+        )
+
+        # Web Browser Analysis Task
+        web_browser_task = Task(
+            description=f"""
+            Analyze the web browser findings from this website analysis:
+
+            Web Browser Issues: {report_data.get("web_browser_issues", [])}
+            Web Browser Metrics: {report_data.get("web_browser_metrics", {})}
+            URL: {report_data.get("url", "N/A")}
+
+            Your analysis should:
+            1. Identify HTTP status issues, redirects, and response time problems.
+            2. Analyze HTML structure, JavaScript console errors, and network request failures.
+            3. Provide recommendations for improving basic SEO attributes and browser-based accessibility.
+
+            Focus on ensuring the website functions correctly and efficiently across different browsers.
+            """,
+            agent=self.agents[6],  # Web Browser agent
+            expected_output="Detailed web browser analysis with recommendations for functionality and efficiency",
+        )
+
+        # Reporting Analysis Task
+        reporting_task = Task(
+            description=f"""
+            Generate a comprehensive report based on the following analysis findings:
+
+            Security Analysis: {report_data.get("security_issues", [])}
+            Performance Analysis: {report_data.get("performance_issues", [])}
+            Accessibility Analysis: {report_data.get("accessibility_issues", [])}
+            SEO Analysis: {report_data.get("seo_issues", [])}
+            Content Analysis: {report_data.get("content_issues", [])}
+            Visual Analysis: {report_data.get("visual_issues", [])}
+            Web Browser Analysis: {report_data.get("web_browser_issues", [])}
+            URL: {report_data.get("url", "N/A")}
+
+            Your report should:
+            1. Provide an executive summary highlighting key findings and overall website quality.
+            2. Include detailed sections for each analysis area (Security, Performance, etc.) with prioritized issues.
+            3. Offer actionable recommendations and specific fix suggestions with code examples where applicable.
+            4. Present relevant metrics and their interpretation.
+            5. Be structured for clarity and easy readability by both technical and non-technical stakeholders.
+
+            Focus on creating a professional, comprehensive, and actionable report.
+            """,
+            agent=self.agents[7],  # Reporting agent
+            expected_output="Comprehensive and actionable analysis report",
+        )
+
+        # Monitoring Analysis Task
+        monitoring_task = Task(
+            description=f"""
+            Analyze the monitoring requirements for this website based on the analysis findings:
+
+            Security Issues: {report_data.get("security_issues", [])}
+            Performance Issues: {report_data.get("performance_issues", [])}
+            Accessibility Issues: {report_data.get("accessibility_issues", [])}
+            SEO Issues: {report_data.get("seo_issues", [])}
+            Content Issues: {report_data.get("content_issues", [])}
+            Visual Issues: {report_data.get("visual_issues", [])}
+            Web Browser Issues: {report_data.get("web_browser_issues", [])}
+            URL: {report_data.get("url", "N/A")}
+
+            Your analysis should:
+            1. Identify key metrics and events that need continuous monitoring.
+            2. Suggest appropriate monitoring tools and configurations.
+            3. Define thresholds for alerts and notifications.
+            4. Propose a strategy for real-time anomaly detection.
+            5. Outline a plan for integrating monitoring into existing CI/CD pipelines.
+
+            Focus on establishing a robust and proactive monitoring system.
+            """,
+            agent=self.agents[8],  # Monitoring agent
+            expected_output="Detailed monitoring strategy and implementation plan",
+        )
+
+        # Rule Engine Analysis Task
+        rule_engine_task = Task(
+            description=f"""
+            Analyze the custom rule requirements for this website based on the analysis findings:
+
+            Security Issues: {report_data.get("security_issues", [])}
+            Performance Issues: {report_data.get("performance_issues", [])}
+            Accessibility Issues: {report_data.get("accessibility_issues", [])}
+            SEO Issues: {report_data.get("seo_issues", [])}
+            Content Issues: {report_data.get("content_issues", [])}
+            Visual Issues: {report_data.get("visual_issues", [])}
+            Web Browser Issues: {report_data.get("web_browser_issues", [])}
+            Reporting Issues: {report_data.get("reporting_issues", [])}
+            Monitoring Issues: {report_data.get("monitoring_issues", [])}
+            URL: {report_data.get("url", "N/A")}
+
+            Your analysis should:
+            1. Identify areas where custom rules can enhance analysis or enforce specific standards.
+            2. Propose new rule definitions based on recurring patterns or unique requirements.
+            3. Outline the logic and conditions for each custom rule.
+            4. Suggest how these rules can be integrated into the existing analysis workflow.
+            5. Consider the impact of new rules on performance and reporting.
+
+            Focus on extending the system's analytical capabilities through custom rule sets.
+            """,
+            agent=self.agents[9],  # Rule Engine agent
+            expected_output="Detailed custom rule definitions and integration plan",
+        )
+
         # Coordination Task
         coordination_task = Task(
             description="""
-            Synthesize the expert analyses from Security, Performance, and Accessibility teams
+            Synthesize the expert analyses from Security, Performance, Accessibility, SEO, Content, Visual, Web Browser, Reporting, Monitoring, and Rule Engine teams
             into a comprehensive, executive-ready action plan.
 
             Based on the individual expert reports, create:
@@ -205,55 +386,36 @@ class WebAnalysisCrew:
 
             Focus on actionable insights that drive business value.
             """,
-            agent=self.agents[3],  # Coordinator agent
+            agent=self.agents[10],  # Coordinator agent (index adjusted)
             expected_output="Executive-ready comprehensive analysis and action plan",
-            context=[security_task, performance_task, accessibility_task],
+            context=[
+                security_task,
+                performance_task,
+                accessibility_task,
+                seo_task,
+                content_task,
+                visual_task,
+                web_browser_task,
+                reporting_task,
+                monitoring_task,
+                rule_engine_task,
+            ],
         )
 
         self.tasks = [
             security_task,
             performance_task,
             accessibility_task,
+            seo_task,
+            content_task,
+            visual_task,
+            web_browser_task,
+            reporting_task,
+            monitoring_task,
+            rule_engine_task,
             coordination_task,
         ]
         logger.info(f"✅ Created {len(self.tasks)} analysis tasks")
-
-    def analyze_report(self, report: ComprehensiveAnalysisReport) -> dict[str, Any]:
-        """Perform multi-agent analysis of the comprehensive report."""
-        try:
-            logger.info("🚀 Starting CrewAI multi-agent analysis...")
-
-            # Prepare data for agents
-            report_data = self._prepare_report_data(report)
-
-            # Create agents and tasks
-            self.create_agents()
-            self.create_tasks(report_data)
-
-            # Create and execute crew
-            self.crew = Crew(
-                agents=self.agents,
-                tasks=self.tasks,
-                verbose=True,
-                process_order_strategy="sequential",  # Execute tasks in order
-            )
-
-            # Execute the crew
-            logger.info("🔄 Executing agent crew...")
-            result = self.crew.kickoff()  # type: ignore
-
-            logger.info("✅ CrewAI analysis completed successfully")
-
-            # Format results
-            return self._format_crew_results(result)
-
-        except Exception as e:
-            logger.error(f"❌ CrewAI analysis failed: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "fallback_analysis": "Multi-agent analysis failed, falling back to single LLM analysis",
-            }
 
     def _prepare_report_data(
         self, report: ComprehensiveAnalysisReport
@@ -267,9 +429,23 @@ class WebAnalysisCrew:
             "security_issues": [],
             "performance_issues": [],
             "accessibility_issues": [],
+            "seo_issues": [],
+            "content_issues": [],
+            "visual_issues": [],
+            "web_browser_issues": [],
+            "reporting_issues": [],
+            "monitoring_issues": [],
+            "rule_engine_issues": [],
             "security_metrics": {},
             "performance_metrics": {},
             "accessibility_metrics": {},
+            "seo_metrics": {},
+            "content_metrics": {},
+            "visual_metrics": {},
+            "web_browser_metrics": {},
+            "reporting_metrics": {},
+            "monitoring_metrics": {},
+            "rule_engine_metrics": {},
         }
 
         # Extract issues by category
@@ -331,6 +507,110 @@ class WebAnalysisCrew:
                     data["accessibility_metrics"] = (
                         result.accessibility_metrics.__dict__
                     )
+            elif "seo" in dwarf_type:
+                data["seo_issues"].extend([  # type: ignore
+                    {
+                        "type": issue.issue_type,
+                        "severity": issue.severity.value,
+                        "description": issue.description,
+                        "impact": issue.impact,
+                        "location": issue.location,
+                        "fix_suggestions": issue.fix_suggestions,
+                    }
+                    for issue in result.detailed_issues
+                ])
+                if hasattr(result, "seo_metrics") and result.seo_metrics:
+                    data["seo_metrics"] = result.seo_metrics.__dict__
+            elif "inhalt" in dwarf_type or "content" in dwarf_type:
+                data["content_issues"].extend([  # type: ignore
+                    {
+                        "type": issue.issue_type,
+                        "severity": issue.severity.value,
+                        "description": issue.description,
+                        "impact": issue.impact,
+                        "location": issue.location,
+                        "fix_suggestions": issue.fix_suggestions,
+                    }
+                    for issue in result.detailed_issues
+                ])
+                if hasattr(result, "content_metrics") and result.content_metrics:
+                    data["content_metrics"] = result.content_metrics.__dict__
+            elif "visual" in dwarf_type:
+                data["visual_issues"].extend([  # type: ignore
+                    {
+                        "type": issue.issue_type,
+                        "severity": issue.severity.value,
+                        "description": issue.description,
+                        "impact": issue.impact,
+                        "location": issue.location,
+                        "fix_suggestions": issue.fix_suggestions,
+                    }
+                    for issue in result.detailed_issues
+                ])
+                if hasattr(result, "visual_metrics") and result.visual_metrics:
+                    data["visual_metrics"] = result.visual_metrics.__dict__
+            elif "web_browser" in dwarf_type:
+                data["web_browser_issues"].extend([  # type: ignore
+                    {
+                        "type": issue.issue_type,
+                        "severity": issue.severity.value,
+                        "description": issue.description,
+                        "impact": issue.impact,
+                        "location": issue.location,
+                        "fix_suggestions": issue.fix_suggestions,
+                    }
+                    for issue in result.detailed_issues
+                ])
+                if (
+                    hasattr(result, "web_browser_metrics")
+                    and result.web_browser_metrics
+                ):
+                    data["web_browser_metrics"] = result.web_browser_metrics.__dict__
+            elif "reporting" in dwarf_type:
+                data["reporting_issues"].extend([  # type: ignore
+                    {
+                        "type": issue.issue_type,
+                        "severity": issue.severity.value,
+                        "description": issue.description,
+                        "impact": issue.impact,
+                        "location": issue.location,
+                        "fix_suggestions": issue.fix_suggestions,
+                    }
+                    for issue in result.detailed_issues
+                ])
+                if hasattr(result, "reporting_metrics") and result.reporting_metrics:
+                    data["reporting_metrics"] = result.reporting_metrics.__dict__
+            elif "monitoring" in dwarf_type:
+                data["monitoring_issues"].extend([  # type: ignore
+                    {
+                        "type": issue.issue_type,
+                        "severity": issue.severity.value,
+                        "description": issue.description,
+                        "impact": issue.impact,
+                        "location": issue.location,
+                        "fix_suggestions": issue.fix_suggestions,
+                    }
+                    for issue in result.detailed_issues
+                ])
+                if hasattr(result, "monitoring_metrics") and result.monitoring_metrics:
+                    data["monitoring_metrics"] = result.monitoring_metrics.__dict__
+            elif "rule_engine" in dwarf_type:
+                data["rule_engine_issues"].extend([  # type: ignore
+                    {
+                        "type": issue.issue_type,
+                        "severity": issue.severity.value,
+                        "description": issue.description,
+                        "impact": issue.impact,
+                        "location": issue.location,
+                        "fix_suggestions": issue.fix_suggestions,
+                    }
+                    for issue in result.detailed_issues
+                ])
+                if (
+                    hasattr(result, "rule_engine_metrics")
+                    and result.rule_engine_metrics
+                ):
+                    data["rule_engine_metrics"] = result.rule_engine_metrics.__dict__
 
         return data
 
