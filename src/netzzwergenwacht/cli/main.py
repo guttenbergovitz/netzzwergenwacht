@@ -111,15 +111,17 @@ def analyze(
     if agents or llm or output_format.lower() == "pdf":
         try:
             if agents:
-                # Use CrewAI multi-agent analysis
-                from ..agents import WebAnalysisCrew
+                # Use Working Autonomous CrewAI multi-agent analysis
+                from ..agents.working_autonomous_crew import (
+                    WorkingAutonomousCrew,
+                )
 
                 console.print(
-                    "\n[bold blue]🤖 Initializing CrewAI Multi-Agent Analysis...[/bold blue]"
+                    "\n[bold blue]🎖️ Initializing Working Autonomous Multi-Agent Brigade...[/bold blue]"
                 )
-                crew = WebAnalysisCrew()
+                crew = WorkingAutonomousCrew()
                 console.print(
-                    "[dim]Agents: Security Expert, Performance Expert, Accessibility Expert, Coordinator[/dim]"
+                    "[dim]Autonomous Agents: KommanderZwerg, SicherheitsZwerg, LeistungsZwerg, ZugaenglichkeitsZwerg, DokumentalistZwerg[/dim]"
                 )
 
                 llm_results = crew.analyze(report)
