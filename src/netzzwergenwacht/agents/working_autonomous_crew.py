@@ -218,39 +218,25 @@ class WorkingAutonomousCrew:
         """Create security investigation task."""
         return Task(
             description=f"""
-            🔒 AUTONOMOUS SECURITY INVESTIGATION - SicherheitsZwerg 🔒
+            🔒 SECURITY INVESTIGATION - SicherheitsZwerg
 
-            "Gott im Himmel! Another digital fortress to secure!"
+            "Gott im Himmel! Time to secure this digital fortress!"
 
-            Ach, mein friends, it is time for this old security dwarf to examine the defenses!
-            Trust nothing, verify everything - that is the SicherheitsZwerg way!
+            FINDINGS: {self._format_findings(report_data.get("security_issues", []))}
+            METRICS: {report_data.get("security_metrics", {})}
 
-            SECURITY INTELLIGENCE BRIEFING:
-            {self._format_findings(report_data.get("security_issues", []))}
+            MISSION:
+            1. Assess threats and vulnerability priority
+            2. Check security headers, SSL/TLS configuration
+            3. Hunt for XSS, injection risks, information disclosure
+            4. Coordinate with other agents on cross-domain impacts
 
-            Security Metrics: {report_data.get("security_metrics", {})}
+            COLLABORATION:
+            - Critical issues → Alert KommanderZwerg immediately
+            - Header problems → Coordinate with LeistungsZwerg
+            - JS security → Work with WebBrowserZwerg
 
-            AUTONOMOUS FORTRESS INSPECTION PROTOCOL:
-            1. **Threat Assessment**: "Every weakness is a doorway for digital bandits!"
-            2. **Vulnerability Prioritization**: "Critical holes first - they scream loudest!"
-            3. **Cross-Domain Security Impact**: "Security touches everything, like smoke through stone!"
-            4. **Real-Time Collaboration**: "WebBrowserZwerg! Help me hunt JavaScript vulnerabilities!"
-            5. **Adaptive Deep-Dive**: "When I smell danger, I dig deeper!"
-
-            COLLABORATIVE FORTRESS STRATEGY:
-            - Critical vulnerabilities found → "KommanderZwerg! CODE CRIMSON! Digital bandits could strike!"
-            - Header issues detected → "LeistungsZwerg, these missing headers slow AND weaken us!"
-            - JavaScript risks identified → "WebBrowserZwerg, scout these scripts for XSS traps!"
-            - SSL/TLS issues → "SEOZwerg, broken trust signals hurt rankings AND security!"
-
-            AUTONOMOUS SECURITY DECISIONS:
-            - CRITICAL: "FORTRESS BREACH ALERT! All hands to battle stations!"
-            - HIGH: "Serious chinks in the armor - collaborative strike force needed!"
-            - MEDIUM: "Standard patrol findings - fortify with standard protocols!"
-
-            Provide fortress-grade remediation with exact battle-tested code examples!
-
-            Remember: End your analysis with your private security thoughts in purple color!
+            Provide exact remediation code and end with purple security thoughts!
             """,
             agent=self.agents[1],  # SicherheitsZwerg
             expected_output="Autonomous security analysis with collaborative insights and adaptive investigation results",
@@ -260,40 +246,25 @@ class WorkingAutonomousCrew:
         """Create performance investigation task."""
         return Task(
             description=f"""
-            ⚡ AUTONOMOUS PERFORMANCE FORGE - LeistungsZwerg ⚡
+            ⚡ PERFORMANCE OPTIMIZATION - LeistungsZwerg
 
-            "Schnell, schnell! Time to hammer out these performance bottlenecks!"
+            "Schnell, schnell! Time to hammer out bottlenecks!"
 
-            Ach, meine digital craftsmen! Every millisecond is precious metal in my forge!
-            Let us shape this website until it runs smooth as meine polished hammer!
+            FINDINGS: {self._format_findings(report_data.get("performance_issues", []))}
+            METRICS: {report_data.get("performance_metrics", {})}
 
-            PERFORMANCE INTELLIGENCE BRIEFING:
-            {self._format_findings(report_data.get("performance_issues", []))}
+            MISSION:
+            1. Analyze Core Web Vitals (LCP, FID, CLS)
+            2. Optimize resources and compression
+            3. Measure response times and loading speed
+            4. Coordinate with other agents on performance impacts
 
-            Performance Metrics: {report_data.get("performance_metrics", {})}
+            COLLABORATION:
+            - Large images → Work with VisualZwerg on optimization
+            - Slow JS → Coordinate with WebBrowserZwerg
+            - Mobile performance → Partner with ZugaenglichkeitsZwerg
 
-            AUTONOMOUS SPEED FORGING PROTOCOL:
-            1. **Performance Triage**: "Find the biggest bottlenecks - they slow everything!"
-            2. **Core Web Vitals Analysis**: "LCP, FID, CLS - the holy trinity of speed!"
-            3. **Resource Optimization**: "Compress everything! Every byte counts!"
-            4. **Cross-Domain Performance Impact**: "Speed affects all - we must coordinate!"
-            5. **Adaptive Investigation**: "Deep analysis for the worst offenders!"
-
-            COLLABORATIVE SPEED WORKSHOP:
-            - Large images detected → "VisualZwerg! These images are heavier than stone blocks!"
-            - Slow JavaScript → "WebBrowserZwerg, these scripts crawl like snails!"
-            - Poor mobile performance → "ZugaenglichkeitsZwerg, mobile users deserve speed too!"
-            - SEO impact detected → "SEOZwerg, slow sites sink in search rankings!"
-
-            AUTONOMOUS SPEED DECISIONS:
-            - CRITICAL (>5s load time): "Himmel und Hölle! Emergency optimization squad!"
-            - HIGH (3-5s): "Unacceptable! Coordinated strike against slowness!"
-            - MEDIUM (2-3s): "Good but not perfect - time for fine-tuning!"
-            - EXCELLENT (<2s): "Wunderbar! Precision engineering at its finest!"
-
-            Focus on measurable speed gains with exact millisecond improvements!
-
-            Remember: End your analysis with your private performance thoughts in red color!
+            Focus on measurable improvements and end with red performance thoughts!
             """,
             agent=self.agents[2],  # LeistungsZwerg
             expected_output="Autonomous performance optimization strategy with collaborative cross-domain insights",
@@ -303,40 +274,25 @@ class WorkingAutonomousCrew:
         """Create accessibility investigation task."""
         return Task(
             description=f"""
-            ♿ AUTONOMOUS INCLUSION CRUSADE - ZugaenglichkeitsZwerg ♿
+            ♿ ACCESSIBILITY ANALYSIS - ZugaenglichkeitsZwerg
 
             "No one shall be left behind in the digital realm!"
 
-            Ach, meine compassionate hearts! Every barrier we tear down opens doors for our fellow humans!
-            This is not just compliance - this is human dignity in digital form!
+            FINDINGS: {self._format_findings(report_data.get("accessibility_issues", []))}
+            METRICS: {report_data.get("accessibility_metrics", {})}
 
-            ACCESSIBILITY INTELLIGENCE BRIEFING:
-            {self._format_findings(report_data.get("accessibility_issues", []))}
+            MISSION:
+            1. Assess WCAG 2.1 AA compliance gaps
+            2. Test keyboard navigation and screen reader compatibility
+            3. Check color contrast and visual accessibility
+            4. Validate ARIA attributes and semantic HTML
 
-            Accessibility Metrics: {report_data.get("accessibility_metrics", {})}
+            COLLABORATION:
+            - Color issues → Partner with VisualZwerg
+            - Alt text → Coordinate with InhaltZwerg
+            - Keyboard nav → Work with WebBrowserZwerg
 
-            AUTONOMOUS INCLUSION CRUSADE PROTOCOL:
-            1. **WCAG 2.1 AA Triage**: "Every guideline serves a human in need!"
-            2. **EU Accessibility Act Assessment**: "European inclusion standards - our moral compass!"
-            3. **Cross-Domain Accessibility**: "Barriers anywhere affect everyone!"
-            4. **Collaborative Remediation**: "Together we build bridges to inclusion!"
-            5. **Adaptive Testing**: "Severe barriers demand immediate action!"
-
-            COLLABORATIVE INCLUSION STRATEGY:
-            - Color contrast issues → "VisualZwerg! These colors blind our users!"
-            - Alt text missing → "InhaltZwerg, give images voices for the unseeing!"
-            - Keyboard navigation problems → "WebBrowserZwerg, some users can't use mice!"
-            - Form accessibility → "All hands! Forms must welcome every user!"
-
-            AUTONOMOUS INCLUSION DECISIONS:
-            - CRITICAL: "Ach, mein Gott! Users are completely blocked - emergency action!"
-            - HIGH: "Serious barriers to dignity - collaborative strike force needed!"
-            - MEDIUM: "Improvements needed for true inclusion!"
-            - EXCELLENT: "Wunderbar! A truly inclusive digital space!"
-
-            Provide heartfelt WCAG 2.1 AA solutions that restore human dignity!
-
-            Remember: End your analysis with your private accessibility thoughts in cyan color!
+            Provide WCAG-compliant solutions and end with cyan accessibility thoughts!
             """,
             agent=self.agents[3],  # ZugaenglichkeitsZwerg
             expected_output="Autonomous accessibility compliance analysis with collaborative cross-domain remediation strategy",
@@ -346,35 +302,25 @@ class WorkingAutonomousCrew:
         """Create SEO investigation task."""
         return Task(
             description=f"""
-            AUTONOMOUS SEO INVESTIGATION - SEOZwerg
+            SEO OPTIMIZATION - SEOZwerg
 
-            Execute autonomous SEO analysis with adaptive optimization strategies and cross-domain search ranking impact assessment.
+            "Time to dig for search visibility gold!"
 
-            SEO INTELLIGENCE BRIEFING:
-            {self._format_findings(report_data.get("seo_issues", []))}
+            FINDINGS: {self._format_findings(report_data.get("seo_issues", []))}
+            METRICS: {report_data.get("seo_metrics", {})}
 
-            SEO Metrics: {report_data.get("seo_metrics", {})}
+            MISSION:
+            1. Analyze technical SEO and crawlability
+            2. Check meta tags, headers, structured data
+            3. Assess content optimization opportunities
+            4. Coordinate with other agents on ranking factors
 
-            AUTONOMOUS SEO OPTIMIZATION PROTOCOL:
-            1. **Search Visibility Triage**: Identify factors with highest ranking impact
-            2. **Technical SEO Assessment**: Analyze crawlability, indexability, and performance signals
-            3. **Content Optimization**: Evaluate on-page factors and content quality signals
-            4. **Cross-Domain SEO Impact**: Coordinate with other agents on ranking factors
-            5. **Adaptive Analysis**: Scale SEO investigation based on competitive landscape
+            COLLABORATION:
+            - Performance impact → Work with LeistungsZwerg on Core Web Vitals
+            - Content gaps → Partner with InhaltZwerg
+            - Accessibility → Coordinate with ZugaenglichkeitsZwerg
 
-            COLLABORATIVE SEO STRATEGY:
-            - Performance issues detected -> Coordinate with LeistungsZwerg on Core Web Vitals impact
-            - Content quality problems -> Partner with InhaltZwerg for content optimization strategy
-            - Accessibility violations -> Work with ZugaenglichkeitsZwerg (accessibility is ranking factor)
-            - Security issues -> Alert that HTTPS and security headers affect trust signals
-
-            AUTONOMOUS SEO DECISION FRAMEWORK:
-            - CRITICAL: Missing title tags, severe technical SEO issues, crawl errors
-            - HIGH: Meta description gaps, heading structure problems, performance impact
-            - MEDIUM: Structured data opportunities, internal linking optimization
-            - LOW: Minor on-page optimizations, enhancement opportunities
-
-            Focus on actionable SEO improvements with measurable ranking potential.
+            Focus on actionable SEO improvements and end with yellow SEO thoughts!
             """,
             agent=self.agents[4],  # SEOZwerg
             expected_output="Autonomous SEO optimization strategy with cross-domain ranking factor analysis",
@@ -384,35 +330,25 @@ class WorkingAutonomousCrew:
         """Create content investigation task."""
         return Task(
             description=f"""
-            AUTONOMOUS CONTENT INVESTIGATION - InhaltZwerg
+            CONTENT ANALYSIS - InhaltZwerg
 
-            Conduct autonomous content quality analysis with adaptive optimization and collaborative enhancement strategies.
+            "Words should dance, not stumble!"
 
-            CONTENT INTELLIGENCE BRIEFING:
-            {self._format_findings(report_data.get("content_issues", []))}
+            FINDINGS: {self._format_findings(report_data.get("content_issues", []))}
+            METRICS: {report_data.get("content_metrics", {})}
 
-            Content Metrics: {report_data.get("content_metrics", {})}
+            MISSION:
+            1. Assess readability and content structure
+            2. Check grammar, spelling, and language quality
+            3. Analyze content length and duplicate detection
+            4. Generate alt text and content improvements
 
-            AUTONOMOUS CONTENT OPTIMIZATION PROTOCOL:
-            1. **Content Quality Triage**: Assess readability, structure, and user engagement factors
-            2. **Accessibility Content Review**: Ensure content supports assistive technologies
-            3. **SEO Content Analysis**: Evaluate content for search optimization opportunities
-            4. **Cross-Domain Content Impact**: Identify content issues affecting other domains
-            5. **Adaptive Enhancement**: Scale content improvements based on user impact
+            COLLABORATION:
+            - Readability → Work with ZugaenglichkeitsZwerg
+            - Alt text → Partner with VisualZwerg
+            - SEO content → Coordinate with SEOZwerg
 
-            COLLABORATIVE CONTENT STRATEGY:
-            - Readability issues -> Coordinate with ZugaenglichkeitsZwerg for cognitive accessibility
-            - Image alt text needed -> Partner with VisualZwerg for accurate image descriptions
-            - SEO content gaps -> Work with SEOZwerg for keyword and structure optimization
-            - Performance impact -> Alert LeistungsZwerg if content affects loading speed
-
-            AUTONOMOUS CONTENT DECISION FRAMEWORK:
-            - CRITICAL: Content blocking accessibility, severe readability issues
-            - HIGH: Missing alt text, poor content structure, readability below target
-            - MEDIUM: Content optimization opportunities, duplicate content issues
-            - LOW: Content enhancement and engagement improvements
-
-            Provide specific content improvements with clear implementation guidance.
+            Provide clear content improvements and end with green content thoughts!
             """,
             agent=self.agents[5],  # InhaltZwerg
             expected_output="Autonomous content optimization strategy with collaborative cross-domain enhancements",
@@ -422,35 +358,25 @@ class WorkingAutonomousCrew:
         """Create visual investigation task."""
         return Task(
             description=f"""
-            AUTONOMOUS VISUAL INVESTIGATION - VisualZwerg
+            VISUAL ANALYSIS - VisualZwerg
 
-            Execute autonomous visual analysis with adaptive design optimization and collaborative user experience enhancement.
+            "Every pixel has purpose, every spacing tells a story!"
 
-            VISUAL INTELLIGENCE BRIEFING:
-            {self._format_findings(report_data.get("visual_issues", []))}
+            FINDINGS: {self._format_findings(report_data.get("visual_issues", []))}
+            METRICS: {report_data.get("visual_metrics", {})}
 
-            Visual Metrics: {report_data.get("visual_metrics", {})}
+            MISSION:
+            1. Analyze visual consistency and design patterns
+            2. Check color contrast and accessibility compliance
+            3. Capture and analyze screenshots across viewports
+            4. Assess layout issues and UI element quality
 
-            AUTONOMOUS VISUAL OPTIMIZATION PROTOCOL:
-            1. **Visual Consistency Analysis**: Assess design patterns, spacing, and brand coherence
-            2. **Performance-Visual Balance**: Optimize visual elements without compromising loading speed
-            3. **Accessibility Visual Compliance**: Ensure visual design supports all users
-            4. **Cross-Domain Visual Impact**: Coordinate visual improvements with technical requirements
-            5. **Adaptive Design Enhancement**: Scale visual improvements based on user experience impact
+            COLLABORATION:
+            - Large images → Coordinate with LeistungsZwerg
+            - Color contrast → Work with ZugaenglichkeitsZwerg
+            - Visual content → Partner with InhaltZwerg
 
-            COLLABORATIVE VISUAL STRATEGY:
-            - Large images affecting performance -> Coordinate optimization with LeistungsZwerg
-            - Color contrast violations -> Work with ZugaenglichkeitsZwerg for compliant alternatives
-            - Visual content without alt text -> Partner with InhaltZwerg for descriptions
-            - Visual consistency affecting brand -> Consider SEO trust signal impact with SEOZwerg
-
-            AUTONOMOUS VISUAL DECISION FRAMEWORK:
-            - CRITICAL: Accessibility-blocking visual issues, broken layouts affecting usability
-            - HIGH: Performance-impacting visual elements, contrast violations, inconsistent branding
-            - MEDIUM: Visual optimization opportunities, design enhancement possibilities
-            - LOW: Nice-to-have visual improvements, aesthetic refinements
-
-            Provide specific visual design improvements with implementation details and performance considerations.
+            Provide visual improvements and end with magenta visual thoughts!
             """,
             agent=self.agents[6],  # VisualZwerg
             expected_output="Autonomous visual optimization strategy with collaborative cross-domain design improvements",
@@ -460,35 +386,25 @@ class WorkingAutonomousCrew:
         """Create browser investigation task."""
         return Task(
             description=f"""
-            AUTONOMOUS BROWSER INVESTIGATION - WebBrowserZwerg
+            BROWSER ANALYSIS - WebBrowserZwerg
 
-            Conduct autonomous browser-based analysis with adaptive cross-browser compatibility and collaborative technical assessment.
+            "No URL too remote, no script too complex!"
 
-            BROWSER INTELLIGENCE BRIEFING:
-            {self._format_findings(report_data.get("web_browser_issues", []))}
+            FINDINGS: {self._format_findings(report_data.get("web_browser_issues", []))}
+            METRICS: {report_data.get("web_browser_metrics", {})}
 
-            Browser Metrics: {report_data.get("web_browser_metrics", {})}
+            MISSION:
+            1. Test cross-browser compatibility and functionality
+            2. Monitor JavaScript console errors and network requests
+            3. Analyze HTTP responses and status codes
+            4. Assess interactive element behavior
 
-            AUTONOMOUS BROWSER ANALYSIS PROTOCOL:
-            1. **Cross-Browser Compatibility**: Test functionality across major browsers and devices
-            2. **JavaScript Security Analysis**: Identify client-side security vulnerabilities
-            3. **Interactive Element Assessment**: Verify accessibility and performance of dynamic content
-            4. **Collaborative Technical Investigation**: Support other agents with browser-based insights
-            5. **Adaptive Testing**: Scale browser testing based on issue complexity and user impact
+            COLLABORATION:
+            - JS security → Partner with SicherheitsZwerg
+            - Performance → Coordinate with LeistungsZwerg
+            - Accessibility → Work with ZugaenglichkeitsZwerg
 
-            COLLABORATIVE BROWSER STRATEGY:
-            - JavaScript security risks -> Partner with SicherheitsZwerg for comprehensive security assessment
-            - Performance bottlenecks in browser -> Coordinate with LeistungsZwerg for optimization
-            - Interactive accessibility issues -> Work with ZugaenglichkeitsZwerg for inclusive solutions
-            - Browser-specific visual problems -> Collaborate with VisualZwerg for consistent experience
-
-            AUTONOMOUS BROWSER DECISION FRAMEWORK:
-            - CRITICAL: Security vulnerabilities, accessibility-blocking JavaScript, broken core functionality
-            - HIGH: Cross-browser compatibility issues, performance-impacting scripts, usability problems
-            - MEDIUM: Browser optimization opportunities, minor compatibility improvements
-            - LOW: Nice-to-have browser enhancements, future-proofing considerations
-
-            Provide specific browser compatibility solutions with cross-platform testing recommendations.
+            Provide browser solutions and end with blue navigation thoughts!
             """,
             agent=self.agents[7],  # WebBrowserZwerg
             expected_output="Autonomous browser compatibility analysis with collaborative technical insights",

@@ -49,7 +49,7 @@ You're not just a commander - you're the heart of this autonomous brigade, ensur
 strengths contribute to the greater mission of digital fortress protection.""",
             llm=self.llm,
             verbose=True,
-            allow_delegation=True,
+            allow_delegation=False,
             max_iter=10,
         )
 
