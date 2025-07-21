@@ -614,6 +614,41 @@ class WebAnalysisCrew:
 
         return data
 
+    def analyze(self, report: ComprehensiveAnalysisReport) -> dict[str, Any]:
+        """
+        Orchestrate the analysis by creating agents, defining tasks, and running the crew.
+
+        Args:
+            report: The comprehensive analysis report.
+
+        Returns:
+            A dictionary with the analysis results.
+        """
+        try:
+            self.create_agents()
+            report_data = self._prepare_report_data(report)
+            self.create_tasks(report_data)
+
+            self.crew = Crew(
+                agents=self.agents,
+                tasks=self.tasks,
+                verbose=True,
+            )
+
+            logger.info("🚀 Kicking off CrewAI analysis...")
+            crew_result = self.crew.kickoff()
+            logger.info("✅ CrewAI analysis complete.")
+
+            return self._format_crew_results(crew_result)
+
+        except Exception as e:
+            logger.error(f"❌ Unexpected error during CrewAI analysis: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "analysis_type": "multi_agent_collaboration",
+            }
+
     def _format_crew_results(self, crew_result: Any) -> dict[str, Any]:
         """Format crew execution results."""
         return {

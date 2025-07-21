@@ -46,9 +46,7 @@ class LLMProcessor:
         self.cost_per_1k_input_tokens = self._get_model_costs()[0]
         self.cost_per_1k_output_tokens = self._get_model_costs()[1]
 
-    async def analyze_report(
-        self, report: ComprehensiveAnalysisReport
-    ) -> dict[str, Any]:
+    async def analyze(self, report: ComprehensiveAnalysisReport) -> dict[str, Any]:
         """Process a comprehensive report with LLM to generate insights."""
         if not self.api_key:
             raise LLMError("OPENAI_API_KEY environment variable not set")
@@ -81,6 +79,9 @@ class LLMProcessor:
 
             # Log actual usage
             usage = response.usage
+            if not usage:
+                raise LLMError("LLM response did not include usage data.")
+
             logger.info("✅ LLM request completed successfully")
             logger.info(
                 f"📊 Token usage - Input: {usage.prompt_tokens}, Output: {usage.completion_tokens}, Total: {usage.total_tokens}"
@@ -97,6 +98,8 @@ class LLMProcessor:
             )
 
             analysis_text = response.choices[0].message.content
+            if not analysis_text:
+                raise LLMError("LLM response was empty.")
 
             return {
                 "model": self.model,
@@ -229,7 +232,9 @@ class LLMProcessor:
 
         # Sort all issues by priority for focused analysis
         priority_issues = sorted(
-            all_detailed_issues, key=lambda x: x.get("priority_score", 0), reverse=True
+            all_detailed_issues,
+            key=lambda x: x.get("priority_score", 0) or 0,
+            reverse=True,
         )
 
         return {
@@ -269,52 +274,7 @@ class LLMProcessor:
 
     def _get_system_prompt(self) -> str:
         """Get the system prompt for the LLM."""
-        return """You are a senior web quality analyst with expertise in website performance, security, accessibility, and SEO.
-
-You will receive a detailed website analysis report with specific issues, their exact locations, and technical details. Use this information to provide actionable, specific guidance.
-
-Analyze the provided website quality report and provide a comprehensive analysis with the following sections:
-
-## 1. Executive Summary
-Provide a 3-4 sentence overview of the website's overall quality, highlighting the most significant findings and the overall quality level.
-
-## 2. Critical Issues Requiring Immediate Attention
-For each critical/high priority issue, specify:
-- **Exact Problem**: What is broken and where (include HTML elements, file paths, line numbers if available)
-- **Location**: Specific location in code/HTML (use location_context data)
-- **Business Impact**: Why it's critical for business/users
-- **Immediate Fix**: Exact code/configuration changes needed (use fix_suggestions)
-
-## 3. Specific Technical Fixes
-For the top 5-7 highest priority issues, provide:
-- **Issue**: Brief description and severity
-- **Exact Location**: HTML element, attribute, or configuration file
-- **Code Fix**: Specific HTML/CSS/config changes needed
-- **Implementation**: Step-by-step instructions
-- **Effort Level**: Low/Medium/High
-- **Timeline**: Immediate/Short-term/Medium-term
-
-## 4. Technical Analysis by Category
-Break down findings by category, being specific about:
-- **Performance**: Exact metrics, specific optimizations with code examples
-- **Security**: Missing headers with exact header values to add
-- **Accessibility**: Specific HTML elements needing alt text, ARIA labels, etc.
-- **SEO & Content**: Exact meta tags, title lengths, missing elements
-- **Visual & UX**: Specific CSS fixes, overlapping elements, layout issues
-
-## 5. Quick Wins (Low Effort, High Impact)
-List issues that can be fixed quickly with copy-paste solutions:
-- Exact HTML/CSS code to add
-- Configuration changes
-- Header additions with specific values
-
-## 6. Step-by-Step Implementation Guide
-Provide a prioritized checklist with:
-- **Phase 1 (Immediate - 1-2 weeks)**: Critical fixes with exact code
-- **Phase 2 (Short-term - 1 month)**: High-impact improvements
-- **Phase 3 (Medium-term - 2-3 months)**: Long-term optimizations
-
-IMPORTANT: Always reference specific locations, HTML elements, and provide copy-paste ready code fixes when possible. Use the location_context, fix_suggestions, and technical_details provided in the report data."""
+        return """You are a senior web quality analyst with expertise in website performance, security, accessibility, and SEO.\n\nYou will receive a detailed website analysis report with specific issues, their exact locations, and technical details. Use this information to provide actionable, specific guidance.\n\nAnalyze the provided website quality report and provide a comprehensive analysis with the following sections:\n\n## 1. Executive Summary\nProvide a 3-4 sentence overview of the website's overall quality, highlighting the most significant findings and the overall quality level.\n\n## 2. Critical Issues Requiring Immediate Attention\nFor each critical/high priority issue, specify:\n- **Exact Problem**: What is broken and where (include HTML elements, file paths, line numbers if available)\n- **Location**: Specific location in code/HTML (use location_context data)\n- **Business Impact**: Why it's critical for business/users\n- **Immediate Fix**: Exact code/configuration changes needed (use fix_suggestions)\n\n## 3. Specific Technical Fixes\nFor the top 5-7 highest priority issues, provide:\n- **Issue**: Brief description and severity\n- **Exact Location**: HTML element, attribute, or configuration file\n- **Code Fix**: Specific HTML/CSS/config changes needed\n- **Implementation**: Step-by-step instructions\n- **Effort Level**: Low/Medium/High\n- **Timeline**: Immediate/Short-term/Medium-term\n\n## 4. Technical Analysis by Category\nBreak down findings by category, being specific about:\n- **Performance**: Exact metrics, specific optimizations with code examples\n- **Security**: Missing headers with exact header values to add\n- **Accessibility**: Specific HTML elements needing alt text, ARIA labels, etc.\n- **SEO & Content**: Exact meta tags, title lengths, missing elements\n- **Visual & UX**: Specific CSS fixes, overlapping elements, layout issues\n\n## 5. Quick Wins (Low Effort, High Impact)\nList issues that can be fixed quickly with copy-paste solutions:\n- Exact HTML/CSS code to add\n- Configuration changes\n- Header additions with specific values\n\n## 6. Step-by-Step Implementation Guide\nProvide a prioritized checklist with:\n- **Phase 1 (Immediate - 1-2 weeks)**: Critical fixes with exact code\n- **Phase 2 (Short-term - 1 month)**: High-impact improvements\n- **Phase 3 (Medium-term - 2-3 months)**: Long-term optimizations\n\nIMPORTANT: Always reference specific locations, HTML elements, and provide copy-paste ready code fixes when possible. Use the location_context, fix_suggestions, and technical_details provided in the report data."""
 
     def _extract_recommendations(
         self, analysis: str, report: ComprehensiveAnalysisReport
@@ -448,11 +408,7 @@ IMPORTANT: Always reference specific locations, HTML elements, and provide copy-
         return actions[:3]
 
     def _get_model_costs(self) -> tuple[float, float]:
-        """Get cost per 1K tokens for input and output for the current model.
-
-        Returns:
-            Tuple of (input_cost_per_1k, output_cost_per_1k) in USD
-        """
+        """Get cost per 1K tokens for input and output for the current model.\n\n        Returns:\n            Tuple of (input_cost_per_1k, output_cost_per_1k) in USD\n"""
         # Pricing as of December 2024 (in USD per 1K tokens)
         model_costs = {
             "gpt-4o-mini": (0.00015, 0.0006),  # Very economical

@@ -122,7 +122,7 @@ def analyze(
                     "[dim]Agents: Security Expert, Performance Expert, Accessibility Expert, Coordinator[/dim]"
                 )
 
-                llm_results = crew.analyze_report(report)
+                llm_results = crew.analyze(report)
             else:
                 # Use single LLM analysis
                 from ..llm import LLMProcessor
@@ -133,7 +133,7 @@ def analyze(
                 processor = LLMProcessor()
                 console.print(f"[dim]Model: {processor.model}[/dim]")
 
-                llm_results = asyncio.run(processor.analyze_report(report))
+                llm_results = asyncio.run(processor.analyze(report))
 
             if llm_results.get("success", False):
                 if agents:
@@ -205,6 +205,13 @@ def analyze(
         except ValueError as e:
             # This is likely the API key missing error
             console.print(f"\n[yellow]⚠️ {str(e)}[/yellow]")
+            # Set fallback llm_results
+            llm_results = {
+                "model": "fallback",
+                "analysis": f"LLM analysis failed: {str(e)}",
+                "summary": f"Analysis of {report.url} completed. Found {report.total_issues} total issues.",
+                "success": False,
+            }
             if output_format.lower() == "pdf":
                 console.print("[dim]PDF will be generated without LLM content[/dim]")
             else:
@@ -213,6 +220,13 @@ def analyze(
                 )
         except Exception as e:
             console.print(f"\n[red]❌ Unexpected LLM error:[/red] {str(e)}")
+            # Set fallback llm_results
+            llm_results = {
+                "model": "fallback",
+                "analysis": f"LLM analysis failed: {str(e)}",
+                "summary": f"Analysis of {report.url} completed. Found {report.total_issues} total issues.",
+                "success": False,
+            }
             if output_format.lower() == "pdf":
                 console.print("[dim]PDF will be generated without LLM content[/dim]")
             else:

@@ -36,6 +36,9 @@ uv run nzw check https://example.com
 # Comprehensive analysis with LLM integration
 uv run nzw analyze https://example.com --llm
 
+# Multi-agent CrewAI analysis (advanced)
+uv run nzw analyze https://example.com --agents
+
 # Verbose output with detailed information
 uv run nzw check https://example.com --verbose
 
@@ -52,14 +55,20 @@ uv run nzw version
 # Set up OpenAI API key for LLM features
 export OPENAI_API_KEY="your-api-key-here"
 
-# Run comprehensive analysis with intelligent LLM insights
+# Run comprehensive LLM analysis
 uv run nzw analyze https://example.com --llm
 
+# Run advanced multi-agent CrewAI analysis
+uv run nzw analyze https://example.com --agents
+
 # This provides:
-# - Specific technical fixes with exact code
-# - Prioritized implementation roadmap
+# - Single LLM: Specific technical fixes with exact code
+# - Multi-agent: 11 specialized AI agents working collaboratively
+# - Executive-level strategic recommendations
+# - Technical implementation roadmaps
+# - Cross-domain issue correlation
+# - Business impact assessments
 # - Copy-paste ready solutions
-# - Business impact assessment
 ```
 
 ## 🏗️ Architecture
@@ -180,6 +189,8 @@ Our analysis agents follow German naming conventions as our signature branding:
 - [x] LLM-ready output structure (JSON)
 - [x] CLI support for analyze command
 - [x] **LLM-powered intelligent analysis with OpenAI integration**
+- [x] **CrewAI multi-agent system with 11 specialized domain experts**
+- [x] **Single LLM analysis (`--llm`) and multi-agent analysis (`--agents`)**
 - [x] **Specific technical fixes with exact code locations**
 - [x] **Copy-paste ready solutions and implementation guides**
 - [x] **Cost tracking and model information display**
@@ -298,8 +309,10 @@ class SicherheitsZwerg(Dwarf):
 - [x] LLM-ready output structure (JSON)
 - [x] CLI support for analyze command
 - [x] **LLM-powered classification, prioritization, and fix suggestion**
+- [x] **CrewAI multi-agent system with 11 specialized AI experts**
 - [x] **Natural language reporting with specific technical details**
 - [x] **Automated issue correlation and priority scoring**
+- [x] **Executive-level strategic recommendations and implementation roadmaps**
 
 ### Phase 4: Enterprise Features 📋 **PLANNED**
 - [ ] Multi-site Monitoring - Batch analysis and reporting
@@ -371,7 +384,8 @@ NetzZwergenWacht now features **comprehensive LLM integration** providing intell
 ### 📊 Analysis Modes
 - **`check`**: Fast basic analysis with issue identification
 - **`analyze`**: Comprehensive detailed analysis with full LLM-ready context
-- **`analyze --llm`**: Enhanced analysis with intelligent LLM insights and recommendations
+- **`analyze --llm`**: Enhanced analysis with intelligent single LLM insights and recommendations
+- **`analyze --agents`**: Advanced multi-agent CrewAI analysis with specialized domain experts
 
 ### Example Output Structure
 
@@ -414,6 +428,9 @@ export OPENAI_API_KEY="your-api-key-here"
 
 # Run comprehensive LLM analysis
 uv run nzw analyze https://example.com --llm
+
+# Run advanced multi-agent CrewAI analysis
+uv run nzw analyze https://example.com --agents
 
 # Example LLM output:
 # ✅ LLM Analysis Complete!

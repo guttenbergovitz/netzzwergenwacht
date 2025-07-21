@@ -60,6 +60,9 @@ uv run nzw check https://example.com
 # Comprehensive analysis with LLM integration
 uv run nzw analyze https://example.com --llm
 
+# Advanced multi-agent CrewAI analysis
+uv run nzw analyze https://example.com --agents
+
 # Check with verbose output
 uv run nzw check https://example.com --verbose
 
@@ -75,15 +78,19 @@ uv run nzw version
 # Set up OpenAI API key for enhanced analysis
 export OPENAI_API_KEY="your-api-key-here"
 
-# Run comprehensive LLM analysis with intelligent insights
+# Run comprehensive single LLM analysis with intelligent insights
 uv run nzw analyze https://example.com --llm
 
+# Run advanced multi-agent CrewAI analysis with 11 specialized experts
+uv run nzw analyze https://example.com --agents
+
 # This provides:
-# - Specific technical fixes with exact code locations
+# - Single LLM: Specific technical fixes with exact code locations
+# - Multi-agent: 11 AI experts collaborating (Security, Performance, Accessibility, etc.)
+# - Executive-level strategic recommendations and implementation roadmaps
 # - Copy-paste ready solutions and configuration changes
-# - Prioritized implementation roadmaps
-# - Business impact assessments
-# - Real-time cost tracking and token usage
+# - Business impact assessments with priority scoring
+# - Real-time cost tracking and token usage monitoring
 ```
 
 ### Testing and Quality
@@ -257,9 +264,12 @@ The project follows a phased approach:
   - ✅ ~~API Testing & Integration~~ (skipped - limited value for external testing)
 - **✅ Phase 3**: LLM Integration (completed)
   - ✅ OpenAI API integration with cost tracking
+  - ✅ CrewAI multi-agent system with 11 specialized domain experts
+  - ✅ Single LLM (`--llm`) and multi-agent (`--agents`) analysis modes
   - ✅ LLM processor for comprehensive report analysis
   - ✅ LLM-powered issue classification and prioritization
   - ✅ Intelligent recommendations with specific technical fixes
+  - ✅ Executive-level strategic analysis and implementation roadmaps
   - ✅ Natural language reporting with exact code locations
   - ✅ Context-aware analysis with copy-paste ready solutions
 - **📋 Phase 4**: Enhanced Reporting & Actions (planned)
@@ -338,8 +348,11 @@ NetzZwergenWacht now features a **detailed analysis mode** for all Dwarf agents,
 # Set up OpenAI API key
 export OPENAI_API_KEY="your-api-key-here"
 
-# Run detailed analysis with LLM integration
+# Run detailed analysis with single LLM integration
 uv run nzw analyze https://example.com --llm
+
+# Run advanced multi-agent CrewAI analysis
+uv run nzw analyze https://example.com --agents
 
 # Example LLM output:
 # 🤖 LLM initialized with model: gpt-4o-mini
@@ -357,6 +370,18 @@ uv run nzw analyze https://example.com --llm
 #   ```html
 #   <meta name="description" content="A descriptive summary">
 #   ```
+
+# Example CrewAI multi-agent output:
+# 🤖 CrewAI initialized with 11 specialized agents
+# 👥 Security Expert, Performance Analyst, Accessibility Specialist...
+# 📊 Multi-agent analysis in progress...
+# ✅ CrewAI Analysis Complete!
+# Tokens used: 24,567 ($0.0052)
+#
+# 📋 Executive Summary:
+# Strategic recommendations with implementation roadmap
+# Cross-domain issue correlation and priority matrix
+# Business impact assessment with ROI projections
 ```
 
 ### LLM Integration Features
@@ -391,11 +416,20 @@ The system provides two distinct analysis modes with different purposes and outp
   - Business impact analysis and priority scoring
   - Implementation roadmaps and step-by-step guides
   - Raw data capture (HTML, screenshots, network traces)
-  - Optional LLM processing with `--llm` flag
+  - Optional single LLM processing with `--llm` flag
+  - Optional multi-agent CrewAI analysis with `--agents` flag
+
+### Analysis Mode Options
+
+**`analyze`**: Generates detailed JSON report for manual review or custom processing
+**`analyze --llm`**: Single LLM analysis with intelligent insights and technical fixes
+**`analyze --agents`**: Multi-agent CrewAI collaboration with 11 specialized domain experts
 
 ### Example Difference
 
 **`check` finds**: "Missing meta description"
-**`analyze` finds**: "Missing meta description" + exact location in HTML + concrete fix suggestions + business impact + priority score + implementation steps + LLM analysis
+**`analyze` finds**: "Missing meta description" + exact location in HTML + concrete fix suggestions + business impact + priority score + implementation steps
+**`analyze --llm` adds**: LLM-powered intelligent analysis with context-aware recommendations
+**`analyze --agents` adds**: Multi-agent collaboration with strategic executive summary and cross-domain issue correlation
 
 The `analyze` command is specifically designed for **Phase 3 LLM integration** and provides the structured, detailed data that enables intelligent AI-powered recommendations.
