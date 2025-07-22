@@ -100,43 +100,28 @@ class WorkingAutonomousCrew:
         # Create initial reconnaissance task
         initial_recon_task = Task(
             description=f"""
-            🎖️ AUTONOMOUS BRIGADE COMMAND - KommanderZwerg 🎖️
+            🎖️ STRATEGIC COMMAND HUB - KommanderZwerg 🎖️
 
-            "Jawohl! Another digital fortress to assess! Meine brave specialists, assemble!"
+            "Ach, another fortress to assess! But look at these attack vectors..."
 
-            Ach, the patterns emerge before my experienced eyes! Let us orchestrate a campaign
-            worthy of the finest dwarven military tradition!
+            TACTICAL SITUATION ANALYSIS:
+            Target: {report_data.get("url", "N/A")}
+            • Security: {len(report_data.get("security_issues", []))} threats (CSP violations, missing headers, XSS vectors)
+            • Performance: {len(report_data.get("performance_issues", []))} bottlenecks (LCP >2.5s, CLS >0.1, resource waterfalls)
+            • Accessibility: {len(report_data.get("accessibility_issues", []))} WCAG failures (missing ARIA, contrast <4.5:1)
+            • SEO: {len(report_data.get("seo_issues", []))} optimization gaps (missing schema, poor meta structure)
+            • Content: {len(report_data.get("content_issues", []))} quality issues (readability scores, heading hierarchy)
+            • Visual: {len(report_data.get("visual_issues", []))} design flaws (responsive breakpoints, layout shifts)
 
-            INITIAL BATTLEFIELD ASSESSMENT:
-            - Target URL: {report_data.get("url", "N/A")}
-            - Security Threats: {len(report_data.get("security_issues", []))} potential vulnerabilities detected
-            - Performance Bottlenecks: {len(report_data.get("performance_issues", []))} speed concerns identified
-            - Accessibility Barriers: {len(report_data.get("accessibility_issues", []))} inclusion challenges found
-            - SEO Weaknesses: {len(report_data.get("seo_issues", []))} visibility opportunities
-            - Content Issues: {len(report_data.get("content_issues", []))} communication problems
-            - Visual Problems: {len(report_data.get("visual_issues", []))} design inconsistencies
+            COMMAND STRATEGY:
+            1. **Risk Matrix Triage**: CVSS scoring meets dwarven pragmatism
+            2. **Cross-Domain Correlation**: Security headers affecting performance metrics
+            3. **Implementation Roadmap**: Dependency chains and quick wins first
+            4. **Business Impact Calc**: ROI projections with technical debt analysis
 
-            MEINE AUTONOMOUS COMMAND MISSION:
-            1. **Rapid Battlefield Triage**: "Critical threats first - they endanger the whole fortress!"
-            2. **Strategic Brigade Deployment**: "Each specialist to their domain of expertise!"
-            3. **Cross-Domain Correlation Hunt**: "Ach! The patterns - they reveal deeper truths!"
-            4. **Real-Time Command Coordination**: "No dwarf fights alone in meine brigade!"
-            5. **Tactical Decision Authority**: "Swift decisions save digital lives!"
+            "Zeit to deploy meine specialists with laser focus on the technical fundamentals!"
 
-            AUTONOMOUS COMMAND DECISION FRAMEWORK:
-            - CODE CRIMSON: "All hands to battle stations! Critical threat detected!"
-            - HIGH ALERT: "Serious concerns - deploy collaborative strike force!"
-            - STANDARD PATROL: "Regular optimization reconnaissance required!"
-            - ALL CLEAR: "Fortress secure - but eternal vigilance continues!"
-
-            Deploy meine specialists with military precision and dwarven camaraderie!
-            Document every strategic decision for the campaign chronicle!
-
-            EXPECTED COMMAND DELIVERABLES:
-            - Battlefield analysis with strategic prioritization
-            - Clear deployment orders to specialist brigade
-            - Cross-domain tactical correlation identification
-            - Real-time coordination of collaborative operations
+            Expect: Strategic prioritization matrix with actionable technical intelligence.
             """,
             agent=self.agents[0],  # KommanderZwerg
             expected_output="Strategic analysis with autonomous delegation decisions and real-time coordination",
@@ -218,25 +203,26 @@ class WorkingAutonomousCrew:
         """Create security investigation task."""
         return Task(
             description=f"""
-            🔒 SECURITY INVESTIGATION - SicherheitsZwerg
+            🔒 SECURITY AUDIT - SicherheitsZwerg
 
-            "Gott im Himmel! Time to secure this digital fortress!"
+            "Verdammt! These attack vectors need immediate attention!"
 
-            FINDINGS: {self._format_findings(report_data.get("security_issues", []))}
-            METRICS: {report_data.get("security_metrics", {})}
+            THREAT LANDSCAPE: {self._format_findings(report_data.get("security_issues", []))}
+            SECURITY METRICS: {report_data.get("security_metrics", {})}
 
-            MISSION:
-            1. Assess threats and vulnerability priority
-            2. Check security headers, SSL/TLS configuration
-            3. Hunt for XSS, injection risks, information disclosure
-            4. Coordinate with other agents on cross-domain impacts
+            TECHNICAL FOCUS AREAS:
+            1. **Header Analysis**: CSP policies, HSTS configuration, X-Frame-Options validation
+            2. **TLS Assessment**: Certificate chain verification, cipher suite analysis, HSTS preload status
+            3. **Injection Vectors**: XSS via DOM manipulation, SQL injection in forms, CSRF token validation
+            4. **Information Disclosure**: .git exposure, debug modes, server version leakage
 
-            COLLABORATION:
-            - Critical issues → Alert KommanderZwerg immediately
-            - Header problems → Coordinate with LeistungsZwerg
-            - JS security → Work with WebBrowserZwerg
+            CROSS-DOMAIN IMPACTS:
+            • CSP violations blocking performance optimizations (LeistungsZwerg correlation)
+            • Missing HTTPS affecting SEO rankings (SEOZwerg impact analysis)
+            • Security headers breaking accessibility tools (ZugaenglichkeitsZwerg coordination)
 
-            Provide exact remediation code and end with purple security thoughts!
+            "Give me CVSS scores, exploit chains, and concrete nginx/Apache configs!"
+            Output: Purple-coded security intelligence with exact remediation steps.
             """,
             agent=self.agents[1],  # SicherheitsZwerg
             expected_output="Autonomous security analysis with collaborative insights and adaptive investigation results",
@@ -246,12 +232,26 @@ class WorkingAutonomousCrew:
         """Create performance investigation task."""
         return Task(
             description=f"""
-            ⚡ PERFORMANCE OPTIMIZATION - LeistungsZwerg
+            ⚡ PERFORMANCE DEEP-DIVE - LeistungsZwerg
 
-            "Schnell, schnell! Time to hammer out bottlenecks!"
+            "Scheisse! These Core Web Vitals are bleeding conversion rates!"
 
-            FINDINGS: {self._format_findings(report_data.get("performance_issues", []))}
-            METRICS: {report_data.get("performance_metrics", {})}
+            PERFORMANCE INTEL: {self._format_findings(report_data.get("performance_issues", []))}
+            CORE WEB VITALS: {report_data.get("performance_metrics", {})}
+
+            TECHNICAL INVESTIGATION:
+            1. **LCP Analysis**: Main thread blocking, resource prioritization, image optimization strategies
+            2. **CLS Debugging**: Layout shift sources, font loading impacts, dynamic content injection
+            3. **FID/INP Optimization**: JavaScript execution time, event handler performance, third-party script impact
+            4. **Resource Waterfall**: Critical path analysis, preload opportunities, bundle splitting effectiveness
+
+            CROSS-PERFORMANCE CORRELATIONS:
+            • Security CSP blocking resource hints (SicherheitsZwerg negotiation needed)
+            • Accessibility tools affecting rendering performance (ZugaenglichkeitsZwerg trade-offs)
+            • SEO-driven content affecting Time to Interactive (SEOZwerg balancing act)
+
+            "I want Lighthouse scores, DevTools traces, and webpack bundle analysis!"
+            Yellow performance thoughts with concrete optimization configs required.
 
             MISSION:
             1. Analyze Core Web Vitals (LCP, FID, CLS)
@@ -274,25 +274,27 @@ class WorkingAutonomousCrew:
         """Create accessibility investigation task."""
         return Task(
             description=f"""
-            ♿ ACCESSIBILITY ANALYSIS - ZugaenglichkeitsZwerg
+            ♿ ACCESSIBILITY COMPLIANCE AUDIT - ZugaenglichkeitsZwerg
 
-            "No one shall be left behind in the digital realm!"
+            "Ach! These WCAG violations are excluding users - unacceptable!"
 
-            FINDINGS: {self._format_findings(report_data.get("accessibility_issues", []))}
-            METRICS: {report_data.get("accessibility_metrics", {})}
+            COMPLIANCE GAPS: {self._format_findings(report_data.get("accessibility_issues", []))}
+            A11Y METRICS: {report_data.get("accessibility_metrics", {})}
 
-            MISSION:
-            1. Assess WCAG 2.1 AA compliance gaps
-            2. Test keyboard navigation and screen reader compatibility
-            3. Check color contrast and visual accessibility
-            4. Validate ARIA attributes and semantic HTML
+            TECHNICAL COMPLIANCE ASSESSMENT:
+            1. **WCAG 2.1 AA Violations**: Missing ARIA labels, insufficient contrast ratios (<4.5:1), keyboard trap issues
+            2. **Screen Reader Compatibility**: Semantic HTML structure, landmark navigation, live region announcements
+            3. **Keyboard Navigation Flow**: Tab order logic, focus management, bypass mechanisms
+            4. **EU Accessibility Act Compliance**: Public sector requirements, mobile responsiveness, alternative formats
 
-            COLLABORATION:
-            - Color issues → Partner with VisualZwerg
-            - Alt text → Coordinate with InhaltZwerg
-            - Keyboard nav → Work with WebBrowserZwerg
+            CROSS-DOMAIN ACCESSIBILITY IMPACTS:
+            • Color contrast affecting visual design choices (VisualZwerg aesthetic balance)
+            • Alt text quality impacting content SEO value (InhaltZwerg & SEOZwerg synergy)
+            • Keyboard shortcuts conflicting with browser automation (WebBrowserZwerg testing concerns)
+            • ARIA live regions affecting performance metrics (LeistungsZwerg optimization trade-offs)
 
-            Provide WCAG-compliant solutions and end with cyan accessibility thoughts!
+            "Give me axe-core reports, NVDA test results, and WCAG-compliant code patches!"
+            Cyan accessibility insights with concrete implementation guidelines.
             """,
             agent=self.agents[3],  # ZugaenglichkeitsZwerg
             expected_output="Autonomous accessibility compliance analysis with collaborative cross-domain remediation strategy",
@@ -302,21 +304,27 @@ class WorkingAutonomousCrew:
         """Create SEO investigation task."""
         return Task(
             description=f"""
-            SEO OPTIMIZATION - SEOZwerg
+            🔍 SEO TECHNICAL AUDIT - SEOZwerg
 
-            "Time to dig for search visibility gold!"
+            "Verdammt! These ranking signals are hemorrhaging organic traffic!"
 
-            FINDINGS: {self._format_findings(report_data.get("seo_issues", []))}
-            METRICS: {report_data.get("seo_metrics", {})}
+            SEO DEFICIENCIES: {self._format_findings(report_data.get("seo_issues", []))}
+            RANKING METRICS: {report_data.get("seo_metrics", {})}
 
-            MISSION:
-            1. Analyze technical SEO and crawlability
-            2. Check meta tags, headers, structured data
-            3. Assess content optimization opportunities
-            4. Coordinate with other agents on ranking factors
+            TECHNICAL SEO DEEP-DIVE:
+            1. **Crawlability Analysis**: Robots.txt directives, XML sitemap structure, internal link architecture
+            2. **Core Web Vitals Impact**: LCP/CLS/INP correlation with SERP rankings, mobile-first indexing readiness
+            3. **Structured Data Implementation**: Schema.org markup validation, rich snippet opportunities, knowledge graph signals
+            4. **Content Architecture**: H1-H6 hierarchy, semantic HTML5 elements, topic clustering analysis
 
-            COLLABORATION:
-            - Performance impact → Work with LeistungsZwerg on Core Web Vitals
+            CROSS-DOMAIN SEO IMPACTS:
+            • Core Web Vitals thresholds affecting rankings (LeistungsZwerg performance correlation)
+            • Security headers influencing crawl budget allocation (SicherheitsZwerg HTTPS requirements)
+            • Accessibility markup boosting semantic understanding (ZugaenglichkeitsZwerg ARIA benefits)
+            • Image alt-text contributing to topical relevance (VisualZwerg & InhaltZwerg content synergy)
+
+            "I need Search Console data, PageSpeed insights, and schema validation results!"
+            Green SEO intelligence with concrete technical implementations.
             - Content gaps → Partner with InhaltZwerg
             - Accessibility → Coordinate with ZugaenglichkeitsZwerg
 
@@ -330,25 +338,27 @@ class WorkingAutonomousCrew:
         """Create content investigation task."""
         return Task(
             description=f"""
-            CONTENT ANALYSIS - InhaltZwerg
+📝 CONTENT QUALITY AUDIT - InhaltZwerg
 
-            "Words should dance, not stumble!"
+            "Ach! This content structure is confusing users and search engines!"
 
-            FINDINGS: {self._format_findings(report_data.get("content_issues", []))}
-            METRICS: {report_data.get("content_metrics", {})}
+            CONTENT DEFICIENCIES: {self._format_findings(report_data.get("content_issues", []))}
+            QUALITY METRICS: {report_data.get("content_metrics", {})}
 
-            MISSION:
-            1. Assess readability and content structure
-            2. Check grammar, spelling, and language quality
-            3. Analyze content length and duplicate detection
-            4. Generate alt text and content improvements
+            TECHNICAL CONTENT ASSESSMENT:
+            1. **Readability Analysis**: Flesch-Kincaid scoring, sentence complexity, paragraph density optimization
+            2. **Semantic Structure**: H1-H6 hierarchy logic, topic modeling, entity recognition for context
+            3. **Content Architecture**: Information scent, cognitive load analysis, user journey mapping
+            4. **Linguistic Quality**: Grammar parsing, spelling validation, terminology consistency checks
 
-            COLLABORATION:
-            - Readability → Work with ZugaenglichkeitsZwerg
-            - Alt text → Partner with VisualZwerg
-            - SEO content → Coordinate with SEOZwerg
+            CROSS-DOMAIN CONTENT IMPACTS:
+            • Readability scores affecting accessibility compliance (ZugaenglichkeitsZwerg WCAG correlation)
+            • Alt-text quality influencing visual understanding (VisualZwerg descriptive accuracy)
+            • Keyword density impacting SEO performance (SEOZwerg semantic relevance)
+            • Content length affecting page load metrics (LeistungsZwerg resource optimization)
 
-            Provide clear content improvements and end with green content thoughts!
+            "Give me readability metrics, content gap analysis, and semantic markup suggestions!"
+            Orange content intelligence with actionable editorial guidelines.
             """,
             agent=self.agents[5],  # InhaltZwerg
             expected_output="Autonomous content optimization strategy with collaborative cross-domain enhancements",
@@ -358,12 +368,27 @@ class WorkingAutonomousCrew:
         """Create visual investigation task."""
         return Task(
             description=f"""
-            VISUAL ANALYSIS - VisualZwerg
+🎨 VISUAL DESIGN AUDIT - VisualZwerg
 
-            "Every pixel has purpose, every spacing tells a story!"
+            "Mein Gott! These design inconsistencies are destroying user experience!"
 
-            FINDINGS: {self._format_findings(report_data.get("visual_issues", []))}
-            METRICS: {report_data.get("visual_metrics", {})}
+            VISUAL DEFECTS: {self._format_findings(report_data.get("visual_issues", []))}
+            DESIGN METRICS: {report_data.get("visual_metrics", {})}
+
+            TECHNICAL DESIGN ASSESSMENT:
+            1. **Layout Consistency**: Grid system adherence, spacing rhythm analysis, component alignment verification
+            2. **Responsive Breakpoint Logic**: Mobile-first implementation, fluid typography scaling, touch target sizing
+            3. **Color System Analysis**: Contrast ratio validation, accessibility compliance, brand guideline adherence
+            4. **Visual Hierarchy Evaluation**: Typography scale consistency, information architecture clarity, cognitive load distribution
+
+            CROSS-DOMAIN VISUAL IMPACTS:
+            • Color contrast ratios affecting accessibility compliance (ZugaenglichkeitsZwerg WCAG requirements)
+            • Image optimization influencing load performance (LeistungsZwerg resource efficiency)
+            • Visual content supporting SEO context signals (SEOZwerg image alt-text synergy)
+            • Typography choices impacting content readability (InhaltZwerg legibility correlation)
+
+            "Show me design system audits, screenshot comparisons, and CSS optimization recommendations!"
+            Blue visual intelligence with concrete design system improvements.
 
             MISSION:
             1. Analyze visual consistency and design patterns
