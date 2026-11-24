@@ -161,6 +161,7 @@ async fn consecutive_patrols_reuse_healthy_memory_and_escalate_new_anomaly() {
         max_deep_samples: 2,
         freshness_ttl_secs: 3_600,
         allow_ai_escalation: true,
+        enable_level2: false,
     };
     let backend: Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
         Arc::new(LiveDiagnosticBackend);

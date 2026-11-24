@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Portfolio Patrols, Selective Level 2 Execution & SQLite ADR (2026-11-24)
+- Added ADR [0009](docs/adr/0009-patrol-persistence-and-sqlite-migration.md) documenting the patrol persistence evaluation and SQLite migration triggers.
+- Added `src/patrol/portfolio.rs` (`PortfolioConfig`, `ApplicationCriticality`, `run_portfolio_patrol`) with criticality ordering, `Semaphore`-bounded concurrency, and isolated per-application failure handling.
+- Added `--targets <applications.toml>` and `--browser` (`PatrolBudget::enable_level2`) to `nzw patrol` (`src/main.rs`, `src/patrol/mod.rs`).
+
 ### Autonomous Web Quality Patrol Foundation (2026-11-24)
 - Added ADRs [0007](docs/adr/0007-autonomous-patrol-architecture.md) and [0008](docs/adr/0008-rig-and-nzw-responsibility-boundary.md) and updated `docs/product/vision-and-strategy.md` for `nzw patrol`.
 - Extended `src/discovery/mod.rs` with `<sitemapindex>` child sitemap traversal, `LocaleVariant` / `detect_locale` (language + market), and `template_fingerprint`.

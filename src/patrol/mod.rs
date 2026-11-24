@@ -6,6 +6,7 @@
 //! stakeholder reporting.
 
 pub mod memory;
+pub mod portfolio;
 pub mod sampling;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -93,6 +94,8 @@ pub struct PatrolBudget {
     pub freshness_ttl_secs: u64,
     /// Whether material anomalies may trigger `KommandantZwerg` agentic investigation.
     pub allow_ai_escalation: bool,
+    /// Whether `Level2Deep` samples should execute headless browser diagnostics.
+    pub enable_level2: bool,
 }
 
 impl Default for PatrolBudget {
@@ -102,6 +105,7 @@ impl Default for PatrolBudget {
             max_deep_samples: 2,
             freshness_ttl_secs: 3_600,
             allow_ai_escalation: true,
+            enable_level2: false,
         }
     }
 }
@@ -204,7 +208,15 @@ pub async fn run_patrol(
 
     let mut extra_links: Vec<AuditTarget> = Vec::new();
     for sel in &sampling_plan.selections {
-        let snap = collection::collect_http(&sel.url, &exec_budget, policy).await;
+        let mut snap = collection::collect_http(&sel.url, &exec_budget, policy).await;
+        if patrol_budget.enable_level2 && sel.depth == sampling::DiagnosticDepth::Level2Deep {
+            snap.browser = crate::adapters::browser::run_browser_with_policy(
+                &sel.url,
+                exec_budget.audit_timeout,
+                policy,
+            )
+            .await;
+        }
         let report = analysis::run_all(&snap);
         let (pt, tpl, body_hash) = if let CollectorOutcome::Captured { data } = &snap.http {
             let obs = analysis::document::DocumentObservations::from_html(&data.body_text);
