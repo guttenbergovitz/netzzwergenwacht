@@ -603,59 +603,57 @@ pub async fn run_investigation_with_specialists(
         });
 
         // Check for specialist consultation requests.
-        let (tool_succeeded, new_results, is_consultation) = if let Some(dwarf_str) = decision
-            .requested_tool
-            .strip_prefix("consult_specialist:")
-        {
-            let dwarf_id = match dwarf_str {
-                "Netz" => Some(DwarfId::Netz),
-                "Sicherheits" => Some(DwarfId::Sicherheits),
-                "Leistungs" => Some(DwarfId::Leistungs),
-                "Struktur" => Some(DwarfId::Struktur),
-                "Zugaenglichkeits" => Some(DwarfId::Zugaenglichkeits),
-                "Such" => Some(DwarfId::Such),
-                "Inhalts" => Some(DwarfId::Inhalts),
-                "Gestaltungs" => Some(DwarfId::Gestaltungs),
-                "Browser" => Some(DwarfId::Browser),
-                "Dokumentations" => Some(DwarfId::Dokumentations),
-                _ => None,
-            };
-            if let Some(dwarf_id) = dwarf_id {
-                let (ok, results) = consult_specialist_during_investigation(
-                    dwarf_id,
-                    &hypothesis.proposed_explanation,
-                    &mut ctx,
-                    &initial_report,
-                    llm,
+        let (tool_succeeded, new_results, is_consultation) =
+            if let Some(dwarf_str) = decision.requested_tool.strip_prefix("consult_specialist:") {
+                let dwarf_id = match dwarf_str {
+                    "Netz" => Some(DwarfId::Netz),
+                    "Sicherheits" => Some(DwarfId::Sicherheits),
+                    "Leistungs" => Some(DwarfId::Leistungs),
+                    "Struktur" => Some(DwarfId::Struktur),
+                    "Zugaenglichkeits" => Some(DwarfId::Zugaenglichkeits),
+                    "Such" => Some(DwarfId::Such),
+                    "Inhalts" => Some(DwarfId::Inhalts),
+                    "Gestaltungs" => Some(DwarfId::Gestaltungs),
+                    "Browser" => Some(DwarfId::Browser),
+                    "Dokumentations" => Some(DwarfId::Dokumentations),
+                    _ => None,
+                };
+                if let Some(dwarf_id) = dwarf_id {
+                    let (ok, results) = consult_specialist_during_investigation(
+                        dwarf_id,
+                        &hypothesis.proposed_explanation,
+                        &mut ctx,
+                        &initial_report,
+                        llm,
+                        tool_rem,
+                        Arc::clone(&backend),
+                        policy,
+                    )
+                    .await;
+                    (ok, results, true)
+                } else {
+                    ctx.tool_trace.push(ToolInvocationRecord {
+                        tool_id: decision.requested_tool.clone(),
+                        dwarf_id: DwarfId::Kommandant,
+                        authorised: false,
+                        succeeded: false,
+                        summary: format!("invalid dwarf_id in consult request: {dwarf_str}"),
+                    });
+                    (false, Vec::new(), false)
+                }
+            } else {
+                let (ok, results) = execute_rig_tool(
+                    &decision.requested_tool,
+                    &target,
+                    policy,
                     tool_rem,
                     Arc::clone(&backend),
-                    policy,
+                    &mut snapshot,
+                    &mut ctx,
                 )
                 .await;
-                (ok, results, true)
-            } else {
-                ctx.tool_trace.push(ToolInvocationRecord {
-                    tool_id: decision.requested_tool.clone(),
-                    dwarf_id: DwarfId::Kommandant,
-                    authorised: false,
-                    succeeded: false,
-                    summary: format!("invalid dwarf_id in consult request: {dwarf_str}"),
-                });
-                (false, Vec::new(), false)
-            }
-        } else {
-            let (ok, results) = execute_rig_tool(
-                &decision.requested_tool,
-                &target,
-                policy,
-                tool_rem,
-                Arc::clone(&backend),
-                &mut snapshot,
-                &mut ctx,
-            )
-            .await;
-            (ok, results, false)
-        };
+                (ok, results, false)
+            };
         // Consultation tool execution returns results that need to be added to follow_up_results.
         // Regular tool execution via execute_rig_tool already adds to ctx.follow_up_results internally.
         if is_consultation {
@@ -754,7 +752,7 @@ async fn propose_hypothesis(
             available.push(tool_name);
         }
     }
-    let available_refs: Vec<&str> = available.iter().map(|s| s.as_str()).collect();
+    let available_refs: Vec<&str> = available.iter().map(String::as_str).collect();
 
     let contract = prompts::kommandant_hypothesis_prompt(&available_refs);
     let sys = contract.system_prompt;
@@ -892,6 +890,7 @@ async fn execute_rig_tool(
 /// # Provider Routing
 /// Currently uses the passed `llm` provider (typically Kommandant's model).
 /// P1: Should accept `ProviderRouter` to resolve per-specialist models.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn consult_specialist_during_investigation(
     dwarf_id: DwarfId,
     question: &str,
@@ -920,12 +919,7 @@ async fn consult_specialist_during_investigation(
     let prior_hyp_summary: Vec<String> = ctx
         .hypotheses
         .iter()
-        .map(|h| {
-            format!(
-                "{} ({:?}): {}",
-                h.id, h.status, h.proposed_explanation
-            )
-        })
+        .map(|h| format!("{} ({:?}): {}", h.id, h.status, h.proposed_explanation))
         .collect();
     let prior_specialist_summary: Vec<String> = ctx
         .specialists
@@ -969,45 +963,49 @@ async fn consult_specialist_during_investigation(
     {
         Ok(raw_resp) => {
             // Attempt structured parse; reject unstructured responses.
-            let mut structured = match serde_json::from_str::<crate::patrol::SpecialistOutput>(&raw_resp) {
-                Ok(out) => out,
-                Err(_) => {
-                    eprintln!("Specialist consultation failed: unstructured response");
-                    return (false, Vec::new());
-                }
+            let Ok(mut structured) =
+                serde_json::from_str::<crate::patrol::SpecialistOutput>(&raw_resp)
+            else {
+                eprintln!("Specialist consultation failed: unstructured response");
+                return (false, Vec::new());
             };
 
             let mut tool_results = Vec::new();
 
             // Execute tool if specialist requested one.
-            if let Some(ref tool_id) = structured.requested_tool {
-                if let Some(ref mut snapshot) = ctx.snapshot {
-                    let (tool_ok, tool_outputs) = run_specialist_tool_on_snapshot(
-                        tool_id,
-                        &ctx.target,
-                        policy,
-                        timeout,
-                        backend,
-                        snapshot,
-                    )
-                    .await;
+            if let Some(ref tool_id) = structured.requested_tool
+                && let Some(ref mut snapshot) = ctx.snapshot
+            {
+                let (tool_ok, tool_outputs) = run_specialist_tool_on_snapshot(
+                    tool_id,
+                    &ctx.target,
+                    policy,
+                    timeout,
+                    backend,
+                    snapshot,
+                )
+                .await;
 
-                    if tool_ok {
-                        for res in &tool_outputs {
-                            for f in &res.findings {
-                                structured.evidence_refs.push(f.rule_id.0.clone());
-                                structured.confirmed_observations.push(format!("{}: {}", f.rule_id.0, f.title));
-                            }
+                if tool_ok {
+                    for res in &tool_outputs {
+                        for f in &res.findings {
+                            structured.evidence_refs.push(f.rule_id.0.clone());
+                            structured
+                                .confirmed_observations
+                                .push(format!("{}: {}", f.rule_id.0, f.title));
                         }
-                        tool_results = tool_outputs;
-                        ctx.tool_trace.push(ToolInvocationRecord {
-                            tool_id: tool_id.clone(),
-                            dwarf_id,
-                            authorised: true,
-                            succeeded: true,
-                            summary: format!("specialist tool execution via consultation: {} findings", tool_results.iter().map(|r| r.findings.len()).sum::<usize>()),
-                        });
                     }
+                    tool_results = tool_outputs;
+                    ctx.tool_trace.push(ToolInvocationRecord {
+                        tool_id: tool_id.clone(),
+                        dwarf_id,
+                        authorised: true,
+                        succeeded: true,
+                        summary: format!(
+                            "specialist tool execution via consultation: {} findings",
+                            tool_results.iter().map(|r| r.findings.len()).sum::<usize>()
+                        ),
+                    });
                 }
             }
 
@@ -1682,15 +1680,33 @@ mod tests {
         .await;
 
         assert_eq!(report.state, InvestigationState::Completed);
-        assert_eq!(report.specialists.len(), 1, "Should record one specialist consultation");
+        assert_eq!(
+            report.specialists.len(),
+            1,
+            "Should record one specialist consultation"
+        );
         assert_eq!(report.specialists[0].dwarf_id, DwarfId::Sicherheits);
-        assert!(report.specialists[0].focus.contains("TLS configuration unclear"));
+        assert!(
+            report.specialists[0]
+                .focus
+                .contains("TLS configuration unclear")
+        );
         // Specialist requested tool execution, should have observations from tool findings.
-        assert!(!report.specialists[0].observations.is_empty(), "Specialist should have observations from tool execution");
+        assert!(
+            !report.specialists[0].observations.is_empty(),
+            "Specialist should have observations from tool execution"
+        );
         assert_eq!(report.hypotheses.len(), 1);
         assert_eq!(report.hypotheses[0].status, HypothesisStatus::Supported);
         // Verify tool was executed during consultation.
-        assert!(report.tool_trace.iter().any(|t| t.tool_id == "inspect_security_posture" && t.dwarf_id == DwarfId::Sicherheits), "Tool should be traced to specialist");
+        assert!(
+            report
+                .tool_trace
+                .iter()
+                .any(|t| t.tool_id == "inspect_security_posture"
+                    && t.dwarf_id == DwarfId::Sicherheits),
+            "Tool should be traced to specialist"
+        );
     }
 
     #[tokio::test]

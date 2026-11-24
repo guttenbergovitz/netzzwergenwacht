@@ -156,9 +156,10 @@ output/
 # Rust build artifacts
 /target/
 
-# Local configuration files
+# Local configuration and patrol memory
 config.toml
 portfolio.toml
+.nzw/
 
 # Agent working specs and scratchpads
 .specs/
