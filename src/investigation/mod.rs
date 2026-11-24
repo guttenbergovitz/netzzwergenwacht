@@ -1,12 +1,13 @@
 //! Agentic investigation domain model and `KommandantZwerg` orchestrator.
 //!
-//! Implements the Milestone B multi-turn investigation loop backed by `rig-core`
-//! [`PortableTool`] definitions:
-//! initial reconnaissance -> `KommandantZwerg` hypothesis generation ->
-//! budget-enforced typed diagnostic tool invocation -> additional evidence
-//! collection -> hypothesis evaluation -> structured [`InvestigationReport`]
-//! with [`ExecutiveBrief`] and backlog-ready [`RemediationTask`]s.
+//! Coordinates specialist capabilities (`LeistungsZwerg`, `BrowserZwerg`,
+//! `StrukturZwerg`, `SicherheitsZwerg`, `ZugänglichkeitsZwerg`, `NetzZwerg`)
+//! through `rig-core` [`PortableTool`] contracts, enforces [`InvestigationBudget`],
+//! emits [`InvestigationEvent`]s, and builds stakeholder-ready
+//! [`InvestigationReport`]s.
 
+pub mod events;
+pub mod reporting;
 pub mod tools;
 
 use std::collections::HashSet;
@@ -28,12 +29,18 @@ use crate::discovery::{
 };
 use crate::domain::{
     AnalyserResult, AuditTarget, AxeEvidence, BrowserEvidence, CollectorOutcome, EvidenceRef,
-    EvidenceSnapshot, ExecutionBudget, Finding, RuleId, Severity, TargetPolicy,
+    EvidenceSnapshot, ExecutionBudget, LighthouseMetrics, Origin, RuleId, TargetPolicy,
 };
 use crate::intelligence::{LlmBudget, LlmProvider};
 
+pub use self::events::InvestigationEvent;
+pub use self::reporting::{
+    ExecutiveBrief, ReleaseReadinessAssessment, ReleaseReadinessState, RemediationTask,
+    RolePerspective, render_markdown_report, render_role_perspective_markdown,
+};
 use self::tools::{
-    CrawlAndClusterTool, InspectBrowserRuntimeTool, InspectRenderedAccessibilityTool,
+    CrawlAndClusterTool, InspectBrowserRuntimeTool, InspectDocumentStructureTool,
+    InspectPagePerformanceTool, InspectRenderedAccessibilityTool, InspectSecurityPostureTool,
     TargetToolArgs, registered_tool_definitions,
 };
 
@@ -100,8 +107,8 @@ pub struct InvestigationBudget {
 impl Default for InvestigationBudget {
     fn default() -> Self {
         Self {
-            max_tool_calls: 4,
-            max_llm_turns: 4,
+            max_tool_calls: 5,
+            max_llm_turns: 6,
             max_duration: Duration::from_secs(90),
             max_tokens: 1_024,
         }
@@ -211,61 +218,17 @@ pub struct ToolInvocationRecord {
     pub summary: String,
 }
 
-/// Stakeholder-oriented two-minute executive summary.
+/// Domain-specific contribution recorded by an activated specialist dwarf.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExecutiveBrief {
-    /// Overall condition statement grounded in observed findings.
-    pub assessment: String,
-    /// Top immediate actions ordered by severity and hypothesis support.
-    pub immediate_actions: Vec<String>,
-    /// Explicit coverage statement (what was and was not inspected).
-    pub coverage_summary: String,
-    /// Explicit limitations and uncertainty note.
-    pub confidence_note: String,
-}
-
-/// Backlog-ready remediation task generated for PM / PO / engineering teams.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RemediationTask {
-    /// Stable task identifier within the investigation.
-    pub id: String,
-    /// Concise action title.
-    pub title: String,
-    /// Problem statement grounded in findings.
-    pub problem_statement: String,
-    /// Impact severity.
-    pub priority: Severity,
-    /// Related deterministic rule IDs.
-    pub related_rules: Vec<RuleId>,
-    /// Suggested acceptance criteria for delivery teams.
-    pub acceptance_criteria: Vec<String>,
-    /// Verification procedure to confirm completion.
-    pub verification_procedure: String,
-}
-
-/// Configurable release readiness classification grounded in investigated scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReleaseReadinessState {
-    /// No blocking findings observed within the investigated scope.
-    NoBlockingFindingsWithinScope,
-    /// Moderate concerns require stakeholder review or scheduled remediation.
-    MaterialConcerns,
-    /// High or critical defects represent potential release blockers.
-    PotentialReleaseBlockers,
-    /// Required evidence was incomplete, failed, or inconclusive.
-    InsufficientEvidence,
-}
-
-/// Defensible release readiness assessment for stakeholder decisions.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReleaseReadinessAssessment {
-    /// Overall readiness state.
-    pub state: ReleaseReadinessState,
-    /// Evidence-backed rationale bullets.
-    pub rationale: Vec<String>,
-    /// Explicit coverage and evidence limitations.
-    pub coverage_limitations: Vec<String>,
+pub struct SpecialistContribution {
+    /// Contributing specialist dwarf.
+    pub dwarf_id: DwarfId,
+    /// Analytical focus for this contribution.
+    pub focus: String,
+    /// Concrete observations derived from captured evidence.
+    pub observations: Vec<String>,
+    /// Explicit remaining uncertainty.
+    pub uncertainty: String,
 }
 
 /// Shared structured context exchanged between `KommandantZwerg` and tools.
@@ -283,16 +246,20 @@ pub struct InvestigationContext {
     pub snapshot: Option<EvidenceSnapshot>,
     /// Initial Level 1 deterministic report.
     pub initial_report: Option<AuditReport>,
-    /// Additional Level 2 specialist results gathered during investigation.
+    /// Additional specialist results gathered during investigation.
     pub follow_up_results: Vec<AnalyserResult>,
     /// Pages discovered during optional multi-page crawl.
     pub discovered_pages: Vec<DiscoveredPage>,
     /// Systemic cross-page issues identified during crawl.
     pub systemic_issues: Vec<SystemicIssue>,
+    /// Specialist contributions recorded during the investigation.
+    pub specialists: Vec<SpecialistContribution>,
     /// Hypotheses formulated and evaluated during the investigation.
     pub hypotheses: Vec<DiagnosticHypothesis>,
     /// Complete trace of tool invocations.
     pub tool_trace: Vec<ToolInvocationRecord>,
+    /// Chronological execution events.
+    pub events: Vec<InvestigationEvent>,
     /// Budget consumption ledger.
     pub ledger: BudgetLedger,
 }
@@ -312,16 +279,20 @@ pub struct InvestigationReport {
     pub snapshot: Option<EvidenceSnapshot>,
     /// Initial Level 1 deterministic report.
     pub initial_report: Option<AuditReport>,
-    /// Additional Level 2 specialist results.
+    /// Additional specialist results.
     pub follow_up_results: Vec<AnalyserResult>,
     /// Pages discovered during optional multi-page crawl.
     pub discovered_pages: Vec<DiscoveredPage>,
     /// Systemic cross-page issues identified during crawl.
     pub systemic_issues: Vec<SystemicIssue>,
+    /// Specialist contributions recorded during the investigation.
+    pub specialists: Vec<SpecialistContribution>,
     /// Evaluated hypotheses.
     pub hypotheses: Vec<DiagnosticHypothesis>,
     /// Complete tool execution trace.
     pub tool_trace: Vec<ToolInvocationRecord>,
+    /// Chronological execution events.
+    pub events: Vec<InvestigationEvent>,
     /// Budget consumption summary.
     pub ledger: BudgetLedger,
     /// Stakeholder-facing executive brief.
@@ -361,6 +332,13 @@ pub trait DiagnosticBackend: Send + Sync {
         timeout: Duration,
     ) -> CollectFuture<'a, CollectorOutcome<AxeEvidence>>;
 
+    /// Collects Level 2 Lighthouse performance metrics.
+    fn collect_lighthouse<'a>(
+        &'a self,
+        target: &'a AuditTarget,
+        timeout: Duration,
+    ) -> CollectFuture<'a, CollectorOutcome<LighthouseMetrics>>;
+
     /// Performs a bounded same-origin crawl and systemic issue clustering.
     fn collect_crawl<'a>(
         &'a self,
@@ -399,6 +377,14 @@ impl DiagnosticBackend for LiveDiagnosticBackend {
         timeout: Duration,
     ) -> CollectFuture<'a, CollectorOutcome<AxeEvidence>> {
         Box::pin(adapters::axe::run_axe(target, timeout))
+    }
+
+    fn collect_lighthouse<'a>(
+        &'a self,
+        target: &'a AuditTarget,
+        timeout: Duration,
+    ) -> CollectFuture<'a, CollectorOutcome<LighthouseMetrics>> {
+        Box::pin(adapters::lighthouse::run_lighthouse(target, timeout))
     }
 
     fn collect_crawl<'a>(
@@ -447,8 +433,10 @@ pub async fn run_investigation(
     llm: &dyn LlmProvider,
 ) -> InvestigationReport {
     let started = Instant::now();
+    let id = InvestigationId::generate(target.host());
+    let origin = Origin::from_target(&target);
     let mut ctx = InvestigationContext {
-        id: InvestigationId::generate(target.host()),
+        id: id.clone(),
         target: target.clone(),
         objective,
         state: InvestigationState::Scoped,
@@ -457,8 +445,18 @@ pub async fn run_investigation(
         follow_up_results: Vec::new(),
         discovered_pages: Vec::new(),
         systemic_issues: Vec::new(),
+        specialists: Vec::new(),
         hypotheses: Vec::new(),
         tool_trace: Vec::new(),
+        events: vec![
+            InvestigationEvent::InvestigationStarted {
+                investigation_id: id.0,
+                target: target.as_str().to_owned(),
+            },
+            InvestigationEvent::ScopeEstablished {
+                origin: format!("{:?}://{}:{}", origin.scheme, origin.host, origin.port),
+            },
+        ],
         ledger: BudgetLedger::new(budget),
     };
 
@@ -484,15 +482,20 @@ pub async fn run_investigation(
         .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.clone()))
         .collect();
 
+    let http_ok = !matches!(snapshot.http, CollectorOutcome::Failed { .. });
     ctx.tool_trace.push(ToolInvocationRecord {
         tool_id: "inspect_http_and_source".to_owned(),
         dwarf_id: DwarfId::Netz,
         authorised: true,
-        succeeded: !matches!(snapshot.http, CollectorOutcome::Failed { .. }),
+        succeeded: http_ok,
         summary: format!(
             "collected HTTP/TLS snapshot and ran {} analysers",
             initial_report.analysers.len()
         ),
+    });
+    ctx.events.push(InvestigationEvent::ToolCompleted {
+        tool_id: "inspect_http_and_source".to_owned(),
+        succeeded: http_ok,
     });
     ctx.initial_report = Some(initial_report.clone());
     ctx.snapshot = Some(snapshot.clone());
@@ -519,6 +522,11 @@ pub async fn run_investigation(
             Ok(d) => d,
             Err(err) => {
                 ctx.state = InvestigationState::PartiallyCompleted;
+                ctx.events
+                    .push(InvestigationEvent::InvestigationPartiallyCompleted {
+                        investigation_id: ctx.id.0.clone(),
+                        reason: err.clone(),
+                    });
                 return build_report(
                     ctx,
                     format!(
@@ -541,8 +549,14 @@ pub async fn run_investigation(
         used_tools.insert(decision.requested_tool.clone());
 
         let rule_verified = known_rules.contains(&decision.originating_rule);
+        let hyp_id = format!("hyp-{}", ctx.hypotheses.len() + 1);
+        ctx.events.push(InvestigationEvent::HypothesisProposed {
+            hypothesis_id: hyp_id.clone(),
+            originating_rule: decision.originating_rule.clone(),
+        });
+
         let mut hypothesis = DiagnosticHypothesis {
-            id: format!("hyp-{}", ctx.hypotheses.len() + 1),
+            id: hyp_id.clone(),
             originating_rule: RuleId(decision.originating_rule),
             originating_rule_verified: rule_verified,
             proposed_explanation: decision.proposed_explanation,
@@ -553,10 +567,20 @@ pub async fn run_investigation(
             contradictory_evidence: Vec::new(),
         };
 
+        ctx.events.push(InvestigationEvent::ToolRequested {
+            tool_id: decision.requested_tool.clone(),
+        });
         let Ok(tool_rem) = ctx.ledger.try_consume_tool(started) else {
+            ctx.events.push(InvestigationEvent::ToolRejected {
+                tool_id: decision.requested_tool.clone(),
+                reason: "tool call budget exhausted".to_owned(),
+            });
             ctx.hypotheses.push(hypothesis);
             return finish_budget_exhausted(ctx, "tool call budget exhausted".to_owned());
         };
+        ctx.events.push(InvestigationEvent::ToolAuthorised {
+            tool_id: decision.requested_tool.clone(),
+        });
 
         let (tool_succeeded, new_results) = execute_rig_tool(
             &decision.requested_tool,
@@ -569,6 +593,10 @@ pub async fn run_investigation(
         )
         .await;
         ctx.snapshot = Some(snapshot.clone());
+        ctx.events.push(InvestigationEvent::ToolCompleted {
+            tool_id: decision.requested_tool.clone(),
+            succeeded: tool_succeeded,
+        });
 
         ctx.state = InvestigationState::Evaluating;
         let Ok(eval_rem) = ctx.ledger.try_consume_llm(started) else {
@@ -599,11 +627,18 @@ pub async fn run_investigation(
                 );
             }
         }
+        ctx.events.push(InvestigationEvent::HypothesisEvaluated {
+            hypothesis_id: hyp_id,
+            status: format!("{:?}", hypothesis.status),
+        });
         ctx.hypotheses.push(hypothesis);
         ctx.state = InvestigationState::Investigating;
     }
 
     ctx.state = InvestigationState::Completed;
+    ctx.events.push(InvestigationEvent::InvestigationCompleted {
+        investigation_id: ctx.id.0.clone(),
+    });
     if final_conclusion.is_empty() {
         final_conclusion = format!(
             "Completed investigation with {} hypothesis evaluation(s).",
@@ -690,70 +725,19 @@ async fn execute_rig_tool(
     };
     match tool_id {
         "inspect_browser_runtime" => {
-            let tool = InspectBrowserRuntimeTool::new(target.clone(), policy, timeout, backend);
-            match tool.call(args).await {
-                Ok(out) => {
-                    snapshot.browser = out.outcome.clone();
-                    let succeeded = !matches!(out.outcome, CollectorOutcome::Failed { .. });
-                    ctx.tool_trace.push(ToolInvocationRecord {
-                        tool_id: tool_id.to_owned(),
-                        dwarf_id: DwarfId::Browser,
-                        authorised: true,
-                        succeeded,
-                        summary: format!(
-                            "browser findings: {}, visual findings: {}",
-                            out.browser_result.findings.len(),
-                            out.visual_result.findings.len()
-                        ),
-                    });
-                    let results = vec![out.browser_result, out.visual_result];
-                    ctx.follow_up_results.extend(results.clone());
-                    (succeeded, results)
-                }
-                Err(err) => {
-                    ctx.tool_trace.push(ToolInvocationRecord {
-                        tool_id: tool_id.to_owned(),
-                        dwarf_id: DwarfId::Browser,
-                        authorised: false,
-                        succeeded: false,
-                        summary: err.to_string(),
-                    });
-                    (false, Vec::new())
-                }
-            }
+            run_browser_tool(target, policy, timeout, backend, args, snapshot, ctx).await
         }
         "inspect_rendered_accessibility" => {
-            let tool =
-                InspectRenderedAccessibilityTool::new(target.clone(), policy, timeout, backend);
-            match tool.call(args).await {
-                Ok(out) => {
-                    snapshot.axe = out.outcome.clone();
-                    let succeeded = !matches!(out.outcome, CollectorOutcome::Failed { .. });
-                    ctx.tool_trace.push(ToolInvocationRecord {
-                        tool_id: tool_id.to_owned(),
-                        dwarf_id: DwarfId::Zugaenglichkeits,
-                        authorised: true,
-                        succeeded,
-                        summary: format!(
-                            "rendered a11y findings: {}",
-                            out.axe_result.findings.len()
-                        ),
-                    });
-                    let results = vec![out.axe_result];
-                    ctx.follow_up_results.extend(results.clone());
-                    (succeeded, results)
-                }
-                Err(err) => {
-                    ctx.tool_trace.push(ToolInvocationRecord {
-                        tool_id: tool_id.to_owned(),
-                        dwarf_id: DwarfId::Zugaenglichkeits,
-                        authorised: false,
-                        succeeded: false,
-                        summary: err.to_string(),
-                    });
-                    (false, Vec::new())
-                }
-            }
+            run_axe_tool(target, policy, timeout, backend, args, snapshot, ctx).await
+        }
+        "inspect_page_performance" => {
+            run_performance_tool(target, policy, timeout, backend, args, snapshot, ctx).await
+        }
+        "inspect_document_structure" => {
+            run_structure_tool(target, policy, timeout, backend, args, ctx).await
+        }
+        "inspect_security_posture" => {
+            run_security_tool(target, policy, timeout, backend, args, ctx).await
         }
         "crawl_and_cluster_site" => {
             run_crawl_tool(target, policy, timeout, backend, args, ctx).await
@@ -765,6 +749,261 @@ async fn execute_rig_tool(
                 authorised: false,
                 succeeded: false,
                 summary: "rejected unrecognised or unauthorised tool request".to_owned(),
+            });
+            (false, Vec::new())
+        }
+    }
+}
+
+fn record_specialist(
+    ctx: &mut InvestigationContext,
+    dwarf_id: DwarfId,
+    focus: &str,
+    results: &[AnalyserResult],
+    uncertainty: &str,
+) {
+    let observations: Vec<String> = results
+        .iter()
+        .flat_map(|r| r.findings.iter())
+        .map(|f| format!("{}: {}", f.rule_id.0, f.title))
+        .collect();
+    let final_obs = if observations.is_empty() {
+        vec!["No defects reported by specialist checks.".to_owned()]
+    } else {
+        observations
+    };
+    ctx.specialists.push(SpecialistContribution {
+        dwarf_id,
+        focus: focus.to_owned(),
+        observations: final_obs,
+        uncertainty: uncertainty.to_owned(),
+    });
+    ctx.events.push(InvestigationEvent::SpecialistActivated {
+        dwarf_id,
+        focus: focus.to_owned(),
+    });
+}
+
+async fn run_browser_tool(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    args: TargetToolArgs,
+    snapshot: &mut EvidenceSnapshot,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let tool = InspectBrowserRuntimeTool::new(target.clone(), policy, timeout, backend);
+    match tool.call(args).await {
+        Ok(out) => {
+            snapshot.browser = out.outcome.clone();
+            let succeeded = !matches!(out.outcome, CollectorOutcome::Failed { .. });
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_browser_runtime".to_owned(),
+                dwarf_id: DwarfId::Browser,
+                authorised: true,
+                succeeded,
+                summary: format!(
+                    "browser findings: {}, visual findings: {}",
+                    out.browser_result.findings.len(),
+                    out.visual_result.findings.len()
+                ),
+            });
+            let results = vec![out.browser_result, out.visual_result];
+            record_specialist(
+                ctx,
+                DwarfId::Browser,
+                "Headless runtime console & layout",
+                &results,
+                "External observation only; client-side state transitions beyond initial load were not exercised.",
+            );
+            ctx.follow_up_results.extend(results.clone());
+            (succeeded, results)
+        }
+        Err(err) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_browser_runtime".to_owned(),
+                dwarf_id: DwarfId::Browser,
+                authorised: false,
+                succeeded: false,
+                summary: err.to_string(),
+            });
+            (false, Vec::new())
+        }
+    }
+}
+
+async fn run_axe_tool(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    args: TargetToolArgs,
+    snapshot: &mut EvidenceSnapshot,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let tool = InspectRenderedAccessibilityTool::new(target.clone(), policy, timeout, backend);
+    match tool.call(args).await {
+        Ok(out) => {
+            snapshot.axe = out.outcome.clone();
+            let succeeded = !matches!(out.outcome, CollectorOutcome::Failed { .. });
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_rendered_accessibility".to_owned(),
+                dwarf_id: DwarfId::Zugaenglichkeits,
+                authorised: true,
+                succeeded,
+                summary: format!("rendered a11y findings: {}", out.axe_result.findings.len()),
+            });
+            let results = vec![out.axe_result];
+            record_specialist(
+                ctx,
+                DwarfId::Zugaenglichkeits,
+                "Rendered DOM accessibility (axe-core)",
+                &results,
+                "Automated checks cannot verify keyboard focus order or full WCAG compliance.",
+            );
+            ctx.follow_up_results.extend(results.clone());
+            (succeeded, results)
+        }
+        Err(err) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_rendered_accessibility".to_owned(),
+                dwarf_id: DwarfId::Zugaenglichkeits,
+                authorised: false,
+                succeeded: false,
+                summary: err.to_string(),
+            });
+            (false, Vec::new())
+        }
+    }
+}
+
+async fn run_performance_tool(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    args: TargetToolArgs,
+    snapshot: &mut EvidenceSnapshot,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let tool = InspectPagePerformanceTool::new(target.clone(), policy, timeout, backend);
+    match tool.call(args).await {
+        Ok(out) => {
+            snapshot.lighthouse = out.outcome.clone();
+            let succeeded = !matches!(out.outcome, CollectorOutcome::Failed { .. });
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_page_performance".to_owned(),
+                dwarf_id: DwarfId::Leistungs,
+                authorised: true,
+                succeeded,
+                summary: format!(
+                    "Lighthouse CWV findings: {}",
+                    out.performance_result.findings.len()
+                ),
+            });
+            let results = vec![out.performance_result];
+            record_specialist(
+                ctx,
+                DwarfId::Leistungs,
+                "Core Web Vitals (Lighthouse laboratory metrics)",
+                &results,
+                "Laboratory measurements do not replace real-user field telemetry (CrUX/RUM).",
+            );
+            ctx.follow_up_results.extend(results.clone());
+            (succeeded, results)
+        }
+        Err(err) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_page_performance".to_owned(),
+                dwarf_id: DwarfId::Leistungs,
+                authorised: false,
+                succeeded: false,
+                summary: err.to_string(),
+            });
+            (false, Vec::new())
+        }
+    }
+}
+
+async fn run_structure_tool(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    args: TargetToolArgs,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let tool = InspectDocumentStructureTool::new(target.clone(), policy, timeout, backend);
+    match tool.call(args).await {
+        Ok(res) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_document_structure".to_owned(),
+                dwarf_id: DwarfId::Struktur,
+                authorised: true,
+                succeeded: true,
+                summary: format!("structural findings: {}", res.findings.len()),
+            });
+            let results = vec![res];
+            record_specialist(
+                ctx,
+                DwarfId::Struktur,
+                "Semantic HTML structure and interactive semantics",
+                &results,
+                "Source-level HTML inspection; client-side DOM mutations require BrowserZwerg.",
+            );
+            ctx.follow_up_results.extend(results.clone());
+            (true, results)
+        }
+        Err(err) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_document_structure".to_owned(),
+                dwarf_id: DwarfId::Struktur,
+                authorised: false,
+                succeeded: false,
+                summary: err.to_string(),
+            });
+            (false, Vec::new())
+        }
+    }
+}
+
+async fn run_security_tool(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    args: TargetToolArgs,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let tool = InspectSecurityPostureTool::new(target.clone(), policy, timeout, backend);
+    match tool.call(args).await {
+        Ok(res) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_security_posture".to_owned(),
+                dwarf_id: DwarfId::Sicherheits,
+                authorised: true,
+                succeeded: true,
+                summary: format!("security findings: {}", res.findings.len()),
+            });
+            let results = vec![res];
+            record_specialist(
+                ctx,
+                DwarfId::Sicherheits,
+                "Passive transport & security header posture",
+                &results,
+                "Passive inspection only; not a penetration test.",
+            );
+            ctx.follow_up_results.extend(results.clone());
+            (true, results)
+        }
+        Err(err) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "inspect_security_posture".to_owned(),
+                dwarf_id: DwarfId::Sicherheits,
+                authorised: false,
+                succeeded: false,
+                summary: err.to_string(),
             });
             (false, Vec::new())
         }
@@ -790,7 +1029,7 @@ async fn run_crawl_tool(
             let succeeded = investigated > 0;
             ctx.tool_trace.push(ToolInvocationRecord {
                 tool_id: "crawl_and_cluster_site".to_owned(),
-                dwarf_id: DwarfId::Struktur,
+                dwarf_id: DwarfId::Netz,
                 authorised: true,
                 succeeded,
                 summary: format!(
@@ -807,7 +1046,7 @@ async fn run_crawl_tool(
         Err(err) => {
             ctx.tool_trace.push(ToolInvocationRecord {
                 tool_id: "crawl_and_cluster_site".to_owned(),
-                dwarf_id: DwarfId::Struktur,
+                dwarf_id: DwarfId::Netz,
                 authorised: false,
                 succeeded: false,
                 summary: err.to_string(),
@@ -881,275 +1120,19 @@ evidence. Respond strictly with JSON: {\"status\": \"supported\"|\"rejected\"|\"
     Ok(eval.conclusion)
 }
 
-fn build_stakeholder_outputs(
-    ctx: &InvestigationContext,
-) -> (
-    ExecutiveBrief,
-    ReleaseReadinessAssessment,
-    Vec<RemediationTask>,
-) {
-    let mut all_findings: Vec<&Finding> = ctx
-        .initial_report
-        .iter()
-        .flat_map(|r| r.analysers.iter())
-        .flat_map(|a| a.findings.iter())
-        .chain(ctx.follow_up_results.iter().flat_map(|r| r.findings.iter()))
-        .collect();
-    all_findings.sort_by_key(|a| std::cmp::Reverse(a.severity));
-
-    let immediate_actions: Vec<String> = all_findings
-        .iter()
-        .filter(|f| f.severity >= Severity::Medium)
-        .take(5)
-        .map(|f| format!("[{:?}] {} ({})", f.severity, f.title, f.rule_id.0))
-        .collect();
-
-    let assessment = if all_findings.iter().any(|f| f.severity >= Severity::High) {
-        "Material high-severity quality risks require attention before release.".to_owned()
-    } else if all_findings.is_empty() {
-        "No defects detected within the investigated single-target scope.".to_owned()
-    } else {
-        "Minor or moderate quality improvements identified within the investigated scope."
-            .to_owned()
-    };
-
-    let supported = ctx
-        .hypotheses
-        .iter()
-        .filter(|h| h.status == HypothesisStatus::Supported)
-        .count();
-    let coverage_summary = if ctx.discovered_pages.is_empty() {
-        format!(
-            "Single target `{}` investigated; {} tool call(s) executed; {} hypothesis/hypotheses evaluated ({} supported).",
-            ctx.target.as_str(),
-            ctx.tool_trace.len(),
-            ctx.hypotheses.len(),
-            supported
-        )
-    } else {
-        let investigated = ctx
-            .discovered_pages
-            .iter()
-            .filter(|p| p.status == PageCrawlStatus::Investigated)
-            .count();
-        format!(
-            "{} of {} discovered URLs investigated across `{}`; {} systemic issue(s) clustered; {} hypothesis/hypotheses evaluated ({} supported).",
-            investigated,
-            ctx.discovered_pages.len(),
-            ctx.target.host(),
-            ctx.systemic_issues.len(),
-            ctx.hypotheses.len(),
-            supported
-        )
-    };
-    let confidence_note =
-        "Deterministic measurements carry high confidence; multi-page crawl and authenticated journeys were not evaluated in this single-target investigation."
-            .to_owned();
-
-    let release_readiness = compute_release_readiness(ctx, &all_findings);
-
-    let remediation_tasks = all_findings
-        .into_iter()
-        .filter(|f| f.severity >= Severity::Medium)
-        .take(8)
-        .enumerate()
-        .map(|(idx, f)| RemediationTask {
-            id: format!("TASK-{}", idx + 1),
-            title: f.title.clone(),
-            problem_statement: f.summary.clone(),
-            priority: f.severity,
-            related_rules: vec![f.rule_id.clone()],
-            acceptance_criteria: vec![
-                f.remediation.clone().unwrap_or_else(|| {
-                    "Resolve the underlying defect and verify against captured evidence.".to_owned()
-                }),
-                format!(
-                    "Re-running rule `{}` passes without regressions.",
-                    f.rule_id.0
-                ),
-            ],
-            verification_procedure: format!(
-                "Re-run `nzw check {}` (or `nzw investigate`) and confirm `{}` is resolved.",
-                ctx.target.as_str(),
-                f.rule_id.0
-            ),
-        })
-        .collect();
-
-    (
-        ExecutiveBrief {
-            assessment,
-            immediate_actions,
-            coverage_summary,
-            confidence_note,
-        },
-        release_readiness,
-        remediation_tasks,
-    )
-}
-
-fn compute_release_readiness(
-    ctx: &InvestigationContext,
-    all_findings: &[&Finding],
-) -> ReleaseReadinessAssessment {
-    let has_critical_or_high = all_findings.iter().any(|f| f.severity >= Severity::High);
-    let has_medium = all_findings.iter().any(|f| f.severity == Severity::Medium);
-    let http_incomplete = ctx.snapshot.as_ref().is_none_or(|s| {
-        matches!(
-            s.http,
-            CollectorOutcome::Failed { .. }
-                | CollectorOutcome::Skipped { .. }
-                | CollectorOutcome::Partial { .. }
-        )
-    });
-    let has_inconclusive_hyp = ctx
-        .hypotheses
-        .iter()
-        .any(|h| h.status == HypothesisStatus::Inconclusive);
-
-    let state = if has_critical_or_high {
-        ReleaseReadinessState::PotentialReleaseBlockers
-    } else if http_incomplete
-        || matches!(
-            ctx.state,
-            InvestigationState::BudgetExhausted | InvestigationState::Failed
-        )
-        || has_inconclusive_hyp
-    {
-        ReleaseReadinessState::InsufficientEvidence
-    } else if has_medium {
-        ReleaseReadinessState::MaterialConcerns
-    } else {
-        ReleaseReadinessState::NoBlockingFindingsWithinScope
-    };
-
-    let mut rationale = Vec::new();
-    if has_critical_or_high {
-        rationale
-            .push("One or more Critical/High deterministic findings were observed.".to_owned());
-    }
-    if http_incomplete {
-        rationale.push("Initial HTTP collection was failed, skipped, or partial.".to_owned());
-    }
-    if has_inconclusive_hyp {
-        rationale.push("At least one diagnostic hypothesis remained inconclusive.".to_owned());
-    }
-    if rationale.is_empty() {
-        rationale.push("All executed checks within scope completed cleanly.".to_owned());
-    }
-    ReleaseReadinessAssessment {
-        state,
-        rationale,
-        coverage_limitations: vec![
-            "Authenticated user journeys were not exercised.".to_owned(),
-            if ctx.discovered_pages.is_empty() {
-                "Only a single seed URL was investigated.".to_owned()
-            } else {
-                format!(
-                    "Bounded crawl covered {} discovered URL(s).",
-                    ctx.discovered_pages.len()
-                )
-            },
-        ],
-    }
-}
-
-/// Renders an [`InvestigationReport`] as a stakeholder-ready Markdown document.
-#[must_use]
-pub fn render_markdown_report(report: &InvestigationReport) -> String {
-    use std::fmt::Write;
-
-    let mut out = String::new();
-    let _ = writeln!(out, "# NetzZwergenWacht Investigation Report\n");
-    let _ = writeln!(out, "- **Investigation ID**: `{}`", report.id.0);
-    let _ = writeln!(out, "- **Target**: {}", report.target.as_str());
-    let _ = writeln!(out, "- **Objective**: {}", report.objective);
-    let _ = writeln!(out, "- **State**: `{:?}`", report.state);
-    let _ = writeln!(
-        out,
-        "- **Release Readiness**: `{:?}`\n",
-        report.release_readiness.state
-    );
-
-    let _ = writeln!(out, "## Executive Brief\n");
-    let _ = writeln!(out, "{}\n", report.executive_brief.assessment);
-    let _ = writeln!(
-        out,
-        "- **Coverage**: {}",
-        report.executive_brief.coverage_summary
-    );
-    let _ = writeln!(
-        out,
-        "- **Confidence**: {}\n",
-        report.executive_brief.confidence_note
-    );
-
-    if !report.executive_brief.immediate_actions.is_empty() {
-        let _ = writeln!(out, "### Immediate Actions\n");
-        for action in &report.executive_brief.immediate_actions {
-            let _ = writeln!(out, "- {action}");
-        }
-        let _ = writeln!(out);
-    }
-
-    if !report.hypotheses.is_empty() {
-        let _ = writeln!(out, "## Diagnostic Hypotheses\n");
-        for hyp in &report.hypotheses {
-            let _ = writeln!(
-                out,
-                "- **{}** (`{:?}`, tool `{}`): {}",
-                hyp.id, hyp.status, hyp.requested_tool, hyp.proposed_explanation
-            );
-            if let Some(summary) = &hyp.evaluation_summary {
-                let _ = writeln!(out, "  - Evaluation: {summary}");
-            }
-        }
-        let _ = writeln!(out);
-    }
-
-    if !report.systemic_issues.is_empty() {
-        let _ = writeln!(out, "## Systemic Issues\n");
-        for sys in &report.systemic_issues {
-            let _ = writeln!(
-                out,
-                "- **{}** (`{}`): {} ({} URL(s))",
-                sys.id,
-                sys.rule_id.0,
-                sys.summary,
-                sys.affected_urls.len()
-            );
-        }
-        let _ = writeln!(out);
-    }
-
-    if !report.remediation_tasks.is_empty() {
-        let _ = writeln!(out, "## Backlog Remediation Tasks\n");
-        for task in &report.remediation_tasks {
-            let _ = writeln!(
-                out,
-                "### {} ({:?}) — {}\n",
-                task.id, task.priority, task.title
-            );
-            let _ = writeln!(out, "{}\n", task.problem_statement);
-            let _ = writeln!(out, "**Acceptance Criteria:**");
-            for ac in &task.acceptance_criteria {
-                let _ = writeln!(out, "- {ac}");
-            }
-            let _ = writeln!(out, "\n**Verification:** {}\n", task.verification_procedure);
-        }
-    }
-
-    let _ = writeln!(out, "## Conclusion\n\n{}", report.conclusion);
-    out
-}
-
 fn finish_budget_exhausted(mut ctx: InvestigationContext, reason: String) -> InvestigationReport {
     ctx.state = InvestigationState::BudgetExhausted;
+    ctx.events
+        .push(InvestigationEvent::InvestigationPartiallyCompleted {
+            investigation_id: ctx.id.0.clone(),
+            reason: reason.clone(),
+        });
     build_report(ctx, reason)
 }
 
 fn build_report(ctx: InvestigationContext, conclusion: String) -> InvestigationReport {
-    let (executive_brief, release_readiness, remediation_tasks) = build_stakeholder_outputs(&ctx);
+    let (executive_brief, release_readiness, remediation_tasks) =
+        reporting::build_stakeholder_outputs(&ctx);
     InvestigationReport {
         id: ctx.id,
         target: ctx.target,
@@ -1160,8 +1143,10 @@ fn build_report(ctx: InvestigationContext, conclusion: String) -> InvestigationR
         follow_up_results: ctx.follow_up_results,
         discovered_pages: ctx.discovered_pages,
         systemic_issues: ctx.systemic_issues,
+        specialists: ctx.specialists,
         hypotheses: ctx.hypotheses,
         tool_trace: ctx.tool_trace,
+        events: ctx.events,
         ledger: ctx.ledger,
         executive_brief,
         release_readiness,
@@ -1177,13 +1162,14 @@ mod tests {
 
     use super::*;
     use crate::domain::{
-        AxeViolation, ConsoleErrorEvent, HttpEvidence, HttpHeader, Measurement, MeasurementUnit,
+        ConsoleErrorEvent, HttpEvidence, HttpHeader, Measurement, MeasurementUnit,
     };
     use crate::intelligence::LlmFuture;
 
     struct MockBackend {
         browser: CollectorOutcome<BrowserEvidence>,
         axe: CollectorOutcome<AxeEvidence>,
+        lighthouse: CollectorOutcome<LighthouseMetrics>,
     }
 
     impl DiagnosticBackend for MockBackend {
@@ -1241,6 +1227,15 @@ mod tests {
             Box::pin(async move { a })
         }
 
+        fn collect_lighthouse<'a>(
+            &'a self,
+            _target: &'a AuditTarget,
+            _timeout: Duration,
+        ) -> CollectFuture<'a, CollectorOutcome<LighthouseMetrics>> {
+            let l = self.lighthouse.clone();
+            Box::pin(async move { l })
+        }
+
         fn collect_crawl<'a>(
             &'a self,
             target: &'a AuditTarget,
@@ -1291,7 +1286,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn multi_turn_investigation_evaluates_hypotheses_and_builds_brief() {
+    async fn collaborative_performance_diagnosis_chains_leistungs_browser_and_struktur() {
         let target = AuditTarget::parse("http://example.org/", TargetPolicy::PublicOnly).unwrap();
         let backend = Arc::new(MockBackend {
             browser: CollectorOutcome::Captured {
@@ -1306,39 +1301,49 @@ mod tests {
                     viewports: Vec::new(),
                 },
             },
-            axe: CollectorOutcome::Captured {
-                data: AxeEvidence {
-                    axe_version: "4.10.2".to_owned(),
-                    violations: vec![AxeViolation {
-                        id: "color-contrast".to_owned(),
-                        impact: Some("serious".to_owned()),
-                        description: "Contrast ratio too low".to_owned(),
-                        help_url: "https://dequeuniversity.com/rules/axe/4.10/color-contrast"
-                            .to_owned(),
-                        nodes_count: 2,
-                    }],
-                    passes_count: 5,
-                    incomplete_count: 0,
+            axe: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::Captured {
+                data: LighthouseMetrics {
+                    lighthouse_version: "12.0.0".to_owned(),
+                    lcp_ms: Measurement::Measured {
+                        value: 4_200,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    cls_milli: Measurement::Measured {
+                        value: 50,
+                        unit: MeasurementUnit::Count,
+                    },
+                    fcp_ms: Measurement::Measured {
+                        value: 1_200,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    tbt_ms: Measurement::Measured {
+                        value: 150,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    performance_score: Some(58),
                 },
             },
         });
         let llm = SequenceLlm {
             responses: Mutex::new(VecDeque::from([
-                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Client script failure may be degrading page runtime","requested_tool":"inspect_browser_runtime"}"#.to_owned(),
-                r#"{"status":"supported","evaluation_summary":"BrowserZwerg observed a ReferenceError","conclusion":"Runtime JS error confirmed."}"#.to_owned(),
-                r#"{"ready_to_conclude":false,"originating_rule":"a11y.doc.lang","proposed_explanation":"Missing lang often correlates with rendered contrast issues","requested_tool":"inspect_rendered_accessibility"}"#.to_owned(),
-                r#"{"status":"rejected","evaluation_summary":"Contrast issue is unrelated to lang","conclusion":"Both runtime JS and contrast issues require remediation."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Slow mobile LCP likely accompanies slow HTTP exchange","requested_tool":"inspect_page_performance"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"LeistungsZwerg measured LCP = 4200 ms","conclusion":"CWV degradation confirmed."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Blocking script failure may delay rendering","requested_tool":"inspect_browser_runtime"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"BrowserZwerg observed ReferenceError","conclusion":"Runtime JS failure confirmed."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Verify document structure for blocking or malformed elements","requested_tool":"inspect_document_structure"}"#.to_owned(),
+                r#"{"status":"rejected","evaluation_summary":"Document structure did not show structural defects","conclusion":"Performance and JS runtime defects confirmed; structure is clean."}"#.to_owned(),
             ])),
         };
 
         let budget = InvestigationBudget {
-            max_tool_calls: 3,
-            max_llm_turns: 4,
+            max_tool_calls: 5,
+            max_llm_turns: 6,
             ..InvestigationBudget::default()
         };
         let report = run_investigation(
             target,
-            "Assess release readiness".to_owned(),
+            "Investigate mobile loading performance".to_owned(),
             TargetPolicy::PublicOnly,
             budget,
             backend,
@@ -1347,16 +1352,15 @@ mod tests {
         .await;
 
         assert_eq!(report.state, InvestigationState::Completed);
-        assert_eq!(report.hypotheses.len(), 2);
+        assert_eq!(report.specialists.len(), 3);
+        assert_eq!(report.hypotheses.len(), 3);
         assert_eq!(report.hypotheses[0].status, HypothesisStatus::Supported);
-        assert!(report.hypotheses[0].originating_rule_verified);
-        assert_ne!(report.hypotheses[0].supporting_evidence.len(), 0);
-        // Rejected hypothesis must populate contradictory_evidence, NOT supporting_evidence.
-        assert_eq!(report.hypotheses[1].status, HypothesisStatus::Rejected);
-        assert_eq!(report.hypotheses[1].supporting_evidence.len(), 0);
-        assert_ne!(report.hypotheses[1].contradictory_evidence.len(), 0);
-        assert!(report.snapshot.is_some());
-        assert_ne!(report.remediation_tasks.len(), 0);
+        assert_eq!(report.hypotheses[1].status, HypothesisStatus::Supported);
+        assert_eq!(report.hypotheses[2].status, HypothesisStatus::Rejected);
+        assert_ne!(report.events.len(), 0);
+        let cto_md =
+            render_role_perspective_markdown(&report, RolePerspective::CtoEngineeringManager);
+        assert!(cto_md.contains("## Specialist Contributions"));
     }
 
     #[tokio::test]
@@ -1367,6 +1371,7 @@ mod tests {
                 error: "chromium missing".to_owned(),
             },
             axe: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
         });
         let llm = SequenceLlm {
             responses: Mutex::new(VecDeque::from([
@@ -1397,6 +1402,7 @@ mod tests {
         let backend = Arc::new(MockBackend {
             browser: CollectorOutcome::default(),
             axe: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
         });
         let llm = SequenceLlm {
             responses: Mutex::new(VecDeque::from([
