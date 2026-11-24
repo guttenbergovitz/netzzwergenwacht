@@ -135,6 +135,9 @@ enum Command {
         /// Target stakeholder perspective for Markdown output.
         #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
         audience: AudienceArg,
+        /// Include chronological `InvestigationEvent` trace in text output.
+        #[arg(long)]
+        events: bool,
     },
     /// Re-audit a target and verify whether baseline findings are resolved or unverified.
     Verify {
@@ -312,7 +315,8 @@ async fn main() -> ExitCode {
             allow_private,
             format,
             audience,
-        } => run_investigate(&url, objective, allow_private, format, audience).await,
+            events,
+        } => run_investigate(&url, objective, allow_private, format, audience, events).await,
         Command::Verify {
             baseline,
             url,
@@ -396,6 +400,7 @@ async fn run_investigate(
     allow_private: bool,
     format: OutputFormat,
     audience: AudienceArg,
+    show_events: bool,
 ) -> ExitCode {
     let policy = target_policy(allow_private);
     let target = match AuditTarget::parse(url, policy) {
@@ -442,40 +447,7 @@ async fn run_investigate(
                     )
                 );
             } else {
-                println!(
-                    "NETZZWERGENWACHT — KommandantZwerg Investigation [{}] ({MOTTO})",
-                    report.id.0
-                );
-                println!(
-                    "Target: {} | State: {:?} | Readiness: {:?} | Tools: {}/{} | LLM turns: {}/{}",
-                    report.target.as_str(),
-                    report.state,
-                    report.release_readiness.state,
-                    report.ledger.tool_calls_used,
-                    report.ledger.budget.max_tool_calls,
-                    report.ledger.llm_turns_used,
-                    report.ledger.budget.max_llm_turns,
-                );
-                println!("\nExecutive Brief:");
-                println!("  Assessment: {}", report.executive_brief.assessment);
-                println!("  Coverage: {}", report.executive_brief.coverage_summary);
-                println!("  Confidence: {}", report.executive_brief.confidence_note);
-                for hyp in &report.hypotheses {
-                    println!(
-                        "\nHypothesis [{}] ({:?}): {} -> tool `{}`",
-                        hyp.id, hyp.status, hyp.proposed_explanation, hyp.requested_tool
-                    );
-                    if let Some(summary) = &hyp.evaluation_summary {
-                        println!("  Evaluation: {summary}");
-                    }
-                }
-                if !report.remediation_tasks.is_empty() {
-                    println!("\nBacklog Remediation Tasks:");
-                    for task in &report.remediation_tasks {
-                        println!("  - [{}] ({:?}) {}", task.id, task.priority, task.title);
-                    }
-                }
-                println!("\nConclusion: {}", report.conclusion);
+                print_investigation_text(&report, show_events);
             }
         }
     }
@@ -495,6 +467,52 @@ async fn run_investigate(
             _ => ExitCode::from(EXIT_FINDINGS),
         },
     }
+}
+
+fn print_investigation_text(
+    report: &netzzwergenwacht::investigation::InvestigationReport,
+    show_events: bool,
+) {
+    println!(
+        "NETZZWERGENWACHT — KommandantZwerg Investigation [{}] ({MOTTO})",
+        report.id.0
+    );
+    println!(
+        "Target: {} | State: {:?} | Readiness: {:?} | Tools: {}/{} | LLM turns: {}/{}",
+        report.target.as_str(),
+        report.state,
+        report.release_readiness.state,
+        report.ledger.tool_calls_used,
+        report.ledger.budget.max_tool_calls,
+        report.ledger.llm_turns_used,
+        report.ledger.budget.max_llm_turns,
+    );
+    println!("\nExecutive Brief:");
+    println!("  Assessment: {}", report.executive_brief.assessment);
+    println!("  Coverage: {}", report.executive_brief.coverage_summary);
+    println!("  Confidence: {}", report.executive_brief.confidence_note);
+    for hyp in &report.hypotheses {
+        println!(
+            "\nHypothesis [{}] ({:?}): {} -> tool `{}`",
+            hyp.id, hyp.status, hyp.proposed_explanation, hyp.requested_tool
+        );
+        if let Some(summary) = &hyp.evaluation_summary {
+            println!("  Evaluation: {summary}");
+        }
+    }
+    if !report.remediation_tasks.is_empty() {
+        println!("\nBacklog Remediation Tasks:");
+        for task in &report.remediation_tasks {
+            println!("  - [{}] ({:?}) {}", task.id, task.priority, task.title);
+        }
+    }
+    if show_events && !report.events.is_empty() {
+        println!("\nExecution Events:");
+        for ev in &report.events {
+            println!("  - {ev:?}");
+        }
+    }
+    println!("\nConclusion: {}", report.conclusion);
 }
 
 #[derive(Debug, Clone, Copy)]
