@@ -20,8 +20,9 @@ Status legend:
 ## Milestone B: Agentic Investigation Proof of Concept *(In Progress)*
 - [x] **ADR 0005 & Rig (`rig-core`) evaluation** (`docs/adr/0005-agentic-investigation-architecture.md`): *Implemented*
 - [x] **Investigation domain model & `InvestigationContext`** (`src/investigation/mod.rs`): *Implemented, Tested*
-- [x] **Typed `DiagnosticTool` catalogue & `KommandantZwerg` hypothesis loop** (`src/investigation/mod.rs`, `nzw investigate`): *Implemented, Experimentally demonstrated (mock LLM + backend)*
-- [ ] **Online `rig-core` crate integration**: *Blocked* (requires online Cargo dependency resolution; domain designed to be Rig-compatible)
+- [x] **Rig `PortableTool` catalogue & multi-turn `KommandantZwerg` hypothesis loop** (`src/investigation/tools.rs`, `src/investigation/mod.rs`, `nzw investigate`): *Implemented, Experimentally demonstrated (mock LLM + backend)*
+- [x] **`rig-core` (`0.42.0`) crate integration**: *Implemented, Tested* (MSRV `1.88`-compatible `PortableTool` + `ToolDefinition`)
+- [x] **Initial `ExecutiveBrief` & backlog-ready `RemediationTask`s** (`src/investigation/mod.rs`): *Implemented, Tested*
 
 ## Milestone C: Application-Level Investigation *(Planned)*
 - Bounded crawling, URL normalisation, and origin/depth caps

@@ -300,13 +300,13 @@ async fn run_investigate(
         }
     };
 
-    let backend = netzzwergenwacht::investigation::LiveDiagnosticBackend;
+    let backend = std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
     let report = netzzwergenwacht::investigation::run_investigation(
         target,
         objective,
         policy,
         netzzwergenwacht::investigation::InvestigationBudget::default(),
-        &backend,
+        backend,
         &llm,
     )
     .await;
@@ -320,7 +320,10 @@ async fn run_investigate(
             }
         },
         OutputFormat::Text => {
-            println!("NETZZWERGENWACHT — KommandantZwerg Investigation ({MOTTO})");
+            println!(
+                "NETZZWERGENWACHT — KommandantZwerg Investigation [{}] ({MOTTO})",
+                report.id.0
+            );
             println!(
                 "Target: {} | State: {:?} | Tools: {}/{} | LLM turns: {}/{}",
                 report.target.as_str(),
@@ -330,16 +333,26 @@ async fn run_investigate(
                 report.ledger.llm_turns_used,
                 report.ledger.budget.max_llm_turns,
             );
+            println!("\nExecutive Brief:");
+            println!("  Assessment: {}", report.executive_brief.assessment);
+            println!("  Coverage: {}", report.executive_brief.coverage_summary);
+            println!("  Confidence: {}", report.executive_brief.confidence_note);
             for hyp in &report.hypotheses {
                 println!(
-                    "Hypothesis [{}] ({:?}): {} -> tool `{}`",
+                    "\nHypothesis [{}] ({:?}): {} -> tool `{}`",
                     hyp.id, hyp.status, hyp.proposed_explanation, hyp.requested_tool
                 );
                 if let Some(summary) = &hyp.evaluation_summary {
                     println!("  Evaluation: {summary}");
                 }
             }
-            println!("Conclusion: {}", report.conclusion);
+            if !report.remediation_tasks.is_empty() {
+                println!("\nBacklog Remediation Tasks:");
+                for task in &report.remediation_tasks {
+                    println!("  - [{}] ({:?}) {}", task.id, task.priority, task.title);
+                }
+            }
+            println!("\nConclusion: {}", report.conclusion);
         }
     }
     ExitCode::from(EXIT_OK)
