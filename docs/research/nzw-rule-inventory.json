@@ -1,0 +1,403 @@
+{
+  "repository": "guttenbergovitz/netzzwergenwacht",
+  "branch": "develop",
+  "total_rules": 44,
+  "rules": [
+    {
+      "rule_id": "a11y.doc.lang",
+      "constant": "RULE_DOC_LANG",
+      "dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.images.alt",
+      "constant": "RULE_IMAGE_ALT",
+      "dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.forms.labels",
+      "constant": "RULE_FORM_LABELS",
+      "dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.aria.broken_references",
+      "constant": "RULE_ARIA_REFS",
+      "dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.interactive.accessible_name",
+      "constant": "RULE_INTERACTIVE_NAMES",
+      "dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.rendered.contrast_and_axe",
+      "constant": "RULE_RENDERED_AXE",
+      "dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "module_test_count": 3,
+      "status": "external_instrument"
+    },
+    {
+      "rule_id": "a11y.behavioural.keyboard_and_focus",
+      "constant": "RULE_BEHAVIOURAL",
+      "dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.console.errors",
+      "constant": "RULE_CONSOLE_ERRORS",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.network.failed_requests",
+      "constant": "RULE_FAILED_REQUESTS",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.thin_content",
+      "constant": "RULE_THIN_CONTENT",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.freshness_headers",
+      "constant": "RULE_FRESHNESS_HEADERS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.placeholder_text",
+      "constant": "RULE_PLACEHOLDER",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.title_h1_duplication",
+      "constant": "RULE_TITLE_H1_MATCH",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.trust.legal_links",
+      "constant": "RULE_LEGAL_LINKS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.status_error",
+      "constant": "RULE_HTTP_STATUS",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.redirect_chain",
+      "constant": "RULE_REDIRECT_CHAIN",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.http.exchange_duration",
+      "constant": "RULE_EXCHANGE_DURATION",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.http.payload_size",
+      "constant": "RULE_PAYLOAD_SIZE",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.http.compression",
+      "constant": "RULE_COMPRESSION",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.http.cache_headers",
+      "constant": "RULE_CACHE_HEADERS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.browser.core_web_vitals",
+      "constant": "RULE_CORE_WEB_VITALS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.transport.https",
+      "constant": "RULE_HTTPS",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.tls.certificate_expiry",
+      "constant": "RULE_TLS_EXPIRY",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.hsts",
+      "constant": "RULE_HSTS",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.csp",
+      "constant": "RULE_CSP",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.x_content_type_options",
+      "constant": "RULE_XCTO",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.x_frame_options",
+      "constant": "RULE_XFO",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.referrer_policy",
+      "constant": "RULE_REFERRER",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.doc.duplicate_ids",
+      "constant": "RULE_DUPLICATE_IDS",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.headings.hierarchy",
+      "constant": "RULE_HEADING_HIERARCHY",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.landmarks.presence",
+      "constant": "RULE_LANDMARKS",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.interactive.native_semantics",
+      "constant": "RULE_INTERACTIVE_SEMANTICS",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.doc.container_ratio",
+      "constant": "RULE_CONTAINER_RATIO",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.meta.title",
+      "constant": "RULE_TITLE",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.meta.description",
+      "constant": "RULE_DESCRIPTION",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.meta.canonical",
+      "constant": "RULE_CANONICAL",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.indexability.robots",
+      "constant": "RULE_ROBOTS",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.meta.h1",
+      "constant": "RULE_H1",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.i18n.hreflang",
+      "constant": "RULE_HREFLANG",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.schema.json_ld",
+      "constant": "RULE_JSON_LD",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.social.metadata",
+      "constant": "RULE_SOCIAL",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.url.hygiene",
+      "constant": "RULE_URL_HYGIENE",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.layout.horizontal_overflow",
+      "constant": "RULE_HORIZONTAL_OVERFLOW",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.assets.broken_images",
+      "constant": "RULE_BROKEN_IMAGES",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    }
+  ]
+}

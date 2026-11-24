@@ -1,0 +1,3614 @@
+{
+  "upstream_commit": "640f9b36afc467f83ab9ebf5890bf4ac8ae6bdaf",
+  "total_mapped": 360,
+  "summary_by_state": {
+    "already_implemented": 15,
+    "cloud_only_or_unavailable": 14,
+    "equivalent_capability": 1,
+    "existing_instrument_integration_preferred": 61,
+    "native_port_required": 267,
+    "partially_implemented": 2
+  },
+  "mappings": [
+    {
+      "upstream_rule_id": "a11y/accesskeys",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/accesskeys.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-allowed-attr",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-allowed-attr.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-command-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-command-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-deprecated-role",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-deprecated-role.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-dialog-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-dialog-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-hidden-body",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-hidden-body.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-hidden-focus",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-hidden-focus.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-input-field-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-input-field-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-labels",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-labels.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-meter-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-meter-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-progressbar-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-progressbar-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-required-attr",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-required-attr.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-required-children",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-required-children.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-required-parent",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-required-parent.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-roles",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-roles.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-text",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-text.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-toggle-field-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-toggle-field-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-tooltip-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-tooltip-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-treeitem-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-treeitem-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-valid-attr-value",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-valid-attr-value.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/aria-valid-attr",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/aria-valid-attr.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/autocomplete-tokens",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/autocomplete-tokens.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/button-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/button-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/color-contrast",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/color-contrast.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/definition-list",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/definition-list.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/dlitem",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/dlitem.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/duplicate-id-active",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/duplicate-id-active.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/duplicate-id-aria",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/duplicate-id-aria.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/empty-heading",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/empty-heading.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/focus-visible",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/focus-visible.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/form-field-multiple-labels",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/form-field-multiple-labels.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/form-labels",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/form-labels.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.forms.labels",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/frame-title",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/frame-title.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/heading-order",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/heading-order.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/html-lang-valid",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/html-lang-valid.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/html-xml-lang-mismatch",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/html-xml-lang-mismatch.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/identical-links-same-purpose",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/identical-links-same-purpose.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/image-redundant-alt",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/image-redundant-alt.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/input-image-alt",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/input-image-alt.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/input-types",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/input-types.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/label-content-name-mismatch",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/label-content-name-mismatch.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/landmark-one-main",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/landmark-one-main.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/landmark-regions",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/landmark-regions.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "sem.dom.landmarks",
+      "mapping_state": "partially_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/link-in-text-block",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/link-in-text-block.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/link-text",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/link-text.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/list-structure",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/list-structure.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/listitem",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/listitem.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/meta-refresh",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/meta-refresh.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/object-alt",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/object-alt.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/paste-inputs",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/paste-inputs.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/reduced-motion",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/reduced-motion.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/select-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/select-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/skip-link",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/skip-link.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/svg-img-alt",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/svg-img-alt.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/tabindex",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/tabindex.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/table-duplicate-name",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/table-duplicate-name.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/table-headers",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/table-headers.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/td-headers-attr",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/td-headers-attr.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/th-has-data-cells",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/th-has-data-cells.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/touch-targets",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/touch-targets.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/valid-lang",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/valid-lang.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/video-captions",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/video-captions.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "a11y/zoom-disabled",
+      "upstream_category": "a11y",
+      "upstream_source": "packages/rules/src/a11y/zoom-disabled.ts",
+      "target_dwarf": "Zug\u00e4nglichkeitsZwerg",
+      "canonical_nzw_rule_id": "a11y.rendered.axe",
+      "mapping_state": "existing_instrument_integration_preferred",
+      "strategy": "Cover via bounded axe-core adapter or static accessibility checks where appropriate.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "adblock/blocked-links",
+      "upstream_category": "blocking",
+      "upstream_source": "packages/rules/src/adblock/blocked-links.ts",
+      "target_dwarf": "BrowserZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "adblock/element-hiding",
+      "upstream_category": "blocking",
+      "upstream_source": "packages/rules/src/adblock/element-hiding.ts",
+      "target_dwarf": "BrowserZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "adblock/privacy-blocked",
+      "upstream_category": "blocking",
+      "upstream_source": "packages/rules/src/adblock/privacy-blocked.ts",
+      "target_dwarf": "BrowserZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ai/ai-content",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ai/ai-content.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ai/llm-parsability",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ai/llm-parsability.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ai/page-type-match",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ai/page-type-match.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ai/site-metadata",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ai/site-metadata.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "analytics/consent-mode",
+      "upstream_category": "analytics",
+      "upstream_source": "packages/rules/src/analytics/consent-mode.ts",
+      "target_dwarf": "BrowserZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "analytics/duplicate-tags",
+      "upstream_category": "analytics",
+      "upstream_source": "packages/rules/src/analytics/duplicate-tags.ts",
+      "target_dwarf": "BrowserZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "analytics/gtm-present",
+      "upstream_category": "analytics",
+      "upstream_source": "packages/rules/src/analytics/gtm-present.ts",
+      "target_dwarf": "BrowserZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/agent-blocking",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/agent-blocking.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/agents-md",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/agents-md.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/ai-crawlers",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/ai-crawlers.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/answer-blocks",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/answer-blocks.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/api-discovery",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/api-discovery.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/archive-indexing",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/archive-indexing.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/commerce-readiness",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/commerce-readiness.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/content-signals",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/content-signals.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/content-without-js",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/content-without-js.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/llms-txt",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/llms-txt.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/markdown-response",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/markdown-response.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/noai-signals",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/noai-signals.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/pay-per-crawl",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/pay-per-crawl.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/rsl-license",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/rsl-license.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/token-weight",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/token-weight.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/webmcp",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/webmcp.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "ax/well-known-agent",
+      "upstream_category": "ax",
+      "upstream_source": "packages/rules/src/ax/well-known-agent.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/article-links",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/article-links.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/author-info",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/author-info.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/broken-html",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/broken-html.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/color-sprawl",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/color-sprawl.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/common-misspellings",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/common-misspellings.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/conversion-path",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/conversion-path.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/date-agreement",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/date-agreement.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/dev-leakage",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/dev-leakage.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/duplicate-content",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/duplicate-content.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/duplicate-description",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/duplicate-description.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/duplicate-title",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/duplicate-title.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/font-consistency",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/font-consistency.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/freshness",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/freshness.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/h1-title-alignment",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/h1-title-alignment.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/heading-hierarchy",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/heading-hierarchy.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/hidden-text",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/hidden-text.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/keyword-stuffing",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/keyword-stuffing.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/meta-in-body",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/meta-in-body.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/mime-type",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/mime-type.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/mojibake",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/mojibake.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/near-duplicate",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/near-duplicate.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/placeholder-contact",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/placeholder-contact.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/placeholder-media",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/placeholder-media.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/placeholder-text",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/placeholder-text.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/quality",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/quality.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/reading-level",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/reading-level.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/stale-copyright",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/stale-copyright.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/stale-dated-copy",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/stale-dated-copy.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/terminology-consistency",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/terminology-consistency.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/thin-vs-site-norm",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/thin-vs-site-norm.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/title-pattern-outlier",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/title-pattern-outlier.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/truncation-artifacts",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/truncation-artifacts.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/typography",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/typography.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/unrendered-markup",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/unrendered-markup.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/voice-consistency",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/voice-consistency.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "content/word-count",
+      "upstream_category": "content",
+      "upstream_source": "packages/rules/src/content/word-count.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": "content.text.thin",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/canonical-form-drift",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/canonical-form-drift.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/canonical-header",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/canonical-header.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/canonical",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/canonical.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": "seo.meta.canonical",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/charset",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/charset.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/doctype",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/doctype.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/favicon",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/favicon.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/h1",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/h1.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/meta-description",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/meta-description.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": "seo.meta.description",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/meta-title",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/meta-title.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": "seo.meta.title",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/nosnippet",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/nosnippet.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/og-tags",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/og-tags.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/robots-meta",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/robots-meta.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": "seo.meta.robots",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/title-unique",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/title-unique.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "core/twitter-cards",
+      "upstream_category": "core",
+      "upstream_source": "packages/rules/src/core/twitter-cards.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/all-noindex-pages",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/all-noindex-pages.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/canonical-chain",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/canonical-chain.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/conflicting-index-signals",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/conflicting-index-signals.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/custom-404",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/custom-404.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/home-page-unreachable",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/home-page-unreachable.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/html-size",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/html-size.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/indexability-conflicts",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/indexability-conflicts.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/indexability",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/indexability.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/indexable-search-results",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/indexable-search-results.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/noindex-in-sitemap",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/noindex-in-sitemap.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/pagination",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/pagination.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/pdf-size",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/pdf-size.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/redirect-chain",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/redirect-chain.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/rendered-signal-mismatch",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/rendered-signal-mismatch.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/robots-meta-conflict",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/robots-meta-conflict.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/robots-txt",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/robots-txt.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/schema-noindex-conflict",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/schema-noindex-conflict.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/server-errors",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/server-errors.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/single-page-site",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/single-page-site.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/sitemap-4xx",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/sitemap-4xx.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/sitemap-coverage",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/sitemap-coverage.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/sitemap-domain",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/sitemap-domain.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/sitemap-exists",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/sitemap-exists.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/sitemap-lastmod-churn",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/sitemap-lastmod-churn.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/sitemap-lastmod-drift",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/sitemap-lastmod-drift.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/sitemap-valid",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/sitemap-valid.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "crawl/soft-404",
+      "upstream_category": "crawl",
+      "upstream_source": "packages/rules/src/crawl/soft-404.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/about-page",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/about-page.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/affiliate-disclosure",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/affiliate-disclosure.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/author-byline",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/author-byline.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/author-expertise",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/author-expertise.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/authority-signals",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/authority-signals.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/citations",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/citations.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/contact-page",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/contact-page.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/content-dates",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/content-dates.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/disclaimers",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/disclaimers.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/editorial-policy",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/editorial-policy.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/physical-address",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/physical-address.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/privacy-policy",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/privacy-policy.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/terms-of-service",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/terms-of-service.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/trust-signals",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/trust-signals.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "eeat/ymyl-detection",
+      "upstream_category": "eeat",
+      "upstream_source": "packages/rules/src/eeat/ymyl-detection.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "gaps/content",
+      "upstream_category": "gaps",
+      "upstream_source": "packages/rules/src/gaps/content.ts",
+      "target_dwarf": "KommandantZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "gaps/keywords",
+      "upstream_category": "gaps",
+      "upstream_source": "packages/rules/src/gaps/keywords.ts",
+      "target_dwarf": "KommandantZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "i18n/hreflang-targets",
+      "upstream_category": "i18n",
+      "upstream_source": "packages/rules/src/i18n/hreflang-targets.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "i18n/hreflang",
+      "upstream_category": "i18n",
+      "upstream_source": "packages/rules/src/i18n/hreflang.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "i18n/lang-attribute",
+      "upstream_category": "i18n",
+      "upstream_source": "packages/rules/src/i18n/lang-attribute.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "i18n/locale-mixing",
+      "upstream_category": "i18n",
+      "upstream_source": "packages/rules/src/i18n/locale-mixing.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/alt-text",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/alt-text.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/aspect-mismatch",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/aspect-mismatch.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/broken-images",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/broken-images.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/dimensions",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/dimensions.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/figure-figcaption",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/figure-figcaption.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/filename-quality",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/filename-quality.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/hotlinked",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/hotlinked.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/image-file-size",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/image-file-size.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/lazy-loading",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/lazy-loading.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/modern-format",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/modern-format.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/offscreen-lazy",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/offscreen-lazy.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/optimized",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/optimized.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/picture-element",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/picture-element.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/responsive-size",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/responsive-size.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/srcset",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/srcset.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "images/svg-inline",
+      "upstream_category": "images",
+      "upstream_source": "packages/rules/src/images/svg-inline.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/brand-impersonation",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/brand-impersonation.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/chrome-outlier",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/chrome-outlier.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/cloaking",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/cloaking.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/fake-auth-overlay",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/fake-auth-overlay.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/kit-signature",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/kit-signature.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/known-malicious-url",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/known-malicious-url.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/obfuscated-script",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/obfuscated-script.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/orphan-page",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/orphan-page.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/seo-doorway",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/seo-doorway.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "integrity/template-discontinuity",
+      "upstream_category": "integrity",
+      "upstream_source": "packages/rules/src/integrity/template-discontinuity.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "legal/cookie-consent",
+      "upstream_category": "legal",
+      "upstream_source": "packages/rules/src/legal/cookie-consent.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "legal/privacy-policy",
+      "upstream_category": "legal",
+      "upstream_source": "packages/rules/src/legal/privacy-policy.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "legal/subprocessor-disclosure",
+      "upstream_category": "legal",
+      "upstream_source": "packages/rules/src/legal/subprocessor-disclosure.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "legal/terms-of-service",
+      "upstream_category": "legal",
+      "upstream_source": "packages/rules/src/legal/terms-of-service.ts",
+      "target_dwarf": "InhaltsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/anchor-mismatch",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/anchor-mismatch.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/anchor-target-conflict",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/anchor-target-conflict.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/anchor-text",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/anchor-text.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/broken-anchors",
+      "upstream_category": "reliability",
+      "upstream_source": "packages/rules/src/links/broken-anchors.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/broken-external-links",
+      "upstream_category": "reliability",
+      "upstream_source": "packages/rules/src/links/broken-external-links.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/broken-links",
+      "upstream_category": "reliability",
+      "upstream_source": "packages/rules/src/links/broken-links.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": "net.http.status",
+      "mapping_state": "partially_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/click-depth",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/click-depth.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/dead-end-pages",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/dead-end-pages.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/dead-links",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/dead-links.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/external-links",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/external-links.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/generic-anchor-density",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/generic-anchor-density.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/https-downgrade",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/https-downgrade.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/internal-links",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/internal-links.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/invalid-links",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/invalid-links.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/nav-set-divergence",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/nav-set-divergence.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/no-contextual-inbound",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/no-contextual-inbound.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/nofollow-internal",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/nofollow-internal.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/orphan-pages",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/orphan-pages.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/redirect-chains",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/redirect-chains.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/tel-mailto",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/tel-mailto.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "links/weak-internal-links",
+      "upstream_category": "links",
+      "upstream_source": "packages/rules/src/links/weak-internal-links.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "local/geo-meta",
+      "upstream_category": "local",
+      "upstream_source": "packages/rules/src/local/geo-meta.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "local/nap-consistency",
+      "upstream_category": "local",
+      "upstream_source": "packages/rules/src/local/nap-consistency.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "local/service-area",
+      "upstream_category": "local",
+      "upstream_source": "packages/rules/src/local/service-area.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/font-size",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/font-size.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/horizontal-scroll",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/horizontal-scroll.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": "visual.layout.horizontal_overflow",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/input-zoom",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/input-zoom.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/interstitials",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/interstitials.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/tap-targets",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/tap-targets.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/viewport-zoom",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/viewport-zoom.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/viewport",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/viewport.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "mobile/web-app-manifest",
+      "upstream_category": "mobile",
+      "upstream_source": "packages/rules/src/mobile/web-app-manifest.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/animated-content",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/animated-content.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/asset-compression",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/asset-compression.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/bad-caching",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/bad-caching.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/browser-required",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/browser-required.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/cache-headers",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/cache-headers.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": "perf.http.cache_headers",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/carousel-hidden-eager",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/carousel-hidden-eager.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/cls-hints",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/cls-hints.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/compression",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/compression.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": "perf.http.compression",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/content-in-js-bundle",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/content-in-js-bundle.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/critical-request-chains",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/critical-request-chains.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/css-file-size",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/css-file-size.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/dom-size",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/dom-size.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/duplicate-js",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/duplicate-js.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/font-delivery",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/font-delivery.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/font-loading",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/font-loading.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/framework-data-payload",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/framework-data-payload.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/http2",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/http2.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/inp-hints",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/inp-hints.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/js-file-size",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/js-file-size.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/js-libraries",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/js-libraries.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/js-redirects",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/js-redirects.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/lazy-above-fold",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/lazy-above-fold.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/lcp-fetchpriority",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/lcp-fetchpriority.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/lcp-hints",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/lcp-hints.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/legacy-js",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/legacy-js.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/preconnect",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/preconnect.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/render-blocking",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/render-blocking.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/source-maps",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/source-maps.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/total-byte-weight",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/total-byte-weight.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/ttfb",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/ttfb.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": "perf.http.exchange_duration",
+      "mapping_state": "equivalent_capability",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/unminified-css",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/unminified-css.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "perf/unminified-js",
+      "upstream_category": "perf",
+      "upstream_source": "packages/rules/src/performance/unminified-js.ts",
+      "target_dwarf": "LeistungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "reliability/broken-forms",
+      "upstream_category": "reliability",
+      "upstream_source": "packages/rules/src/reliability/broken-forms.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "reliability/broken-resources",
+      "upstream_category": "reliability",
+      "upstream_source": "packages/rules/src/reliability/broken-resources.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "reliability/js-errors",
+      "upstream_category": "reliability",
+      "upstream_source": "packages/rules/src/reliability/js-errors.ts",
+      "target_dwarf": "NetzZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "cloud_only_or_unavailable",
+      "strategy": "Exclude cloud-only service; evaluate local deterministic alternative if applicable.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/article",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/article.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/breadcrumb",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/breadcrumb.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/coverage-outlier",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/coverage-outlier.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-authors",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-authors.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-conflicts",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-conflicts.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-dangling",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-dangling.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-id-format",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-id-format.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-identity",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-identity.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-local-business-per-page",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-local-business-per-page.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-organization-missing",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-organization-missing.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-orphan",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-orphan.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-publisher-mismatch",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-publisher-mismatch.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-sameas-missing",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-sameas-missing.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-split-identity",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-split-identity.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-type-drift",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-type-drift.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/entity-website-missing",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/entity-website-missing.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/expected-type",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/expected-type.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/faq",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/faq.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/json-ld-valid",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/json-ld-valid.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/local-business",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/local-business.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/organization",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/organization.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/product",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/product.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/rating-scope",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/rating-scope.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/review",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/review.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/video",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/video.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "schema/website-search",
+      "upstream_category": "schema",
+      "upstream_source": "packages/rules/src/schema/website-search.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/auth-endpoint-disclosure",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/auth-endpoint-disclosure.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/client-side-authz",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/client-side-authz.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/cookie-flags",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/cookie-flags.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/csp-blocks-own-resources",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/csp-blocks-own-resources.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/csp-violations",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/csp-violations.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/csp",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/csp.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": "sec.headers.csp",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/exposed-actuator",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/exposed-actuator.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/exposed-files",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/exposed-files.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/form-captcha",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/form-captcha.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/form-https",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/form-https.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/graphql-get-mutations",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/graphql-get-mutations.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/graphql-introspection",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/graphql-introspection.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/hsts",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/hsts.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": "sec.headers.hsts",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/http-to-https",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/http-to-https.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/https",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/https.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": "sec.transport.https",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/leaked-secrets",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/leaked-secrets.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/mixed-content",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/mixed-content.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/new-tab",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/new-tab.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/open-redirect",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/open-redirect.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/password-form-get",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/password-form-get.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/permissions-policy",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/permissions-policy.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/referrer-policy",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/referrer-policy.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": "sec.headers.referrer_policy",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/security-txt",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/security-txt.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/sri",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/sri.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/supabase-rls",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/supabase-rls.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/third-party-cookies",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/third-party-cookies.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/tls-certificate",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/tls-certificate.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/token-storage",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/token-storage.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/version-disclosure",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/version-disclosure.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/x-content-type",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/x-content-type.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": "sec.headers.xcto",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "security/x-frame-options",
+      "upstream_category": "security",
+      "upstream_source": "packages/rules/src/security/x-frame-options.ts",
+      "target_dwarf": "SicherheitsZwerg",
+      "canonical_nzw_rule_id": "sec.headers.xfo",
+      "mapping_state": "already_implemented",
+      "strategy": "Retain/extend existing native NZW rule.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "social/asset-divergence",
+      "upstream_category": "social",
+      "upstream_source": "packages/rules/src/social/asset-divergence.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port deterministic check over Chromium CDP / Lighthouse observations.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "social/og-image-size",
+      "upstream_category": "social",
+      "upstream_source": "packages/rules/src/social/og-image-size.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "social/og-url-match",
+      "upstream_category": "social",
+      "upstream_source": "packages/rules/src/social/og-url-match.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "social/share-buttons",
+      "upstream_category": "social",
+      "upstream_source": "packages/rules/src/social/share-buttons.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "social/social-profiles",
+      "upstream_category": "social",
+      "upstream_source": "packages/rules/src/social/social-profiles.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/hyphens",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/hyphens.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/length",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/length.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/lowercase",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/lowercase.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/parameters",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/parameters.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/session-ids",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/session-ids.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/slug-convention",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/slug-convention.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/slug-keywords",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/slug-keywords.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/special-chars",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/special-chars.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/stop-words",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/stop-words.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "url/trailing-slash",
+      "upstream_category": "url",
+      "upstream_source": "packages/rules/src/url/trailing-slash.ts",
+      "target_dwarf": "SuchZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "video/video-accessible",
+      "upstream_category": "video",
+      "upstream_source": "packages/rules/src/video/video-accessible.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "video/video-schema",
+      "upstream_category": "video",
+      "upstream_source": "packages/rules/src/video/video-schema.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    },
+    {
+      "upstream_rule_id": "video/video-thumbnail",
+      "upstream_category": "video",
+      "upstream_source": "packages/rules/src/video/video-thumbnail.ts",
+      "target_dwarf": "GestaltungsZwerg",
+      "canonical_nzw_rule_id": null,
+      "mapping_state": "native_port_required",
+      "strategy": "Port into idiomatic Rust over shared DocumentObservations / HttpEvidence.",
+      "licence": "MIT"
+    }
+  ]
+}
