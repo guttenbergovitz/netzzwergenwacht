@@ -155,3 +155,6 @@ output/
 
 # Rust build artifacts
 /target/
+
+# Agent working specs and scratchpads
+.specs/

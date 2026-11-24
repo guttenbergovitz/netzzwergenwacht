@@ -2,9 +2,12 @@
 name = "netzzwergenwacht"
 version = "0.2.0-alpha.0"
 edition = "2024"
-description = "Evidence-driven external web quality and reliability auditing engine"
+rust-version = "1.88"
+description = "Evidence-driven external web quality and reliability auditing engine with optional AI-assisted analysis."
 license = "MIT"
 repository = "https://github.com/guttenbergovitz/netzzwergenwacht"
+readme = "README.md"
+publish = false
 
 [[bin]]
 name = "nzw"
@@ -12,7 +15,14 @@ path = "src/main.rs"
 
 [lints.rust]
 unsafe_code = "forbid"
+missing_docs = "warn"
 
 [lints.clippy]
-all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+clone_on_ref_ptr = "deny"

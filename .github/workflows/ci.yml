@@ -2,9 +2,9 @@ name: Rust CI
 
 on:
   push:
-    branches: [rewrite/rust, main]
+    branches: [rewrite/rust, develop, main]
   pull_request:
-    branches: [rewrite/rust, main]
+    branches: [rewrite/rust, develop, main]
 
 env:
   CARGO_TERM_COLOR: always
@@ -21,6 +21,10 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Run Clippy
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build documentation
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --no-deps --locked
       - name: Run tests
-        run: cargo test --all-targets
+        run: cargo test --all-targets --locked

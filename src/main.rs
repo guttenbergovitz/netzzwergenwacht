@@ -1,3 +1,5 @@
+//! `NetzZwergenWacht` CLI entry point.
+
 use std::process::ExitCode;
 
 use netzzwergenwacht::domain::AuditTarget;
