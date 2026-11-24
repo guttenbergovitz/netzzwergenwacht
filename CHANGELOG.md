@@ -4,10 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `rewrite/rust`
 
-### Phase 2: Level 2 Analysers & Lighthouse Subprocess Adapter (2026-11-24)
+### Phase 2: Level 2 Analysers & Subprocess Adapters (2026-11-24)
 - Added ADR 0003 (`docs/adr/0003-browser-and-external-tool-adapters.md`) for bounded subprocess adapters and opt-in Level 2 collection.
 - Added `EvidenceSnapshot` Level 2 fields (`browser`, `lighthouse`, `axe`) with `#[serde(default)]` backward compatibility.
-- Added bounded Lighthouse subprocess adapter (`src/adapters/lighthouse.rs`) with `tokio::time::timeout` + `kill_on_drop(true)` and opt-in `nzw check --lighthouse` CLI flag.
+- Added bounded Lighthouse, headless Chromium CDP, and `axe-core` subprocess adapters (`src/adapters/`) with opt-in `nzw check --lighthouse`, `--browser`, and `--axe` CLI flags.
 - Implemented `BrowserZwerg` (`analysis::browser`) and `GestaltungsZwerg` (`analysis::visual`), plus Level 2 Core Web Vitals in `LeistungsZwerg` and `axe-core` evaluation in `ZugänglichkeitsZwerg`.
 
 ### Phase 3: Persistence & Regression Analysis (2026-11-24)

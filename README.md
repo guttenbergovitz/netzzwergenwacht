@@ -9,7 +9,7 @@
 
 NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on the `rewrite/rust` branch. The original Python prototype is preserved on `main` and in [`legacy/`](legacy/README.md) as a frozen historical reference.
 
-## Current Status (`Phase 1 + Phase 3 Complete; Phase 2 In Progress`)
+## Current Status (`Phase 1–3 Complete`)
 
 - **Implemented**:
   - Validated `AuditTarget` with SSRF/IP guardrails (`TargetPolicy::PublicOnly` / `AllowPrivate`) and deserialisation validation.
@@ -26,10 +26,10 @@ NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on the `rewrite
     - **InhaltsZwerg** (`analysis::content`): word count, text-to-HTML ratio, reading ease.
     - **BrowserZwerg** (`analysis::browser`): Level 2 console errors and failed subresource requests.
     - **GestaltungsZwerg** (`analysis::visual`): Level 2 viewport horizontal overflow and broken rendered images.
-  - Bounded Lighthouse subprocess adapter (`src/adapters/lighthouse.rs`, opt-in via `nzw check --lighthouse`).
+  - Bounded Level 2 subprocess adapters (`src/adapters/`: Lighthouse `--lighthouse`, headless Chromium CDP `--browser`, `axe-core` `--axe`).
   - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`) with plain-text and versioned JSON output, TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
-- **Planned (Phase 2 remaining + Phase 4+)**:
-  - Headless Chromium runtime & `axe-core` subprocess collectors, and optional `KommandantZwerg` (`rig-core`) AI synthesis.
+- **Planned (Phase 4+)**:
+  - Optional `KommandantZwerg` (`rig-core`) AI synthesis and Phase 5 production hardening.
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 
