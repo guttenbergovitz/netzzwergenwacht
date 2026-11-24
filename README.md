@@ -9,23 +9,27 @@
 
 NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on the `rewrite/rust` branch. The original Python prototype is preserved on `main` and in [`legacy/`](legacy/README.md) as a frozen historical reference.
 
-## Current Status (`Phase 1 — Minimal Deterministic Core`)
+## Current Status (`Phase 1 + Phase 3 Complete; Phase 2 In Progress`)
 
 - **Implemented**:
   - Validated `AuditTarget` with SSRF/IP guardrails (`TargetPolicy::PublicOnly` / `AllowPrivate`) and deserialisation validation.
-  - Bounded HTTP collector (`reqwest` + `rustls`, `.no_proxy()`, DNS pinning, redirect hop validation, end-to-end `audit_timeout`, streaming `max_response_bytes`).
+  - Bounded HTTP + `rustls` TLS collector (`reqwest`, `.no_proxy()`, DNS pinning, redirect hop validation, end-to-end `audit_timeout`, streaming `max_response_bytes`, `x509-parser` certificate metadata).
   - Central **Die Zwergenbrigade** registry (`src/brigade.rs`) and 3-level evidence capability model (`Source`, `Rendered`, `Behavioural`).
   - Shared single-parse HTML5 `DocumentObservations` (`analysis::document`) with truncated-body guardrails.
-  - Six Phase 1 deterministic analysers:
+  - Nine deterministic analysers:
     - **NetzZwerg** (`analysis::network`): HTTP status & redirect chain reliability.
-    - **SicherheitsZwerg** (`analysis::security`): HTTPS, HSTS (`max-age > 0`), CSP, `X-Content-Type-Options`, `X-Frame-Options` / `frame-ancestors`, `Referrer-Policy`.
-    - **LeistungsZwerg** (`analysis::performance`): HTTP exchange duration, payload size, compression, cache headers.
+    - **SicherheitsZwerg** (`analysis::security`): HTTPS, TLS certificate expiry, HSTS (`max-age > 0`), CSP, `X-Content-Type-Options`, `X-Frame-Options` / `frame-ancestors`, `Referrer-Policy`.
+    - **LeistungsZwerg** (`analysis::performance`): HTTP exchange duration, payload size, compression, cache headers, and Level 2 Core Web Vitals via `--lighthouse`.
     - **StrukturZwerg** (`analysis::semantics`): duplicate IDs, heading hierarchy, landmarks, native interactive semantics.
-    - **ZugänglichkeitsZwerg** (`analysis::accessibility`): source-level `<html lang>`, `img[alt]`, form labels, broken ARIA refs, accessible names (explicitly marks Level 2/3 checks unavailable).
+    - **ZugänglichkeitsZwerg** (`analysis::accessibility`): source-level `<html lang>`, `img[alt]`, form labels, broken ARIA refs, accessible names, and Level 2 `axe-core` evaluation (explicitly marks Level 3 checks unavailable).
     - **SuchZwerg** (`analysis::seo`): `<title>`, meta description, canonical URL, `robots` / `X-Robots-Tag` `noindex`.
-  - **DokumentationsZwerg** CLI (`nzw check` / `nzw validate`) with plain-text and versioned JSON output (`0.2.0`) and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
-- **Planned (Phase 1+ / Phase 2+)**:
-  - TLS certificate inspection, `InhaltsZwerg`, `BrowserZwerg` (Chromium), Lighthouse & axe-core adapters, `GestaltungsZwerg`, JSONL persistence, and optional `KommandantZwerg` (`rig-core`) AI synthesis.
+    - **InhaltsZwerg** (`analysis::content`): word count, text-to-HTML ratio, reading ease.
+    - **BrowserZwerg** (`analysis::browser`): Level 2 console errors and failed subresource requests.
+    - **GestaltungsZwerg** (`analysis::visual`): Level 2 viewport horizontal overflow and broken rendered images.
+  - Bounded Lighthouse subprocess adapter (`src/adapters/lighthouse.rs`, opt-in via `nzw check --lighthouse`).
+  - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`) with plain-text and versioned JSON output, TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
+- **Planned (Phase 2 remaining + Phase 4+)**:
+  - Headless Chromium runtime & `axe-core` subprocess collectors, and optional `KommandantZwerg` (`rig-core`) AI synthesis.
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 

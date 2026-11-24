@@ -19,12 +19,12 @@ NetzZwergenWacht is being rewritten in Rust on `rewrite/rust` using incremental 
 - [x] Add `rustls` TLS peer certificate metadata extraction (`x509-parser`) to `CollectionEngine` and `SicherheitsZwerg`
 - [x] Add `schemars` JSON schema generation and contract tests (`tests/schema_contract.rs`)
 
-## Phase 2: Browser and Analysis Capabilities
-- [ ] Evaluate and integrate controlled headless Chromium automation (`BrowserZwerg`)
-- [ ] Implement Lighthouse adapter (`LeistungsZwerg` Level 2 metrics) with version provenance
-- [ ] Implement axe-core adapter (`ZugänglichkeitsZwerg` Level 2 rendered DOM checks) with version provenance
-- [ ] Implement `GestaltungsZwerg` (viewport overflow, broken images, responsive screenshots)
-- [ ] Validate all analysers against controlled offline HTML/DOM fixtures
+## Phase 2: Browser and Analysis Capabilities *(In Progress)*
+- [ ] Evaluate and integrate controlled headless Chromium subprocess collector (`BrowserEvidence`)
+- [x] Implement Lighthouse subprocess adapter (`LeistungsZwerg` Level 2 metrics, `--lighthouse`) with version provenance
+- [x] Implement `ZugänglichkeitsZwerg` Level 2 `axe-core` evaluation (`AxeEvidence` contract)
+- [x] Implement `BrowserZwerg` (`analysis::browser`) and `GestaltungsZwerg` (`analysis::visual`) deterministic Level 2 analysers
+- [x] Validate all Level 2 analysers against controlled offline JSON/struct fixtures
 
 ## Phase 3: Persistence and Regression Analysis *(Completed)*
 - [x] Persist `AuditReport` entries as JSONL (`src/persistence.rs`, `nzw check --history`)

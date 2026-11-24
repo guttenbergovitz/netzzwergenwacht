@@ -17,10 +17,12 @@ The **Analysis Engine** runs independent, deterministic analysers (**Die Zwergen
 |---|---|---|
 | `analysis::network` | **NetzZwerg** | HTTP status errors (`4xx`/`5xx`), redirect chain length |
 | `analysis::security` | **SicherheitsZwerg** | HTTPS usage, HSTS (`max-age > 0`), CSP (`unsafe-inline`/`unsafe-eval`), `X-Content-Type-Options`, `X-Frame-Options` / `frame-ancestors`, `Referrer-Policy` |
-| `analysis::performance` | **LeistungsZwerg** | HTTP exchange duration, payload size, compression, cache headers; marks Core Web Vitals `Unavailable` |
+| `analysis::performance` | **LeistungsZwerg** | HTTP exchange duration, payload size, compression, cache headers; Level 2 Core Web Vitals (`LCP`, `CLS`) from `LighthouseMetrics` (or `Unavailable` when uncollected) |
 | `analysis::semantics` | **StrukturZwerg** | Duplicate IDs, heading hierarchy, landmarks, native interactive semantics, context-aware container ratio |
-| `analysis::accessibility` | **ZugänglichkeitsZwerg** | `<html lang>`, `img[alt]`, form labels, broken ARIA ID refs, accessible names; marks Rendered/Behavioural `Unavailable` |
+| `analysis::accessibility` | **ZugänglichkeitsZwerg** | `<html lang>`, `img[alt]`, form labels, broken ARIA ID refs, accessible names, Level 2 `axe-core` violations; marks Behavioural `Unavailable` |
 | `analysis::seo` | **SuchZwerg** | `<title>`, meta description, canonical URL, `robots` / `X-Robots-Tag` `noindex` |
-| *(Phase 2)* | **BrowserZwerg** | Explicitly emits `CheckStatus::Skipped` until Level 2 browser collection is implemented |
+| `analysis::content` | **InhaltsZwerg** | Word count, text-to-HTML ratio, reading ease |
+| `analysis::browser` | **BrowserZwerg** | Console error events and failed subresource requests over `BrowserEvidence` (or `Skipped` when uncollected) |
+| `analysis::visual` | **GestaltungsZwerg** | Per-viewport horizontal overflow and broken rendered images (`naturalWidth == 0`) over `BrowserEvidence` (or `Skipped` when uncollected) |
 
 Note: Automated accessibility checks in `ZugänglichkeitsZwerg` report machine-verifiable issues only and never claim full WCAG or EU Accessibility Act legal compliance.

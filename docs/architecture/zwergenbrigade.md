@@ -10,13 +10,13 @@ NetzZwergenWacht combines evidence-first auditing with a personified German-name
 |---|---|---|---|---|---|---|
 | **NetzZwerg** | `netz` | `analysis::network` | Deterministic Analyser | HTTP, DNS, connectivity, redirects, and endpoint reliability | `Source` | Implemented |
 | **SicherheitsZwerg** | `sicherheits` | `analysis::security` | Deterministic Analyser | TLS, security headers, cookies, and security posture | `Source` | Implemented |
-| **LeistungsZwerg** | `leistungs` | `analysis::performance` | Deterministic Analyser | Performance, latency, resource efficiency, and Core Web Vitals | `Source` | Implemented (HTTP) |
+| **LeistungsZwerg** | `leistungs` | `analysis::performance` | Deterministic Analyser | Performance, latency, resource efficiency, and Core Web Vitals | `Source` | Implemented (HTTP + Lighthouse) |
 | **StrukturZwerg** | `struktur` | `analysis::semantics` | Deterministic Analyser | Semantic HTML, document structure, and structural integrity | `Source` | Implemented |
-| **ZugänglichkeitsZwerg** | `zugaenglichkeits` | `analysis::accessibility` | Deterministic Analyser | Accessibility, WCAG, ARIA, and inclusive interaction | `Source` | Implemented (Source) |
+| **ZugänglichkeitsZwerg** | `zugaenglichkeits` | `analysis::accessibility` | Deterministic Analyser | Accessibility, WCAG, ARIA, and inclusive interaction | `Source` | Implemented (Source + axe-core) |
 | **SuchZwerg** | `such` | `analysis::seo` | Deterministic Analyser | SEO, metadata, indexability, and search visibility | `Source` | Implemented |
 | **InhaltsZwerg** | `inhalts` | `analysis::content` | Deterministic Analyser | Content quality, readability, and language | `Source` | Implemented |
-| **GestaltungsZwerg** | `gestaltungs` | — | Deterministic Analyser | Visual integrity, responsive layouts, and presentation | `Rendered` | Planned |
-| **BrowserZwerg** | `browser` | — | Deterministic Analyser | Browser runtime, JavaScript, console, and network failures | `Rendered` | Planned |
+| **GestaltungsZwerg** | `gestaltungs` | `analysis::visual` | Deterministic Analyser | Visual integrity, responsive layouts, and presentation | `Rendered` | Implemented |
+| **BrowserZwerg** | `browser` | `analysis::browser` | Deterministic Analyser | Browser runtime, JavaScript, console, and network failures | `Rendered` | Implemented |
 | **DokumentationsZwerg** | `dokumentations` | `main` (presentation) | Reporting | Report generation and evidence presentation | `Source` | Implemented |
 | **KommandantZwerg** | `kommandant` | — | Optional Intelligence | Optional AI-assisted correlation, interpretation, and diagnostic planning | `Source` | Planned |
 
