@@ -246,6 +246,9 @@ allow_private = true
             tls: CollectorOutcome::Skipped {
                 reason: "http".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
         let report = analysis::run_all(&snap);
 

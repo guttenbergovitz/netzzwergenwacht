@@ -566,6 +566,9 @@ mod tests {
                 },
             },
             tls,
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         }
     }
 

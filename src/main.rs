@@ -62,6 +62,9 @@ enum Command {
         /// Optional JSONL file path to append this audit report for history/regression tracking.
         #[arg(long)]
         history: Option<PathBuf>,
+        /// Run optional Level 2 Lighthouse subprocess adapter for Core Web Vitals.
+        #[arg(long)]
+        lighthouse: bool,
     },
     /// Run a bounded deterministic audit over a list of URLs (one per line, `#` comments allowed).
     Batch {
@@ -186,6 +189,7 @@ async fn main() -> ExitCode {
             max_redirects,
             fail_on,
             history,
+            lighthouse,
         } => {
             run_check(
                 &url,
@@ -197,6 +201,7 @@ async fn main() -> ExitCode {
                 max_redirects,
                 fail_on,
                 history.as_deref(),
+                lighthouse,
             )
             .await
         }
@@ -239,6 +244,7 @@ async fn run_check(
     max_redirects: Option<usize>,
     fail_on: Option<FailOnSeverity>,
     history: Option<&Path>,
+    lighthouse: bool,
 ) -> ExitCode {
     let app_cfg = match load_optional_config(config_path) {
         Ok(cfg) => cfg,
@@ -269,7 +275,12 @@ async fn run_check(
         budget.max_redirects = hops;
     }
 
-    let snapshot = collection::collect_http(&target, &budget, target_pol).await;
+    let mut snapshot = collection::collect_http(&target, &budget, target_pol).await;
+    if lighthouse {
+        snapshot.lighthouse =
+            netzzwergenwacht::adapters::lighthouse::run_lighthouse(&target, budget.audit_timeout)
+                .await;
+    }
     let report = analysis::run_all(&snapshot);
 
     if let Some(history_path) = history
@@ -686,6 +697,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
         let report = analysis::run_all(&snap);
         let eval = config::evaluate_policy(&report, &PolicyConfig::default());
@@ -719,6 +733,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
         let report = analysis::run_all(&snap);
         let eval = config::evaluate_policy(&report, &PolicyConfig::default());

@@ -222,6 +222,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "http".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
         analysis::run_all(&snap)
     }

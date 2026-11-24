@@ -84,11 +84,14 @@ fn audit_report_generates_valid_json_schema_and_roundtrips() {
                 days_until_expiry: 120,
             },
         },
+        browser: CollectorOutcome::default(),
+        lighthouse: CollectorOutcome::default(),
+        axe: CollectorOutcome::default(),
     };
 
     let report = analysis::run_all(&snapshot);
     assert_eq!(report.schema_version, REPORT_SCHEMA_VERSION);
-    assert_eq!(report.analysers.len(), 8);
+    assert_eq!(report.analysers.len(), 9);
 
     let json = serde_json::to_string(&report).unwrap();
     let decoded: AuditReport = serde_json::from_str(&json).unwrap();

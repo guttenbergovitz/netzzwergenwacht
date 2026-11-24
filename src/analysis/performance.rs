@@ -7,9 +7,9 @@
 use crate::analysis::{header_value, require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
-    AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot,
-    EvidenceSource, Finding, FindingCategory, FindingFingerprint, FindingKind, HttpEvidence,
-    Measurement, RuleId, Severity,
+    AnalyserResult, CheckStatus, CollectorOutcome, Confidence, EvidenceLevel, EvidenceRef,
+    EvidenceSnapshot, EvidenceSource, Finding, FindingCategory, FindingFingerprint, FindingKind,
+    HttpEvidence, LighthouseMetrics, Measurement, RuleId, Severity,
 };
 
 const RULE_EXCHANGE_DURATION: &str = "perf.http.exchange_duration";
@@ -82,7 +82,7 @@ pub fn analyse_with_thresholds(
     check_payload_size(http, thresholds, &mut findings, &mut checks);
     check_compression(http, &mut findings, &mut checks);
     check_cache_headers(http, &mut findings, &mut checks);
-    checks.push(cwv_unavailable_check());
+    check_core_web_vitals(&snapshot.lighthouse, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -96,6 +96,90 @@ fn cwv_unavailable_check() -> CheckStatus {
         rule_id: RuleId(RULE_CORE_WEB_VITALS.to_owned()),
         evidence_level: EvidenceLevel::Rendered,
         reason: "Core Web Vitals require Level 2 browser/Lighthouse evidence".to_owned(),
+    }
+}
+
+fn check_core_web_vitals(
+    lighthouse: &CollectorOutcome<LighthouseMetrics>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let metrics = match lighthouse {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
+        CollectorOutcome::Skipped { .. } | CollectorOutcome::Failed { .. } => {
+            checks.push(cwv_unavailable_check());
+            return;
+        }
+    };
+
+    let mut refs = Vec::new();
+    let mut worst_severity: Option<Severity> = None;
+
+    if let Measurement::Measured { value: lcp_ms, .. } = metrics.lcp_ms
+        && lcp_ms > 2_500
+    {
+        let sev = if lcp_ms > 4_000 {
+            Severity::High
+        } else {
+            Severity::Medium
+        };
+        worst_severity = Some(worst_severity.map_or(sev, |cur| cur.max(sev)));
+        refs.push(EvidenceRef::new(
+            EvidenceSource::LighthouseReport,
+            format!("LCP = {lcp_ms} ms (threshold 2500 ms)"),
+        ));
+    }
+
+    if let Measurement::Measured {
+        value: cls_milli, ..
+    } = metrics.cls_milli
+        && cls_milli > 100
+    {
+        let sev = if cls_milli > 250 {
+            Severity::High
+        } else {
+            Severity::Medium
+        };
+        worst_severity = Some(worst_severity.map_or(sev, |cur| cur.max(sev)));
+        refs.push(EvidenceRef::new(
+            EvidenceSource::LighthouseReport,
+            format!(
+                "CLS = {}.{:03} (threshold 0.100)",
+                cls_milli / 1_000,
+                cls_milli % 1_000
+            ),
+        ));
+    }
+
+    if let Some(severity) = worst_severity {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CORE_WEB_VITALS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity,
+            confidence: Confidence::High,
+            title: "Core Web Vitals exceed recommended thresholds".to_owned(),
+            summary: format!(
+                "Lighthouse ({}) reported Core Web Vitals outside the good threshold.",
+                metrics.lighthouse_version
+            ),
+            evidence_refs: refs,
+            remediation: Some(
+                "Optimise largest contentful element delivery, reserve layout dimensions, and reduce main-thread blocking."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CORE_WEB_VITALS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CORE_WEB_VITALS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
     }
 }
 
@@ -373,6 +457,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
 
         let result = analyse(&snap);
@@ -385,5 +472,66 @@ mod tests {
         assert!(result.checks.iter().any(|c| {
             matches!(c, CheckStatus::Unavailable { rule_id, .. } if rule_id.0 == RULE_CORE_WEB_VITALS)
         }));
+    }
+
+    #[test]
+    fn flags_slow_lcp_and_high_cls_from_lighthouse() {
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let snap = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "cache-control".to_owned(),
+                        value: "max-age=60".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 150,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 256,
+                    body_truncated: false,
+                    body_text: String::new(),
+                },
+            },
+            tls: CollectorOutcome::default(),
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::Captured {
+                data: LighthouseMetrics {
+                    lighthouse_version: "12.0.0".to_owned(),
+                    lcp_ms: Measurement::Measured {
+                        value: 4_200,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    cls_milli: Measurement::Measured {
+                        value: 180,
+                        unit: MeasurementUnit::Count,
+                    },
+                    fcp_ms: Measurement::Measured {
+                        value: 1_100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    tbt_ms: Measurement::Measured {
+                        value: 120,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    performance_score: Some(62),
+                },
+            },
+            axe: CollectorOutcome::default(),
+        };
+
+        let result = analyse(&snap);
+        let cwv_finding = result
+            .findings
+            .iter()
+            .find(|f| f.rule_id.0 == RULE_CORE_WEB_VITALS)
+            .unwrap();
+        assert_eq!(cwv_finding.severity, Severity::High);
+        assert_eq!(cwv_finding.evidence_refs.len(), 2);
     }
 }

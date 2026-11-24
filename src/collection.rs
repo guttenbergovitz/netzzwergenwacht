@@ -80,6 +80,9 @@ pub async fn collect_http(
         captured_at_unix_secs,
         http,
         tls,
+        browser: CollectorOutcome::default(),
+        lighthouse: CollectorOutcome::default(),
+        axe: CollectorOutcome::default(),
     }
 }
 

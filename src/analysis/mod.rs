@@ -5,6 +5,7 @@
 //! never perform network or browser I/O.
 
 pub mod accessibility;
+pub mod browser;
 pub mod content;
 pub mod document;
 pub mod network;
@@ -12,6 +13,7 @@ pub mod performance;
 pub mod security;
 pub mod semantics;
 pub mod seo;
+pub mod visual;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -82,7 +84,7 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
     match extract_complete_html(snapshot) {
         Ok((http, obs)) => {
             analysers.push(semantics::analyse(&obs));
-            analysers.push(accessibility::analyse(&obs));
+            analysers.push(accessibility::analyse_with_axe(&obs, &snapshot.axe));
             analysers.push(seo::analyse(http, &obs));
             analysers.push(content::analyse(http, &obs));
         }
@@ -109,16 +111,8 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
         }
     }
 
-    // Explicitly record BrowserZwerg as skipped until Phase 2 browser collection exists.
-    analysers.push(AnalyserResult {
-        dwarf_id: DwarfId::Browser,
-        findings: Vec::new(),
-        checks: vec![CheckStatus::Skipped {
-            rule_id: RuleId("browser.runtime".to_owned()),
-            evidence_level: EvidenceLevel::Rendered,
-            reason: "Level 2 browser evidence unavailable in Phase 1".to_owned(),
-        }],
-    });
+    analysers.push(browser::analyse(snapshot));
+    analysers.push(visual::analyse(snapshot));
 
     populate_fingerprints(snapshot.target.host(), &mut analysers);
 
@@ -260,6 +254,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
 
         let report = run_all(&snap);
@@ -296,6 +293,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
 
         let report = run_all(&snap);

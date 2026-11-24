@@ -183,6 +183,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         }
     }
 
@@ -206,6 +209,9 @@ mod tests {
             tls: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
         };
         let result = analyse(&snapshot);
         assert_eq!(result.findings.len(), 0);

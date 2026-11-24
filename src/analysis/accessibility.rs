@@ -9,8 +9,9 @@
 use crate::analysis::document::DocumentObservations;
 use crate::brigade::DwarfId;
 use crate::domain::{
-    AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
-    FindingCategory, FindingFingerprint, FindingKind, RuleId, Severity,
+    AnalyserResult, AxeEvidence, CheckStatus, CollectorOutcome, Confidence, EvidenceLevel,
+    EvidenceRef, EvidenceSource, Finding, FindingCategory, FindingFingerprint, FindingKind, RuleId,
+    Severity,
 };
 
 const RULE_DOC_LANG: &str = "a11y.doc.lang";
@@ -33,6 +34,17 @@ pub const SOURCE_RULES: &[&str] = &[
 /// Evaluates source-level accessibility checks and records higher-level gaps.
 #[must_use]
 pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
+    analyse_with_axe(obs, &CollectorOutcome::default())
+}
+
+/// Evaluates source-level accessibility checks together with optional Level 2
+/// `axe-core` evidence, while explicitly marking Level 3 behavioural checks
+/// as unavailable.
+#[must_use]
+pub fn analyse_with_axe(
+    obs: &DocumentObservations,
+    axe: &CollectorOutcome<AxeEvidence>,
+) -> AnalyserResult {
     let mut findings = Vec::new();
     let mut checks = Vec::new();
 
@@ -42,13 +54,7 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
     check_aria_references(obs, &mut findings, &mut checks);
     check_interactive_names(obs, &mut findings, &mut checks);
 
-    checks.push(CheckStatus::Unavailable {
-        rule_id: RuleId(RULE_RENDERED_AXE.to_owned()),
-        evidence_level: EvidenceLevel::Rendered,
-        reason:
-            "Colour contrast, computed styles, and axe-core require Level 2 rendered DOM evidence"
-                .to_owned(),
-    });
+    check_axe_violations(axe, &mut findings, &mut checks);
     checks.push(CheckStatus::Unavailable {
         rule_id: RuleId(RULE_BEHAVIOURAL.to_owned()),
         evidence_level: EvidenceLevel::Behavioural,
@@ -62,6 +68,69 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
         findings,
         checks,
     }
+}
+
+fn check_axe_violations(
+    axe: &CollectorOutcome<AxeEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let data = match axe {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
+        CollectorOutcome::Skipped { .. } | CollectorOutcome::Failed { .. } => {
+            checks.push(CheckStatus::Unavailable {
+                rule_id: RuleId(RULE_RENDERED_AXE.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason:
+                    "Colour contrast, computed styles, and axe-core require Level 2 rendered DOM evidence"
+                        .to_owned(),
+            });
+            return;
+        }
+    };
+
+    if data.violations.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_RENDERED_AXE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+
+    for violation in &data.violations {
+        let severity = match violation.impact.as_deref() {
+            Some("critical") => Severity::High,
+            Some("serious" | "moderate") => Severity::Medium,
+            _ => Severity::Low,
+        };
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(format!("a11y.rendered.axe.{}", violation.id)),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity,
+            confidence: Confidence::High,
+            title: format!(
+                "axe-core rule '{}' failed ({} node(s))",
+                violation.id, violation.nodes_count
+            ),
+            summary: violation.description.clone(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::AxeReport,
+                format!(
+                    "axe-core {} rule '{}' affected {} node(s); help: {}",
+                    data.axe_version, violation.id, violation.nodes_count, violation.help_url
+                ),
+            )],
+            remediation: Some(format!("Review axe-core guidance: {}", violation.help_url)),
+        });
+    }
+
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_RENDERED_AXE.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
 }
 
 /// Builds a skipped result when source HTML is absent or truncated, preserving
@@ -359,5 +428,50 @@ mod tests {
         let obs = DocumentObservations::from_html(html);
         let res = analyse(&obs);
         assert!(!res.findings.iter().any(|f| f.rule_id.0 == RULE_IMAGE_ALT));
+    }
+
+    #[test]
+    fn emits_findings_for_axe_violations_and_passes_when_clean() {
+        use crate::domain::AxeViolation;
+        let html = r#"<html lang="en"><body><p>Hello</p></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+
+        let clean_axe = CollectorOutcome::Captured {
+            data: AxeEvidence {
+                axe_version: "4.10.0".to_owned(),
+                violations: Vec::new(),
+                passes_count: 10,
+                incomplete_count: 0,
+            },
+        };
+        let clean_res = analyse_with_axe(&obs, &clean_axe);
+        assert!(clean_res.checks.iter().any(|c| {
+            matches!(c, CheckStatus::Passed { rule_id, .. } if rule_id.0 == RULE_RENDERED_AXE)
+        }));
+
+        let failing_axe = CollectorOutcome::Captured {
+            data: AxeEvidence {
+                axe_version: "4.10.0".to_owned(),
+                violations: vec![AxeViolation {
+                    id: "color-contrast".to_owned(),
+                    impact: Some("serious".to_owned()),
+                    description: "Elements must meet minimum color contrast ratio thresholds"
+                        .to_owned(),
+                    help_url: "https://dequeuniversity.com/rules/axe/4.10/color-contrast"
+                        .to_owned(),
+                    nodes_count: 3,
+                }],
+                passes_count: 9,
+                incomplete_count: 0,
+            },
+        };
+        let failing_res = analyse_with_axe(&obs, &failing_axe);
+        assert!(
+            failing_res
+                .findings
+                .iter()
+                .any(|f| f.rule_id.0 == "a11y.rendered.axe.color-contrast"
+                    && !f.evidence_refs.is_empty())
+        );
     }
 }
