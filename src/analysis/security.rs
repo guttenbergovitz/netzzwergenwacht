@@ -2,6 +2,7 @@
 //!
 //! Validates both presence and basic semantic validity of security headers.
 
+use crate::analysis::document::DocumentObservations;
 use crate::analysis::{header_value, require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
@@ -17,6 +18,10 @@ const RULE_CSP: &str = "sec.headers.csp";
 const RULE_XCTO: &str = "sec.headers.x_content_type_options";
 const RULE_XFO: &str = "sec.headers.x_frame_options";
 const RULE_REFERRER: &str = "sec.headers.referrer_policy";
+const RULE_COOKIES: &str = "sec.headers.cookies";
+const RULE_CORS: &str = "sec.headers.cors";
+const RULE_MIXED_CONTENT: &str = "sec.dom.mixed_content";
+const RULE_SRI: &str = "sec.dom.subresource_integrity";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -26,6 +31,10 @@ const ALL_RULES: &[&str] = &[
     RULE_XCTO,
     RULE_XFO,
     RULE_REFERRER,
+    RULE_COOKIES,
+    RULE_CORS,
+    RULE_MIXED_CONTENT,
+    RULE_SRI,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -42,6 +51,15 @@ const VALID_REFERRER_POLICIES: &[&str] = &[
 /// Evaluates passive HTTPS and HTTP security-header posture over `snapshot`.
 #[must_use]
 pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
+    analyse_with_document(snapshot, None)
+}
+
+/// Evaluates passive HTTPS, HTTP security headers, and optional source-DOM security checks.
+#[must_use]
+pub fn analyse_with_document(
+    snapshot: &EvidenceSnapshot,
+    obs: Option<&DocumentObservations>,
+) -> AnalyserResult {
     let http = match require_http(snapshot) {
         Ok(http) => http,
         Err(reason) => {
@@ -65,6 +83,21 @@ pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
     check_xcto(http, &mut findings, &mut checks);
     check_xfo(http, &mut findings, &mut checks);
     check_referrer_policy(http, &mut findings, &mut checks);
+    check_cookies(http, uses_https, &mut findings, &mut checks);
+    check_cors(http, &mut findings, &mut checks);
+
+    if let Some(doc) = obs {
+        check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
+        check_sri(http, doc, &mut findings, &mut checks);
+    } else {
+        for rule in [RULE_MIXED_CONTENT, RULE_SRI] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "complete HTML document observations unavailable".to_owned(),
+            });
+        }
+    }
 
     AnalyserResult {
         dwarf_id: DwarfId::Sicherheits,
@@ -517,6 +550,316 @@ fn check_referrer_policy(
     }
 }
 
+fn check_cookies(
+    http: &HttpEvidence,
+    uses_https: bool,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let cookies = http.header_values("set-cookie");
+    if cookies.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_COOKIES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no Set-Cookie headers observed".to_owned(),
+        });
+        return;
+    }
+
+    let mut missing_secure = 0usize;
+    let mut missing_httponly = 0usize;
+    let mut missing_samesite = 0usize;
+
+    for raw in &cookies {
+        let lower = raw.to_ascii_lowercase();
+        let attrs: Vec<&str> = lower.split(';').skip(1).map(str::trim).collect();
+        if uses_https && !attrs.contains(&"secure") {
+            missing_secure += 1;
+        }
+        if !attrs.contains(&"httponly") {
+            missing_httponly += 1;
+        }
+        if !attrs.iter().any(|a| a.starts_with("samesite=")) {
+            missing_samesite += 1;
+        }
+    }
+
+    if missing_secure == 0 && missing_httponly == 0 && missing_samesite == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_COOKIES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        let severity = if missing_secure > 0 || missing_httponly > 0 {
+            Severity::Medium
+        } else {
+            Severity::Low
+        };
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_COOKIES.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity,
+            confidence: Confidence::High,
+            title: "Cookies missing security hardening attributes".to_owned(),
+            summary: format!(
+                "Across {} Set-Cookie header(s): {missing_secure} missing `Secure`, {missing_httponly} missing `HttpOnly`, {missing_samesite} missing `SameSite`.",
+                cookies.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("set_cookie_count={}", cookies.len()),
+            )],
+            remediation: Some(
+                "Set `Secure`, `HttpOnly`, and `SameSite=Lax` (or `Strict`) on session/sensitive cookies."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_COOKIES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_cors(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<CheckStatus>) {
+    let Some(acao) = http.first_header_value("access-control-allow-origin") else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CORS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no Access-Control-Allow-Origin header observed".to_owned(),
+        });
+        return;
+    };
+
+    let trimmed = acao.trim();
+    let allow_creds = http
+        .first_header_value("access-control-allow-credentials")
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+
+    if trimmed == "*" && allow_creds {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CORS.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Wildcard CORS combined with Allow-Credentials".to_owned(),
+            summary:
+                "`Access-Control-Allow-Origin: *` is paired with `Access-Control-Allow-Credentials: true`."
+                    .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                "acao=*;acac=true",
+            )],
+            remediation: Some(
+                "Restrict `Access-Control-Allow-Origin` to explicit trusted origins when credentials are allowed."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CORS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else if trimmed == "*" {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CORS.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: "Wildcard CORS policy (`*`)".to_owned(),
+            summary: "`Access-Control-Allow-Origin: *` permits cross-origin reads from any origin."
+                .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(EvidenceSource::HttpHeaders, "acao=*")],
+            remediation: Some(
+                "Verify wildcard CORS is intentional for public non-sensitive content.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CORS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CORS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_mixed_content(
+    http: &HttpEvidence,
+    uses_https: bool,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if !uses_https {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_MIXED_CONTENT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "target does not use HTTPS".to_owned(),
+        });
+        return;
+    }
+
+    let mut insecure_urls = Vec::new();
+    for s in &obs.scripts {
+        if let Some(src) = &s.src
+            && src.starts_with("http://")
+        {
+            insecure_urls.push(src.as_str());
+        }
+    }
+    for css in &obs.stylesheets {
+        if css.href.starts_with("http://") {
+            insecure_urls.push(css.href.as_str());
+        }
+    }
+    for img in &obs.images {
+        if let Some(src) = &img.src
+            && src.starts_with("http://")
+        {
+            insecure_urls.push(src.as_str());
+        }
+    }
+    for form in &obs.forms {
+        if let Some(action) = &form.action
+            && action.starts_with("http://")
+        {
+            insecure_urls.push(action.as_str());
+        }
+    }
+
+    if insecure_urls.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MIXED_CONTENT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MIXED_CONTENT.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!("Mixed content references ({}) on HTTPS page", insecure_urls.len()),
+            summary: format!(
+                "HTTPS page `{}` references {} insecure `http://` resource(s) or form action(s).",
+                http.final_url,
+                insecure_urls.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("mixed_content_count={}", insecure_urls.len()),
+            )],
+            remediation: Some(
+                "Upgrade all embedded scripts, stylesheets, images, and form actions to `https://`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MIXED_CONTENT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_sri(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let page_host = url::Url::parse(&http.final_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+
+    let is_cross_origin = |raw: &str| -> bool {
+        let Ok(parsed) = url::Url::parse(raw) else {
+            return false;
+        };
+        match (&page_host, parsed.host_str()) {
+            (Some(ph), Some(rh)) => !rh.eq_ignore_ascii_case(ph),
+            _ => false,
+        }
+    };
+
+    let missing_script_sri = obs
+        .scripts
+        .iter()
+        .filter(|s| s.src.as_deref().is_some_and(is_cross_origin) && s.integrity.is_none())
+        .count();
+    let missing_css_sri = obs
+        .stylesheets
+        .iter()
+        .filter(|c| is_cross_origin(&c.href) && c.integrity.is_none())
+        .count();
+
+    let total_cross_origin = obs
+        .scripts
+        .iter()
+        .filter(|s| s.src.as_deref().is_some_and(is_cross_origin))
+        .count()
+        + obs
+            .stylesheets
+            .iter()
+            .filter(|c| is_cross_origin(&c.href))
+            .count();
+
+    if total_cross_origin == 0 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_SRI.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no cross-origin scripts or stylesheets declared".to_owned(),
+        });
+        return;
+    }
+
+    let missing = missing_script_sri + missing_css_sri;
+    if missing == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SRI.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SRI.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Cross-origin assets missing Subresource Integrity ({missing})"),
+            summary: format!(
+                "{missing_script_sri} third-party script(s) and {missing_css_sri} third-party stylesheet(s) lack an `integrity` attribute."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("missing_sri={missing}"),
+            )],
+            remediation: Some(
+                "Add `integrity=\"sha384-...\"` and `crossorigin=\"anonymous\"` to static third-party CDN assets."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SRI.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,7 +934,7 @@ mod tests {
             result
                 .checks
                 .iter()
-                .all(|c| matches!(c, CheckStatus::Passed { .. }))
+                .all(|c| matches!(c, CheckStatus::Passed { .. } | CheckStatus::Skipped { .. }))
         );
     }
 
@@ -630,5 +973,36 @@ mod tests {
         assert!(result.checks.iter().any(|c| {
             matches!(c, CheckStatus::Skipped { rule_id, .. } if rule_id.0 == RULE_HSTS)
         }));
+    }
+
+    #[test]
+    fn flags_insecure_cookies_cors_mixed_content_and_missing_sri() {
+        let mut snap = snapshot_with_headers(
+            "https://example.com/",
+            vec![
+                ("set-cookie", "sid=abc123; Path=/"),
+                ("access-control-allow-origin", "*"),
+                ("access-control-allow-credentials", "true"),
+            ],
+        );
+        let html = r#"<html><head>
+            <script src="https://cdn.other.org/lib.js"></script>
+            <link rel="stylesheet" href="http://insecure.example.net/app.css">
+        </head><body></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_COOKIES));
+        assert!(ids.contains(&RULE_CORS));
+        assert!(ids.contains(&RULE_MIXED_CONTENT));
+        assert!(ids.contains(&RULE_SRI));
     }
 }
