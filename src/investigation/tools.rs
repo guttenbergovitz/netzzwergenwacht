@@ -520,6 +520,214 @@ headers for the authorised URL."
     }
 }
 
+/// Arguments for [`InspectPreviousFindingsTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviousFindingsArgs {
+    /// Path to a local JSON/JSONL audit report file.
+    pub report_path: String,
+}
+
+/// Summary of historical findings returned by [`InspectPreviousFindingsTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreviousFindingsOutput {
+    /// Baseline target URL.
+    pub target: String,
+    /// Capture timestamp in Unix seconds.
+    pub captured_at_unix_secs: u64,
+    /// Rule IDs of findings present in the baseline report.
+    pub finding_rules: Vec<String>,
+}
+
+/// `rig-core` [`PortableTool`] wrapping `DokumentationsZwerg` historical report lookup.
+pub struct InspectPreviousFindingsTool {
+    authorised_target: AuditTarget,
+    policy: TargetPolicy,
+}
+
+impl InspectPreviousFindingsTool {
+    /// Constructs a new scoped historical findings tool.
+    #[must_use]
+    pub fn new(authorised_target: AuditTarget, policy: TargetPolicy) -> Self {
+        Self {
+            authorised_target,
+            policy,
+        }
+    }
+}
+
+impl PortableTool for InspectPreviousFindingsTool {
+    const NAME: &'static str = "inspect_previous_findings";
+    type Args = PreviousFindingsArgs;
+    type Output = PreviousFindingsOutput;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Load the latest historical audit report for the authorised origin and list its finding rule IDs."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "report_path": { "type": "string", "description": "Path to JSON/JSONL baseline report" }
+            },
+            "required": ["report_path"]
+        })
+    }
+
+    fn call(
+        &self,
+        arguments: Self::Args,
+    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
+        let res = (|| {
+            let report = crate::persistence::load_latest_or_single(std::path::Path::new(
+                &arguments.report_path,
+            ))
+            .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
+            let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+            if !scope.permits_target(&report.target) {
+                return Err(DiagnosticToolError::UnauthorisedTarget(format!(
+                    "baseline target '{}' is outside authorised origin",
+                    report.target.as_str()
+                )));
+            }
+            let finding_rules = report
+                .analysers
+                .iter()
+                .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.clone()))
+                .collect();
+            Ok(PreviousFindingsOutput {
+                target: report.target.as_str().to_owned(),
+                captured_at_unix_secs: report.captured_at_unix_secs,
+                finding_rules,
+            })
+        })();
+        std::future::ready(res)
+    }
+}
+
+/// Arguments for [`VerifyFindingTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyFindingArgs {
+    /// Target URL to re-check.
+    pub url: String,
+    /// Deterministic rule ID to verify.
+    pub rule_id: String,
+}
+
+/// Result returned by [`VerifyFindingTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VerifyFindingOutput {
+    /// Verified rule identifier.
+    pub rule_id: String,
+    /// Verification outcome (`"resolved"`, `"persisting"`, or `"unverified"`).
+    pub status: String,
+}
+
+/// `rig-core` [`PortableTool`] re-checking a specific `rule_id` against the authorised URL.
+pub struct VerifyFindingTool {
+    authorised_target: AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+}
+
+impl VerifyFindingTool {
+    /// Constructs a new scoped finding-verification tool.
+    #[must_use]
+    pub fn new(
+        authorised_target: AuditTarget,
+        policy: TargetPolicy,
+        timeout: Duration,
+        backend: Arc<dyn DiagnosticBackend>,
+    ) -> Self {
+        Self {
+            authorised_target,
+            policy,
+            timeout,
+            backend,
+        }
+    }
+}
+
+impl PortableTool for VerifyFindingTool {
+    const NAME: &'static str = "verify_finding";
+    type Args = VerifyFindingArgs;
+    type Output = VerifyFindingOutput;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Re-check a specific deterministic rule ID against the authorised URL to verify remediation."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Authorised target URL" },
+                "rule_id": { "type": "string", "description": "Rule ID to verify" }
+            },
+            "required": ["url", "rule_id"]
+        })
+    }
+
+    async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
+        let parsed = AuditTarget::parse(&arguments.url, self.policy)
+            .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
+            return Err(DiagnosticToolError::UnauthorisedTarget(format!(
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
+            )));
+        }
+
+        let exec_budget = ExecutionBudget {
+            audit_timeout: self.timeout,
+            http_timeout: self.timeout.min(Duration::from_secs(15)),
+            ..ExecutionBudget::default()
+        };
+        let snap = self
+            .backend
+            .collect_http(&parsed, exec_budget, self.policy)
+            .await;
+        let report = analysis::run_all(&snap);
+
+        let still_present = report
+            .analysers
+            .iter()
+            .flat_map(|a| a.findings.iter())
+            .any(|f| f.rule_id.0 == arguments.rule_id);
+        let unverified = report
+            .analysers
+            .iter()
+            .flat_map(|a| a.checks.iter())
+            .any(|c| {
+                matches!(
+                    c,
+                    crate::domain::CheckStatus::Skipped { rule_id, .. }
+                        | crate::domain::CheckStatus::Unavailable { rule_id, .. }
+                    if rule_id.0 == arguments.rule_id
+                )
+            });
+
+        let status = if still_present {
+            "persisting"
+        } else if unverified {
+            "unverified"
+        } else {
+            "resolved"
+        };
+
+        Ok(VerifyFindingOutput {
+            rule_id: arguments.rule_id,
+            status: status.to_owned(),
+        })
+    }
+}
+
 /// Returns `rig-core` [`ToolDefinition`] schemas for all registered follow-up tools.
 #[must_use]
 pub fn registered_tool_definitions(
@@ -541,7 +749,10 @@ pub fn registered_tool_definitions(
         InspectPagePerformanceTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
     let structure =
         InspectDocumentStructureTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
-    let security = InspectSecurityPostureTool::new(target.clone(), policy, timeout, backend);
+    let security =
+        InspectSecurityPostureTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
+    let prev = InspectPreviousFindingsTool::new(target.clone(), policy);
+    let verify = VerifyFindingTool::new(target.clone(), policy, timeout, backend);
     vec![
         portable_tool_definition(&browser),
         portable_tool_definition(&axe),
@@ -549,5 +760,7 @@ pub fn registered_tool_definitions(
         portable_tool_definition(&perf),
         portable_tool_definition(&structure),
         portable_tool_definition(&security),
+        portable_tool_definition(&prev),
+        portable_tool_definition(&verify),
     ]
 }

@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Sitemap Crawl Integration & Verification Tools (2026-11-24)
+- Wired `/sitemap.xml` discovery and `prioritise_representative_urls` into `discovery::crawl_and_cluster`.
+- Added `InspectPreviousFindingsTool` (`inspect_previous_findings`) and `VerifyFindingTool` (`verify_finding`) as `rig-core` `PortableTool`s in `src/investigation/tools.rs`.
+
 ### Sitemap Discovery, Representative Sampling & Evidence Gap Tracking (2026-11-24)
 - Added `parse_sitemap_urls` and `prioritise_representative_urls` in `src/discovery/mod.rs` to prioritise journey-critical pages over legal boilerplate.
 - Added `missing_evidence` tracking on `DiagnosticHypothesis` in `src/investigation/mod.rs`.
