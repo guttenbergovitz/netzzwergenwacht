@@ -1,0 +1,44 @@
+{
+  "benchmark_name": "Zwergenprüfstand",
+  "version": "0.1.0",
+  "pages": [
+    {
+      "path": "/healthy.html",
+      "role": "healthy_control",
+      "expected_defects": []
+    },
+    {
+      "path": "/perf-and-structure.html",
+      "role": "landing_page_with_defects",
+      "expected_defects": [
+        { "rule_id": "a11y.images.alt", "domain": "accessibility" },
+        { "rule_id": "str.doc.duplicate_ids", "domain": "semantics" },
+        { "rule_id": "str.headings.hierarchy", "domain": "semantics" },
+        { "rule_id": "seo.meta.description", "domain": "seo" }
+      ]
+    },
+    {
+      "path": "/a11y.html",
+      "role": "form_page_with_defects",
+      "expected_defects": [
+        { "rule_id": "a11y.doc.lang", "domain": "accessibility" },
+        { "rule_id": "a11y.images.alt", "domain": "accessibility" },
+        { "rule_id": "a11y.forms.labels", "domain": "accessibility" },
+        { "rule_id": "a11y.aria.broken_references", "domain": "accessibility" }
+      ]
+    }
+  ],
+  "expected_systemic_rules": ["a11y.images.alt", "seo.meta.description"],
+  "remediation_variants": [
+    {
+      "baseline": "/a11y.html",
+      "fixed": "/fixed/a11y.html",
+      "expected_resolved": [
+        "a11y.doc.lang",
+        "a11y.images.alt",
+        "a11y.forms.labels",
+        "a11y.aria.broken_references"
+      ]
+    }
+  ]
+}
