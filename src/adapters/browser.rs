@@ -128,6 +128,23 @@ function findBrowser() {
           error_text: `HTTP ${msg.params.response.status}`,
           status_code: msg.params.response.status,
         });
+      } else if (msg.method === 'Fetch.requestPaused') {
+        const reqUrl = msg.params?.request?.url || '';
+        const blocked = isForbiddenSubresourceUrl(reqUrl);
+        if (blocked) {
+          failedRequests.push({ url: reqUrl, error_text: 'BlockedByPolicy', status_code: null });
+          ws.send(JSON.stringify({
+            id: nextId++,
+            method: 'Fetch.failRequest',
+            params: { requestId: msg.params.requestId, errorReason: 'BlockedByClient' },
+          }));
+        } else {
+          ws.send(JSON.stringify({
+            id: nextId++,
+            method: 'Fetch.continueRequest',
+            params: { requestId: msg.params.requestId },
+          }));
+        }
       } else if (msg.method === 'Page.loadEventFired' && loadResolve) {
         loadResolve();
         loadResolve = null;
@@ -140,9 +157,31 @@ function findBrowser() {
       ws.send(JSON.stringify({ id, method, params }));
     });
 
+    const isForbiddenSubresourceUrl = (raw) => {
+      if (process.env.NZW_BROWSER_POLICY !== 'public_only') return false;
+      try {
+        const u = new URL(raw);
+        if (u.protocol !== 'http:' && u.protocol !== 'https:') return false; // allow data:/blob:
+        const h = u.hostname.toLowerCase();
+        return h === 'localhost'
+          || h.endsWith('.local')
+          || h === '::1'
+          || /^127\./.test(h)
+          || /^10\./.test(h)
+          || /^192\.168\./.test(h)
+          || /^169\.254\./.test(h)
+          || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h);
+      } catch {
+        return true;
+      }
+    };
+
     await call('Page.enable');
     await call('Runtime.enable');
     await call('Network.enable');
+    if (process.env.NZW_BROWSER_POLICY === 'public_only') {
+      await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
+    }
 
     const loaded = new Promise((resolve) => {
       loadResolve = resolve;
@@ -212,7 +251,10 @@ pub async fn run_browser(
     timeout: Duration,
 ) -> CollectorOutcome<BrowserEvidence> {
     let mut cmd = Command::new("node");
-    cmd.arg("-e").arg(CDP_HARNESS_JS).arg(target.as_str());
+    cmd.arg("-e")
+        .arg(CDP_HARNESS_JS)
+        .arg(target.as_str())
+        .env("NZW_BROWSER_POLICY", "public_only");
 
     let stdout = match run_bounded_command("browser", &mut cmd, timeout).await {
         Ok(out) => out,

@@ -36,10 +36,13 @@ pub(crate) async fn run_bounded_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    #[cfg(unix)]
+    cmd.process_group(0);
 
     let mut child = cmd
         .spawn()
         .map_err(|err| format!("failed to launch {label}: {err}"))?;
+    let child_pid = child.id();
 
     let stdout_pipe = child
         .stdout
@@ -70,7 +73,7 @@ pub(crate) async fn run_bounded_command(
         if let Ok(res) = tokio::time::timeout(timeout, io_future).await {
             res?
         } else {
-            let _ = child.kill().await;
+            terminate_process_group(&mut child, child_pid).await;
             return Err(format!(
                 "{label} timed out after {} ms",
                 timeout.as_millis()
@@ -78,6 +81,7 @@ pub(crate) async fn run_bounded_command(
         };
 
     if stdout_buf.len() > MAX_ADAPTER_OUTPUT_BYTES {
+        terminate_process_group(&mut child, child_pid).await;
         return Err(format!(
             "{label} stdout exceeded {MAX_ADAPTER_OUTPUT_BYTES} bytes cap"
         ));
@@ -89,4 +93,19 @@ pub(crate) async fn run_bounded_command(
     }
 
     Ok(String::from_utf8_lossy(&stdout_buf).into_owned())
+}
+
+async fn terminate_process_group(child: &mut tokio::process::Child, pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pgid) = pid {
+        let _ = Command::new("kill")
+            .arg("-9")
+            .arg(format!("-{pgid}"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+    }
+    let _ = child.kill().await;
 }
