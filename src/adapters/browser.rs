@@ -253,7 +253,8 @@ function findBrowser() {
 });
 ";
 
-/// Runs a headless Chromium CDP session against `target` within `timeout`.
+/// Runs a headless Chromium CDP session against `target` within `timeout`
+/// using [`crate::domain::TargetPolicy::PublicOnly`].
 ///
 /// Requires `node` (v22+ with built-in `WebSocket`) and a Chromium binary
 /// (`NZW_CHROMIUM_BIN` or `chromium` / `google-chrome`).
@@ -261,11 +262,25 @@ pub async fn run_browser(
     target: &AuditTarget,
     timeout: Duration,
 ) -> CollectorOutcome<BrowserEvidence> {
+    run_browser_with_policy(target, timeout, crate::domain::TargetPolicy::PublicOnly).await
+}
+
+/// Runs a headless Chromium CDP session against `target` within `timeout`,
+/// propagating `policy` to the CDP `Fetch` subresource/redirect guard.
+pub async fn run_browser_with_policy(
+    target: &AuditTarget,
+    timeout: Duration,
+    policy: crate::domain::TargetPolicy,
+) -> CollectorOutcome<BrowserEvidence> {
+    let policy_env = match policy {
+        crate::domain::TargetPolicy::PublicOnly => "public_only",
+        crate::domain::TargetPolicy::AllowPrivate => "allow_private",
+    };
     let mut cmd = Command::new("node");
     cmd.arg("-e")
         .arg(CDP_HARNESS_JS)
         .arg(target.as_str())
-        .env("NZW_BROWSER_POLICY", "public_only");
+        .env("NZW_BROWSER_POLICY", policy_env);
 
     let stdout = match run_bounded_command("browser", &mut cmd, timeout).await {
         Ok(out) => out,

@@ -4,6 +4,9 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Adapter TargetPolicy Propagation (2026-11-24)
+- Added `run_browser_with_policy` (`src/adapters/browser.rs`) and `run_lighthouse_with_policy` / `build_lighthouse_chrome_flags` (`src/adapters/lighthouse.rs`), propagating `TargetPolicy` from `run_check` (`src/main.rs`) instead of hardcoding `public_only`.
+
 ### Measurement Provenance on Browser & Lighthouse Evidence (2026-11-24)
 - Added `MeasurementProvenance` (`viewport`, `throttling_profile`, `origin`, `captured_at`) to `BrowserEvidence` and `LighthouseMetrics` (`src/domain.rs`), populated by `CDP_HARNESS_JS` (`src/adapters/browser.rs`) and `parse_lighthouse_json` (`src/adapters/lighthouse.rs`).
 
