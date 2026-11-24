@@ -30,13 +30,99 @@ pub struct LandmarkCounts {
     pub footer_count: usize,
 }
 
-/// Observed `<img>` element attributes relevant to accessibility and structure.
+/// Observed `<img>` element attributes relevant to accessibility, layout, and performance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImageObs {
     /// Image `src` attribute, if present.
     pub src: Option<String>,
     /// Image `alt` attribute (`Some("")` indicates explicit decorative image; `None` means missing).
     pub alt: Option<String>,
+    /// Explicit `width` attribute, if present.
+    pub width: Option<String>,
+    /// Explicit `height` attribute, if present.
+    pub height: Option<String>,
+    /// Explicit `loading` attribute (for example `"lazy"` or `"eager"`), if present.
+    pub loading: Option<String>,
+}
+
+/// Observed `<a href="...">` link element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LinkObs {
+    /// Trimmed `href` attribute value.
+    pub href: String,
+    /// Trimmed visible anchor text.
+    pub text: String,
+    /// Trimmed `rel` attribute, if present.
+    pub rel: Option<String>,
+    /// Trimmed `target` attribute, if present.
+    pub target: Option<String>,
+}
+
+/// Observed `<link rel="alternate" hreflang="...">` element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HreflangObs {
+    /// Trimmed `hreflang` value (for example `"en-GB"`, `"x-default"`).
+    pub lang: String,
+    /// Trimmed `href` value.
+    pub href: String,
+}
+
+/// Observed `<script>` element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScriptObs {
+    /// External `src` attribute, or `None` for inline scripts.
+    pub src: Option<String>,
+    /// Whether the `async` boolean attribute is present.
+    pub is_async: bool,
+    /// Whether the `defer` boolean attribute is present.
+    pub is_defer: bool,
+    /// Trimmed `type` attribute, if present.
+    pub script_type: Option<String>,
+    /// Trimmed `integrity` (SRI) attribute, if present.
+    pub integrity: Option<String>,
+    /// Byte length of inline script text (`0` for external scripts).
+    pub inline_bytes: usize,
+}
+
+/// Observed `<link rel="stylesheet">` element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StylesheetObs {
+    /// Trimmed `href` attribute value.
+    pub href: String,
+    /// Trimmed `integrity` (SRI) attribute, if present.
+    pub integrity: Option<String>,
+    /// Trimmed `media` attribute, if present.
+    pub media: Option<String>,
+}
+
+/// Observed `<form>` element.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormObs {
+    /// Trimmed `action` attribute, if present.
+    pub action: Option<String>,
+    /// Lowercased `method` attribute, if present.
+    pub method: Option<String>,
+}
+
+/// Observed Open Graph and Twitter Card social metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SocialMetaObs {
+    /// `<meta property="og:title" content="...">`
+    pub og_title: Option<String>,
+    /// `<meta property="og:description" content="...">`
+    pub og_description: Option<String>,
+    /// `<meta property="og:image" content="...">`
+    pub og_image: Option<String>,
+    /// `<meta property="og:url" content="...">`
+    pub og_url: Option<String>,
+    /// `<meta property="og:type" content="...">`
+    pub og_type: Option<String>,
+    /// `<meta name="twitter:card" content="...">`
+    pub twitter_card: Option<String>,
+    /// `<meta name="twitter:title" content="...">`
+    pub twitter_title: Option<String>,
+    /// `<meta name="twitter:description" content="...">`
+    pub twitter_description: Option<String>,
 }
 
 /// Observed form control (`<input>`, `<select>`, `<textarea>`).
@@ -120,8 +206,32 @@ pub struct DocumentObservations {
     pub visible_word_count: usize,
     /// Visible character count extracted from `<body>` (excluding script/style/noscript).
     pub visible_char_count: usize,
+    /// Bounded sample of visible body text (up to 4096 bytes) for content-quality heuristics.
+    pub visible_text_sample: String,
     /// Raw `href` values from `<a href="...">` elements in document order.
     pub link_hrefs: Vec<String>,
+    /// Structured `<a href="...">` link observations.
+    pub links: Vec<LinkObs>,
+    /// Trimmed `<meta name="viewport" content="...">`, if present.
+    pub viewport_meta: Option<String>,
+    /// Whether `<meta charset="...">` or `<meta http-equiv="content-type">` is declared.
+    pub charset_declared: bool,
+    /// Structured `<link rel="alternate" hreflang="...">` observations.
+    pub hreflangs: Vec<HreflangObs>,
+    /// Raw text contents of `<script type="application/ld+json">` blocks.
+    pub json_ld_blocks: Vec<String>,
+    /// Open Graph and Twitter Card metadata.
+    pub social_meta: SocialMetaObs,
+    /// Observed `<script>` elements.
+    pub scripts: Vec<ScriptObs>,
+    /// Observed `<link rel="stylesheet">` elements.
+    pub stylesheets: Vec<StylesheetObs>,
+    /// Observed `<form>` elements.
+    pub forms: Vec<FormObs>,
+    /// Whether a skip-navigation link (`<a href="#...">` early in the document) is present.
+    pub has_skip_link: bool,
+    /// Whether a favicon `<link rel="icon">` or `<link rel="shortcut icon">` is declared.
+    pub has_favicon: bool,
 }
 
 impl DocumentObservations {
@@ -129,14 +239,23 @@ impl DocumentObservations {
     #[must_use]
     pub fn from_html(html: &str) -> Self {
         let doc = Html::parse_document(html);
+        let json_ld_blocks = extract_json_ld_from_doc(&doc);
+        let hreflangs = extract_hreflangs(&doc);
         let mut obs = Self {
             title: first_text(&doc, "title"),
             html_lang: first_attr(&doc, "html", "lang"),
             meta_description: first_attr(&doc, r#"meta[name="description"]"#, "content"),
             meta_robots: first_attr(&doc, r#"meta[name="robots"]"#, "content"),
             canonical_url: first_attr(&doc, r#"link[rel="canonical"]"#, "href"),
-            hreflang_count: count_selector(&doc, r#"link[rel="alternate"][hreflang]"#),
-            json_ld_count: count_selector(&doc, r#"script[type="application/ld+json"]"#),
+            hreflang_count: hreflangs.len(),
+            json_ld_count: json_ld_blocks.len(),
+            viewport_meta: first_attr(&doc, r#"meta[name="viewport"]"#, "content"),
+            charset_declared: count_selector(&doc, "meta[charset]") > 0
+                || first_attr(&doc, r#"meta[http-equiv="content-type"]"#, "content").is_some(),
+            hreflangs,
+            json_ld_blocks,
+            social_meta: extract_social_meta(&doc),
+            has_favicon: count_selector(&doc, r#"link[rel="icon"], link[rel="shortcut icon"]"#) > 0,
             ..Self::default()
         };
 
@@ -144,6 +263,7 @@ impl DocumentObservations {
         extract_headings(&doc, &mut obs);
         extract_landmarks(&doc, &mut obs);
         extract_images_and_forms(&doc, &mut obs);
+        extract_scripts_and_styles(&doc, &mut obs);
         extract_interactive_and_aria(&doc, &mut obs);
         extract_visible_text_stats(&doc, &mut obs);
 
@@ -162,6 +282,78 @@ fn first_attr(doc: &Html, selector: &str, attr: &str) -> Option<String> {
     let sel = Selector::parse(selector).ok()?;
     let val = doc.select(&sel).next()?.value().attr(attr)?.trim();
     (!val.is_empty()).then(|| val.to_owned())
+}
+
+fn extract_json_ld_from_doc(doc: &Html) -> Vec<String> {
+    let Ok(sel) = Selector::parse(r#"script[type="application/ld+json"]"#) else {
+        return Vec::new();
+    };
+    doc.select(&sel)
+        .filter_map(|el| {
+            let text = el.text().collect::<String>();
+            let trimmed = text.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_owned())
+        })
+        .collect()
+}
+
+fn extract_hreflangs(doc: &Html) -> Vec<HreflangObs> {
+    let Ok(sel) = Selector::parse(r#"link[rel="alternate"][hreflang]"#) else {
+        return Vec::new();
+    };
+    doc.select(&sel)
+        .filter_map(|el| {
+            let lang = non_empty_attr(&el, "hreflang")?;
+            let href = non_empty_attr(&el, "href")?;
+            Some(HreflangObs { lang, href })
+        })
+        .collect()
+}
+
+fn extract_social_meta(doc: &Html) -> SocialMetaObs {
+    SocialMetaObs {
+        og_title: first_attr(doc, r#"meta[property="og:title"]"#, "content"),
+        og_description: first_attr(doc, r#"meta[property="og:description"]"#, "content"),
+        og_image: first_attr(doc, r#"meta[property="og:image"]"#, "content"),
+        og_url: first_attr(doc, r#"meta[property="og:url"]"#, "content"),
+        og_type: first_attr(doc, r#"meta[property="og:type"]"#, "content"),
+        twitter_card: first_attr(doc, r#"meta[name="twitter:card"]"#, "content"),
+        twitter_title: first_attr(doc, r#"meta[name="twitter:title"]"#, "content"),
+        twitter_description: first_attr(doc, r#"meta[name="twitter:description"]"#, "content"),
+    }
+}
+
+fn extract_scripts_and_styles(doc: &Html, obs: &mut DocumentObservations) {
+    if let Ok(script_sel) = Selector::parse("script") {
+        for el in doc.select(&script_sel) {
+            let src = non_empty_attr(&el, "src");
+            let inline_bytes = if src.is_some() {
+                0
+            } else {
+                el.text().map(str::len).sum()
+            };
+            obs.scripts.push(ScriptObs {
+                src,
+                is_async: el.value().attr("async").is_some(),
+                is_defer: el.value().attr("defer").is_some(),
+                script_type: non_empty_attr(&el, "type"),
+                integrity: non_empty_attr(&el, "integrity"),
+                inline_bytes,
+            });
+        }
+    }
+
+    if let Ok(css_sel) = Selector::parse(r#"link[rel="stylesheet"][href]"#) {
+        for el in doc.select(&css_sel) {
+            if let Some(href) = non_empty_attr(&el, "href") {
+                obs.stylesheets.push(StylesheetObs {
+                    href,
+                    integrity: non_empty_attr(&el, "integrity"),
+                    media: non_empty_attr(&el, "media"),
+                });
+            }
+        }
+    }
 }
 
 fn count_selector(doc: &Html, selector: &str) -> usize {
@@ -228,6 +420,18 @@ fn extract_images_and_forms(doc: &Html, obs: &mut DocumentObservations) {
             obs.images.push(ImageObs {
                 src: el.value().attr("src").map(str::to_owned),
                 alt: el.value().attr("alt").map(str::to_owned),
+                width: non_empty_attr(&el, "width"),
+                height: non_empty_attr(&el, "height"),
+                loading: non_empty_attr(&el, "loading"),
+            });
+        }
+    }
+
+    if let Ok(form_sel) = Selector::parse("form") {
+        for el in doc.select(&form_sel) {
+            obs.forms.push(FormObs {
+                action: non_empty_attr(&el, "action"),
+                method: non_empty_attr(&el, "method").map(|m| m.to_ascii_lowercase()),
             });
         }
     }
@@ -293,11 +497,32 @@ fn extract_interactive_and_aria(doc: &Html, obs: &mut DocumentObservations) {
     }
 
     if let Ok(a_href_sel) = Selector::parse("a[href]") {
-        for el in doc.select(&a_href_sel) {
+        for (idx, el) in doc.select(&a_href_sel).enumerate() {
             if let Some(href) = el.value().attr("href") {
                 let trimmed = href.trim();
                 if !trimmed.is_empty() {
+                    let text = el
+                        .text()
+                        .collect::<String>()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    if idx < 5 && trimmed.starts_with('#') && trimmed.len() > 1 {
+                        let lower = text.to_ascii_lowercase();
+                        if lower.contains("skip")
+                            || lower.contains("main")
+                            || lower.contains("content")
+                        {
+                            obs.has_skip_link = true;
+                        }
+                    }
                     obs.link_hrefs.push(trimmed.to_owned());
+                    obs.links.push(LinkObs {
+                        href: trimmed.to_owned(),
+                        text,
+                        rel: non_empty_attr(&el, "rel"),
+                        target: non_empty_attr(&el, "target"),
+                    });
                 }
             }
             if has_descendant_interactive(&el) {
@@ -340,8 +565,11 @@ fn extract_visible_text_stats(doc: &Html, obs: &mut DocumentObservations) {
         return;
     };
 
+    let sample_cap: usize = 4_096;
+
     let mut words = 0usize;
     let mut chars = 0usize;
+    let mut sample = String::new();
 
     for node in body.descendants() {
         if let Some(text) = node.value().as_text() {
@@ -354,6 +582,15 @@ fn extract_visible_text_stats(doc: &Html, obs: &mut DocumentObservations) {
                 for word in text.split_whitespace() {
                     words += 1;
                     chars += word.chars().count();
+                    if sample.len() < sample_cap {
+                        if !sample.is_empty() {
+                            sample.push(' ');
+                        }
+                        let rem = sample_cap.saturating_sub(sample.len());
+                        if word.len() <= rem {
+                            sample.push_str(word);
+                        }
+                    }
                 }
             }
         }
@@ -361,6 +598,7 @@ fn extract_visible_text_stats(doc: &Html, obs: &mut DocumentObservations) {
 
     obs.visible_word_count = words;
     obs.visible_char_count = chars;
+    obs.visible_text_sample = sample;
 }
 
 fn non_empty_attr(el: &ElementRef<'_>, attr: &str) -> Option<String> {
@@ -443,5 +681,59 @@ mod tests {
         assert_eq!(obs.images.len(), 1);
         assert_eq!(obs.form_controls.len(), 1);
         assert!(obs.label_for_ids.contains("email"));
+    }
+
+    #[test]
+    fn extracts_rich_slice_1_observations() {
+        let html = r##"<!doctype html><html lang="en-GB"><head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Rich Page</title>
+            <link rel="icon" href="/favicon.ico">
+            <link rel="alternate" hreflang="en" href="https://example.org/en">
+            <link rel="alternate" hreflang="x-default" href="https://example.org/">
+            <meta property="og:title" content="OG Rich">
+            <meta name="twitter:card" content="summary_large_image">
+            <link rel="stylesheet" href="https://cdn.example.org/app.css" integrity="sha384-abc">
+            <script src="https://cdn.example.org/app.js" defer></script>
+            <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebSite"}</script>
+        </head><body>
+            <a href="#main-content">Skip to main content</a>
+            <a href="https://external.example.com/" target="_blank" rel="noopener">External</a>
+            <main id="main-content">
+                <img src="/hero.webp" alt="Hero" width="800" height="600" loading="eager">
+                <form action="/submit" method="POST"><input type="text" aria-label="Name"></form>
+            </main>
+        </body></html>"##;
+
+        let obs = DocumentObservations::from_html(html);
+        assert!(obs.charset_declared);
+        assert_eq!(
+            obs.viewport_meta.as_deref(),
+            Some("width=device-width, initial-scale=1")
+        );
+        assert!(obs.has_favicon);
+        assert!(obs.has_skip_link);
+        assert_eq!(obs.hreflang_count, 2);
+        assert_eq!(obs.hreflangs[0].lang, "en");
+        assert_eq!(obs.json_ld_count, 1);
+        assert!(obs.json_ld_blocks[0].contains("WebSite"));
+        assert_eq!(obs.social_meta.og_title.as_deref(), Some("OG Rich"));
+        assert_eq!(
+            obs.social_meta.twitter_card.as_deref(),
+            Some("summary_large_image")
+        );
+        assert_eq!(obs.stylesheets.len(), 1);
+        assert_eq!(obs.stylesheets[0].integrity.as_deref(), Some("sha384-abc"));
+        assert_eq!(obs.scripts.len(), 2);
+        assert!(obs.scripts[0].is_defer);
+        assert_eq!(obs.links.len(), 2);
+        assert_eq!(obs.links[1].rel.as_deref(), Some("noopener"));
+        assert_eq!(obs.images[0].width.as_deref(), Some("800"));
+        assert_eq!(obs.images[0].height.as_deref(), Some("600"));
+        assert_eq!(obs.images[0].loading.as_deref(), Some("eager"));
+        assert_eq!(obs.forms.len(), 1);
+        assert_eq!(obs.forms[0].method.as_deref(), Some("post"));
+        assert!(obs.visible_text_sample.contains("Skip to main content"));
     }
 }

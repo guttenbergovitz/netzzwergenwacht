@@ -617,6 +617,29 @@ pub struct HttpEvidence {
     pub body_text: String,
 }
 
+impl HttpEvidence {
+    /// Returns all header values matching `name` (ASCII case-insensitive).
+    #[must_use]
+    pub fn header_values(&self, name: &str) -> Vec<&str> {
+        let needle = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .filter(|h| h.name == needle)
+            .map(|h| h.value.as_str())
+            .collect()
+    }
+
+    /// Returns the first header value matching `name` (ASCII case-insensitive).
+    #[must_use]
+    pub fn first_header_value(&self, name: &str) -> Option<&str> {
+        let needle = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|h| h.name == needle)
+            .map(|h| h.value.as_str())
+    }
+}
+
 /// TLS peer certificate evidence extracted from the `rustls` handshake.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TlsEvidence {
