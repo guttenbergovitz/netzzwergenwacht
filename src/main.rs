@@ -153,10 +153,16 @@ enum Command {
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
-    /// Run an autonomous recurring web quality patrol requiring only a target URL.
+    /// Run an autonomous recurring web quality patrol requiring only a target URL or `--targets`.
     Patrol {
-        /// Target HTTP or HTTPS URL to patrol.
-        url: String,
+        /// Target HTTP or HTTPS URL to patrol (omit when using `--targets`).
+        url: Option<String>,
+        /// Path to a portfolio TOML file (`applications.toml`).
+        #[arg(long)]
+        targets: Option<PathBuf>,
+        /// Enable selective Level 2 headless browser diagnostics on deep samples.
+        #[arg(long)]
+        browser: bool,
         /// Directory for persistent application memory (defaults to `.nzw/memory`).
         #[arg(long, default_value = ".nzw/memory")]
         memory_dir: PathBuf,
@@ -343,38 +349,84 @@ async fn main() -> ExitCode {
         } => run_verify(&baseline, &url, allow_private, format).await,
         Command::Patrol {
             url,
+            targets,
+            browser,
             memory_dir,
             max_pages,
             allow_private,
             format,
-        } => run_patrol_cmd(&url, &memory_dir, max_pages, allow_private, format).await,
+        } => {
+            run_patrol_cmd(
+                url.as_deref(),
+                targets.as_deref(),
+                browser,
+                &memory_dir,
+                max_pages,
+                allow_private,
+                format,
+            )
+            .await
+        }
     }
 }
 
 async fn run_patrol_cmd(
-    url: &str,
+    url: Option<&str>,
+    targets_path: Option<&Path>,
+    enable_level2: bool,
     memory_dir: &Path,
     max_pages: usize,
     allow_private: bool,
     format: OutputFormat,
 ) -> ExitCode {
+    let llm_provider = netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env().ok();
+    let backend: std::sync::Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
+        std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
+    let patrol_budget = netzzwergenwacht::patrol::PatrolBudget {
+        max_pages: max_pages.max(1),
+        enable_level2,
+        ..netzzwergenwacht::patrol::PatrolBudget::default()
+    };
+
+    if let Some(cfg_path) = targets_path {
+        let cfg =
+            match netzzwergenwacht::patrol::portfolio::PortfolioConfig::from_toml_file(cfg_path) {
+                Ok(c) => c,
+                Err(err) => {
+                    eprintln!("{err}");
+                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                }
+            };
+        let llm_arc: Option<std::sync::Arc<dyn netzzwergenwacht::intelligence::LlmProvider>> =
+            llm_provider.map(|p| std::sync::Arc::new(p) as _);
+        let portfolio = netzzwergenwacht::patrol::portfolio::run_portfolio_patrol(
+            &cfg,
+            allow_private,
+            netzzwergenwacht::domain::ExecutionBudget::default(),
+            patrol_budget,
+            Some(memory_dir),
+            llm_arc,
+            backend,
+        )
+        .await;
+        return render_portfolio_patrol(&portfolio, format);
+    }
+
+    let Some(raw_url) = url else {
+        eprintln!("either <URL> or --targets <FILE> must be provided");
+        return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+    };
     let policy = target_policy(allow_private);
-    let target = match AuditTarget::parse(url, policy) {
+    let target = match AuditTarget::parse(raw_url, policy) {
         Ok(t) => t,
         Err(err) => {
             eprintln!("invalid target: {err}");
             return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
         }
     };
-    let llm_provider = netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env().ok();
     let llm_ref: Option<&dyn netzzwergenwacht::intelligence::LlmProvider> = llm_provider
         .as_ref()
         .map(|p| p as &dyn netzzwergenwacht::intelligence::LlmProvider);
-    let backend = std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
-    let patrol_budget = netzzwergenwacht::patrol::PatrolBudget {
-        max_pages: max_pages.max(1),
-        ..netzzwergenwacht::patrol::PatrolBudget::default()
-    };
     let report = netzzwergenwacht::patrol::run_patrol(
         target,
         policy,
@@ -414,6 +466,47 @@ async fn run_patrol_cmd(
     if !report.execution_succeeded {
         ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
     } else if report.is_quiet_patrol {
+        ExitCode::from(EXIT_OK)
+    } else {
+        ExitCode::from(EXIT_FINDINGS)
+    }
+}
+
+fn render_portfolio_patrol(
+    portfolio: &netzzwergenwacht::patrol::portfolio::PortfolioPatrolReport,
+    format: OutputFormat,
+) -> ExitCode {
+    match format {
+        OutputFormat::Json => match serde_json::to_string_pretty(portfolio) {
+            Ok(json) => println!("{json}"),
+            Err(err) => {
+                eprintln!("failed to serialise portfolio report: {err}");
+                return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+            }
+        },
+        OutputFormat::Text | OutputFormat::Markdown => {
+            println!(
+                "NETZZWERGENWACHT — Portfolio Patrol ({MOTTO}) | Apps: {} | Succeeded: {} | Quiet: {} | Escalated: {}",
+                portfolio.total_applications,
+                portfolio.succeeded_count,
+                portfolio.quiet_count,
+                portfolio.escalated_count
+            );
+            for o in &portfolio.outcomes {
+                if let Some(r) = &o.report {
+                    println!(
+                        "  - [{}] ({:?}) {}",
+                        o.id, o.criticality, r.executive_summary
+                    );
+                } else if let Some(err) = &o.error {
+                    println!("  - [{}] ({:?}) ERROR: {err}", o.id, o.criticality);
+                }
+            }
+        }
+    }
+    if portfolio.succeeded_count < portfolio.total_applications {
+        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+    } else if portfolio.quiet_count == portfolio.total_applications {
         ExitCode::from(EXIT_OK)
     } else {
         ExitCode::from(EXIT_FINDINGS)
