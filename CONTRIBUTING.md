@@ -86,6 +86,7 @@ Example:
 ```python
 from netzzwergenwacht.dwarfs.base import Dwarf, AnalysisResult, DetailedAnalysisResult
 
+
 class MyDwarf(Dwarf):
     def __init__(self):
         super().__init__("My Dwarf", "Description")

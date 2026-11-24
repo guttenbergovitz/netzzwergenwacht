@@ -248,7 +248,8 @@ def analyze(
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         url_safe = (
-            url.replace("://", "_")
+            url
+            .replace("://", "_")
             .replace("/", "_")
             .replace(".", "_")
             .replace(":", "_")

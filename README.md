@@ -268,6 +268,7 @@ This ensures your commit always passes the pre-commit ruff hook on the first try
 ```python
 from netzzwergenwacht.dwarfs.base import Dwarf, AnalysisResult, Severity
 
+
 class SicherheitsZwerg(Dwarf):
     """Sicherheits-Zwerg - Analyzes websites for security vulnerabilities and best practices."""
 
@@ -280,11 +281,7 @@ class SicherheitsZwerg(Dwarf):
         # Perform security analysis here
         # Add issues using self.create_issue()
 
-        return AnalysisResult(
-            url=url,
-            dwarf_name=self.name,
-            issues=issues
-        )
+        return AnalysisResult(url=url, dwarf_name=self.name, issues=issues)
 ```
 
 ## 🗺️ Roadmap
