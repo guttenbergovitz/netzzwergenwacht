@@ -46,6 +46,11 @@ tasks:
     cmds:
       - cargo build --release --locked
 
+  audit:
+    desc: Run cargo-audit security advisory check
+    cmds:
+      - cargo audit
+
   clean:
     desc: Remove build artefacts
     cmds:
