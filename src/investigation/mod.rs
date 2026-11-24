@@ -111,7 +111,7 @@ impl Default for InvestigationBudget {
             max_tool_calls: 5,
             max_llm_turns: 6,
             max_duration: Duration::from_secs(90),
-            max_tokens: 1_024,
+            max_tokens: 4_096,
         }
     }
 }
@@ -682,7 +682,13 @@ pub async fn run_investigation_with_specialists(
         )
         .await
         {
-            Ok(c) => final_conclusion = c,
+            Ok(c) => {
+                if hypothesis.status != HypothesisStatus::Inconclusive
+                    || final_conclusion.is_empty()
+                {
+                    final_conclusion = c;
+                }
+            }
             Err(err) => {
                 hypothesis.status = HypothesisStatus::Inconclusive;
                 hypothesis.evaluation_summary = Some(err.clone());
@@ -1783,5 +1789,83 @@ mod tests {
         let md = render_markdown_report(&report);
         assert!(md.contains("# NetzZwergenWacht Investigation Report"));
         assert!(md.contains("## Backlog Remediation Tasks"));
+    }
+
+    #[tokio::test]
+    async fn preserves_supported_conclusion_when_later_hypothesis_is_inconclusive() {
+        let target = AuditTarget::parse("http://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let backend = Arc::new(MockBackend {
+            browser: CollectorOutcome::Failed {
+                error: "chromium unavailable".to_owned(),
+            },
+            axe: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                r#"{"ready_to_conclude":false,"originating_rule":"sec.transport.https","proposed_explanation":"Check security headers","requested_tool":"inspect_security_posture"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Confirmed missing HTTPS and security headers","conclusion":"Transport and security headers require remediation."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Check browser runtime","requested_tool":"inspect_browser_runtime"}"#.to_owned(),
+                r#"{"ready_to_conclude":true,"conclusion":"Transport and security headers require remediation."}"#.to_owned(),
+            ])),
+        };
+
+        let report = run_investigation(
+            target,
+            "Verify security and runtime".to_owned(),
+            TargetPolicy::PublicOnly,
+            InvestigationBudget::default(),
+            backend,
+            &llm,
+        )
+        .await;
+
+        assert_eq!(report.hypotheses.len(), 2);
+        assert_eq!(report.hypotheses[0].status, HypothesisStatus::Supported);
+        assert_eq!(report.hypotheses[1].status, HypothesisStatus::Inconclusive);
+        assert_eq!(
+            report.conclusion,
+            "Transport and security headers require remediation."
+        );
+    }
+
+    #[tokio::test]
+    async fn deduplicates_remediation_tasks_across_initial_and_follow_up_findings() {
+        let target = AuditTarget::parse("http://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let backend = Arc::new(MockBackend {
+            browser: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                r#"{"ready_to_conclude":false,"originating_rule":"sec.transport.https","proposed_explanation":"Check security posture","requested_tool":"inspect_security_posture"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Confirmed","conclusion":"Confirmed."}"#.to_owned(),
+                r#"{"ready_to_conclude":true,"conclusion":"Confirmed."}"#.to_owned(),
+            ])),
+        };
+
+        let report = run_investigation(
+            target,
+            "Verify deduplication".to_owned(),
+            TargetPolicy::PublicOnly,
+            InvestigationBudget::default(),
+            backend,
+            &llm,
+        )
+        .await;
+
+        let mut seen = HashSet::new();
+        for task in &report.remediation_tasks {
+            let key = (
+                task.related_rules.first().map(|r| r.0.clone()),
+                task.title.clone(),
+            );
+            assert!(
+                seen.insert(key),
+                "duplicate remediation task emitted: {}",
+                task.title
+            );
+        }
     }
 }
