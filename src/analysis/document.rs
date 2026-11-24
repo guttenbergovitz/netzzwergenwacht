@@ -120,6 +120,8 @@ pub struct DocumentObservations {
     pub visible_word_count: usize,
     /// Visible character count extracted from `<body>` (excluding script/style/noscript).
     pub visible_char_count: usize,
+    /// Raw `href` values from `<a href="...">` elements in document order.
+    pub link_hrefs: Vec<String>,
 }
 
 impl DocumentObservations {
@@ -292,6 +294,12 @@ fn extract_interactive_and_aria(doc: &Html, obs: &mut DocumentObservations) {
 
     if let Ok(a_href_sel) = Selector::parse("a[href]") {
         for el in doc.select(&a_href_sel) {
+            if let Some(href) = el.value().attr("href") {
+                let trimmed = href.trim();
+                if !trimmed.is_empty() {
+                    obs.link_hrefs.push(trimmed.to_owned());
+                }
+            }
             if has_descendant_interactive(&el) {
                 obs.nested_interactive_count += 1;
             }
