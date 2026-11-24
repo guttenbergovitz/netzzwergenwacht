@@ -23,6 +23,9 @@ use crate::adapters;
 use crate::analysis::{self, AuditReport};
 use crate::brigade::DwarfId;
 use crate::collection;
+use crate::discovery::{
+    self, CrawlBudget, CrawlSummary, DiscoveredPage, PageCrawlStatus, SystemicIssue,
+};
 use crate::domain::{
     AnalyserResult, AuditTarget, AxeEvidence, BrowserEvidence, CollectorOutcome, EvidenceRef,
     EvidenceSnapshot, ExecutionBudget, Finding, RuleId, Severity, TargetPolicy,
@@ -30,8 +33,8 @@ use crate::domain::{
 use crate::intelligence::{LlmBudget, LlmProvider};
 
 use self::tools::{
-    InspectBrowserRuntimeTool, InspectRenderedAccessibilityTool, TargetToolArgs,
-    registered_tool_definitions,
+    CrawlAndClusterTool, InspectBrowserRuntimeTool, InspectRenderedAccessibilityTool,
+    TargetToolArgs, registered_tool_definitions,
 };
 
 const OPEN_TAG: &str = "<untrusted_audit_evidence>";
@@ -257,6 +260,10 @@ pub struct InvestigationContext {
     pub initial_report: Option<AuditReport>,
     /// Additional Level 2 specialist results gathered during investigation.
     pub follow_up_results: Vec<AnalyserResult>,
+    /// Pages discovered during optional multi-page crawl.
+    pub discovered_pages: Vec<DiscoveredPage>,
+    /// Systemic cross-page issues identified during crawl.
+    pub systemic_issues: Vec<SystemicIssue>,
     /// Hypotheses formulated and evaluated during the investigation.
     pub hypotheses: Vec<DiagnosticHypothesis>,
     /// Complete trace of tool invocations.
@@ -282,6 +289,10 @@ pub struct InvestigationReport {
     pub initial_report: Option<AuditReport>,
     /// Additional Level 2 specialist results.
     pub follow_up_results: Vec<AnalyserResult>,
+    /// Pages discovered during optional multi-page crawl.
+    pub discovered_pages: Vec<DiscoveredPage>,
+    /// Systemic cross-page issues identified during crawl.
+    pub systemic_issues: Vec<SystemicIssue>,
     /// Evaluated hypotheses.
     pub hypotheses: Vec<DiagnosticHypothesis>,
     /// Complete tool execution trace.
@@ -322,6 +333,15 @@ pub trait DiagnosticBackend: Send + Sync {
         target: &'a AuditTarget,
         timeout: Duration,
     ) -> CollectFuture<'a, CollectorOutcome<AxeEvidence>>;
+
+    /// Performs a bounded same-origin crawl and systemic issue clustering.
+    fn collect_crawl<'a>(
+        &'a self,
+        target: &'a AuditTarget,
+        crawl_budget: CrawlBudget,
+        exec_budget: ExecutionBudget,
+        policy: TargetPolicy,
+    ) -> CollectFuture<'a, CrawlSummary>;
 }
 
 /// Production diagnostic backend delegating to `collection` and `adapters`.
@@ -352,6 +372,19 @@ impl DiagnosticBackend for LiveDiagnosticBackend {
         timeout: Duration,
     ) -> CollectFuture<'a, CollectorOutcome<AxeEvidence>> {
         Box::pin(adapters::axe::run_axe(target, timeout))
+    }
+
+    fn collect_crawl<'a>(
+        &'a self,
+        target: &'a AuditTarget,
+        crawl_budget: CrawlBudget,
+        exec_budget: ExecutionBudget,
+        policy: TargetPolicy,
+    ) -> CollectFuture<'a, CrawlSummary> {
+        let seed = target.clone();
+        Box::pin(async move {
+            discovery::crawl_and_cluster(seed, crawl_budget, exec_budget, policy).await
+        })
     }
 }
 
@@ -395,6 +428,8 @@ pub async fn run_investigation(
         snapshot: None,
         initial_report: None,
         follow_up_results: Vec::new(),
+        discovered_pages: Vec::new(),
+        systemic_issues: Vec::new(),
         hypotheses: Vec::new(),
         tool_trace: Vec::new(),
         ledger: BudgetLedger::new(budget),
@@ -693,6 +728,9 @@ async fn execute_rig_tool(
                 }
             }
         }
+        "crawl_and_cluster_site" => {
+            run_crawl_tool(target, policy, timeout, backend, args, ctx).await
+        }
         _ => {
             ctx.tool_trace.push(ToolInvocationRecord {
                 tool_id: tool_id.to_owned(),
@@ -700,6 +738,52 @@ async fn execute_rig_tool(
                 authorised: false,
                 succeeded: false,
                 summary: "rejected unrecognised or unauthorised tool request".to_owned(),
+            });
+            (false, Vec::new())
+        }
+    }
+}
+
+async fn run_crawl_tool(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    args: TargetToolArgs,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let tool = CrawlAndClusterTool::new(target.clone(), policy, timeout, backend);
+    match tool.call(args).await {
+        Ok(summary) => {
+            let investigated = summary
+                .pages
+                .iter()
+                .filter(|p| p.status == PageCrawlStatus::Investigated)
+                .count();
+            let succeeded = investigated > 0;
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "crawl_and_cluster_site".to_owned(),
+                dwarf_id: DwarfId::Struktur,
+                authorised: true,
+                succeeded,
+                summary: format!(
+                    "crawled {}/{} discovered pages; {} systemic issue(s)",
+                    investigated,
+                    summary.pages.len(),
+                    summary.systemic_issues.len()
+                ),
+            });
+            ctx.discovered_pages = summary.pages;
+            ctx.systemic_issues = summary.systemic_issues;
+            (succeeded, Vec::new())
+        }
+        Err(err) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "crawl_and_cluster_site".to_owned(),
+                dwarf_id: DwarfId::Struktur,
+                authorised: false,
+                succeeded: false,
+                summary: err.to_string(),
             });
             (false, Vec::new())
         }
@@ -801,13 +885,30 @@ fn build_stakeholder_outputs(ctx: &InvestigationContext) -> (ExecutiveBrief, Vec
         .iter()
         .filter(|h| h.status == HypothesisStatus::Supported)
         .count();
-    let coverage_summary = format!(
-        "Single target `{}` investigated; {} tool call(s) executed; {} hypothesis/hypotheses evaluated ({} supported).",
-        ctx.target.as_str(),
-        ctx.tool_trace.len(),
-        ctx.hypotheses.len(),
-        supported
-    );
+    let coverage_summary = if ctx.discovered_pages.is_empty() {
+        format!(
+            "Single target `{}` investigated; {} tool call(s) executed; {} hypothesis/hypotheses evaluated ({} supported).",
+            ctx.target.as_str(),
+            ctx.tool_trace.len(),
+            ctx.hypotheses.len(),
+            supported
+        )
+    } else {
+        let investigated = ctx
+            .discovered_pages
+            .iter()
+            .filter(|p| p.status == PageCrawlStatus::Investigated)
+            .count();
+        format!(
+            "{} of {} discovered URLs investigated across `{}`; {} systemic issue(s) clustered; {} hypothesis/hypotheses evaluated ({} supported).",
+            investigated,
+            ctx.discovered_pages.len(),
+            ctx.target.host(),
+            ctx.systemic_issues.len(),
+            ctx.hypotheses.len(),
+            supported
+        )
+    };
     let confidence_note =
         "Deterministic measurements carry high confidence; multi-page crawl and authenticated journeys were not evaluated in this single-target investigation."
             .to_owned();
@@ -866,6 +967,8 @@ fn build_report(ctx: InvestigationContext, conclusion: String) -> InvestigationR
         snapshot: ctx.snapshot,
         initial_report: ctx.initial_report,
         follow_up_results: ctx.follow_up_results,
+        discovered_pages: ctx.discovered_pages,
+        systemic_issues: ctx.systemic_issues,
         hypotheses: ctx.hypotheses,
         tool_trace: ctx.tool_trace,
         ledger: ctx.ledger,
@@ -944,6 +1047,29 @@ mod tests {
         ) -> CollectFuture<'a, CollectorOutcome<AxeEvidence>> {
             let a = self.axe.clone();
             Box::pin(async move { a })
+        }
+
+        fn collect_crawl<'a>(
+            &'a self,
+            target: &'a AuditTarget,
+            _crawl_budget: CrawlBudget,
+            _exec_budget: ExecutionBudget,
+            _policy: TargetPolicy,
+        ) -> CollectFuture<'a, CrawlSummary> {
+            let seed = target.clone();
+            Box::pin(async move {
+                CrawlSummary {
+                    seed: seed.clone(),
+                    pages: vec![DiscoveredPage {
+                        url: seed,
+                        page_type: crate::discovery::PageType::Homepage,
+                        depth: 0,
+                        status: PageCrawlStatus::Investigated,
+                    }],
+                    systemic_issues: Vec::new(),
+                    budget_exhausted: false,
+                }
+            })
         }
     }
 

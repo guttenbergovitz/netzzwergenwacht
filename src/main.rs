@@ -133,6 +133,20 @@ enum Command {
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+    /// Re-audit a target and verify whether baseline findings are resolved or unverified.
+    Verify {
+        /// Path to baseline JSONL/JSON report file.
+        #[arg(long)]
+        baseline: PathBuf,
+        /// Target HTTP or HTTPS URL to re-investigate.
+        url: String,
+        /// Allow loopback and private network targets (for local testing only).
+        #[arg(long)]
+        allow_private: bool,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -275,6 +289,72 @@ async fn main() -> ExitCode {
             allow_private,
             format,
         } => run_investigate(&url, objective, allow_private, format).await,
+        Command::Verify {
+            baseline,
+            url,
+            allow_private,
+            format,
+        } => run_verify(&baseline, &url, allow_private, format).await,
+    }
+}
+
+async fn run_verify(
+    baseline_path: &Path,
+    url: &str,
+    allow_private: bool,
+    format: OutputFormat,
+) -> ExitCode {
+    let policy = target_policy(allow_private);
+    let target = match AuditTarget::parse(url, policy) {
+        Ok(t) => t,
+        Err(err) => {
+            eprintln!("invalid target: {err}");
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+    let baseline = match persistence::load_latest_or_single(baseline_path) {
+        Ok(r) => r,
+        Err(err) => {
+            eprintln!("failed to load baseline {}: {err}", baseline_path.display());
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+
+    let budget = netzzwergenwacht::domain::ExecutionBudget::default();
+    let snap = collection::collect_http(&target, &budget, policy).await;
+    let current = analysis::run_all(&snap);
+    let diff = persistence::diff_reports(&baseline, &current);
+
+    match format {
+        OutputFormat::Json => match serde_json::to_string_pretty(&diff) {
+            Ok(json) => println!("{json}"),
+            Err(err) => {
+                eprintln!("failed to serialise verification report: {err}");
+                return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+            }
+        },
+        OutputFormat::Text => {
+            println!("NETZZWERGENWACHT — Remediation Verification ({MOTTO})");
+            println!(
+                "Target: {} | Resolved: {} | Persisting: {} | Unverified: {} | New: {}",
+                diff.current_target,
+                diff.summary.resolved_count,
+                diff.summary.persisting_count,
+                diff.summary.unverified_count,
+                diff.summary.new_count
+            );
+        }
+    }
+
+    if matches!(current.http, CollectorOutcome::Failed { .. }) {
+        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+    } else if diff.summary.persisting_count > 0
+        || diff.summary.new_count > 0
+        || diff.summary.unverified_count > 0
+    {
+        ExitCode::from(EXIT_FINDINGS)
+    } else {
+        ExitCode::from(EXIT_OK)
     }
 }
 
