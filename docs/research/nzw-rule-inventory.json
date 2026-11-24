@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 57,
+  "total_rules": 65,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -127,6 +127,78 @@
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
       "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.links.broken_internal",
+      "constant": "RULE_BROKEN_INTERNAL_LINKS",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.links.to_redirects",
+      "constant": "RULE_LINKS_TO_REDIRECTS",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.links.to_non_indexable",
+      "constant": "RULE_LINKS_TO_NON_INDEXABLE",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.links.broken_anchors",
+      "constant": "RULE_BROKEN_ANCHORS",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.crawl.orphan_candidates",
+      "constant": "RULE_ORPHAN_CANDIDATES",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.seo.canonical_chain_or_loop",
+      "constant": "RULE_CANONICAL_GRAPH",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.i18n.hreflang_reciprocity",
+      "constant": "RULE_HREFLANG_RECIPROCITY",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.content.duplicate_metadata",
+      "constant": "RULE_DUPLICATE_METADATA",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 2,
       "status": "native_rust"
     },
     {
@@ -405,7 +477,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -414,7 +486,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -423,7 +495,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -432,7 +504,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -441,7 +513,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -450,7 +522,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -459,7 +531,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -468,7 +540,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -477,7 +549,7 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
