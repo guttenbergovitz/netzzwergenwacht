@@ -179,6 +179,17 @@ enum Command {
         #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
         audience: AudienceArg,
     },
+    /// Present a stored Patrol, Investigation, or Audit JSON/JSONL report.
+    Report {
+        /// Path to stored JSON or JSONL report file.
+        file: PathBuf,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+        /// Target stakeholder perspective for Markdown output.
+        #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
+        audience: AudienceArg,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -371,6 +382,82 @@ async fn main() -> ExitCode {
                 audience,
             )
             .await
+        }
+        Command::Report {
+            file,
+            format,
+            audience,
+        } => run_report_cmd(&file, format, audience),
+    }
+}
+
+fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> ExitCode {
+    let raw = match std::fs::read_to_string(file) {
+        Ok(s) => s,
+        Err(err) => {
+            eprintln!("failed to read {}: {err}", file.display());
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+    let role: netzzwergenwacht::investigation::RolePerspective = audience.into();
+
+    if let Ok(patrol) = serde_json::from_str::<netzzwergenwacht::patrol::PatrolReport>(&raw) {
+        match format {
+            OutputFormat::Json => println!("{raw}"),
+            OutputFormat::Markdown => {
+                println!(
+                    "{}",
+                    netzzwergenwacht::patrol::render_patrol_markdown(&patrol, role)
+                );
+            }
+            OutputFormat::Text => {
+                println!(
+                    "NETZZWERGENWACHT — Stored Patrol #{} ({MOTTO})",
+                    patrol.patrol_number
+                );
+                println!("Target: {}", patrol.target.as_str());
+                println!("Summary: {}", patrol.executive_summary);
+                println!("Coverage: {}", patrol.coverage_summary);
+            }
+        }
+        return ExitCode::from(EXIT_OK);
+    }
+
+    if let Ok(inv) =
+        serde_json::from_str::<netzzwergenwacht::investigation::InvestigationReport>(&raw)
+    {
+        match format {
+            OutputFormat::Json => println!("{raw}"),
+            OutputFormat::Markdown => {
+                println!(
+                    "{}",
+                    netzzwergenwacht::investigation::reporting::render_markdown_report(&inv)
+                );
+            }
+            OutputFormat::Text => print_investigation_text(&inv, false),
+        }
+        return ExitCode::from(EXIT_OK);
+    }
+
+    match persistence::load_latest_or_single(file) {
+        Ok(audit) => {
+            let eval = config::evaluate_policy(&audit, &PolicyConfig::default());
+            match format {
+                OutputFormat::Json => {
+                    if let Ok(json) = serde_json::to_string_pretty(&audit) {
+                        println!("{json}");
+                    }
+                }
+                OutputFormat::Text | OutputFormat::Markdown => print_text_report(&audit, &eval),
+            }
+            ExitCode::from(EXIT_OK)
+        }
+        Err(err) => {
+            eprintln!(
+                "failed to parse {} as Patrol, Investigation, or Audit report: {err}",
+                file.display()
+            );
+            ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
         }
     }
 }

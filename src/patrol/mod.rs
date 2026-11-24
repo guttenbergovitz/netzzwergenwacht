@@ -131,6 +131,21 @@ pub struct CoverageMatrix {
     pub limitations: Vec<String>,
 }
 
+/// Resource consumption ledger recorded for a single patrol run.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct PatrolResourceLedger {
+    /// Total HTTP page fetches executed during sampling.
+    pub http_requests: usize,
+    /// Total Level 2 headless browser sessions executed.
+    pub browser_sessions: usize,
+    /// Total LLM turns consumed by selective specialist escalation.
+    pub llm_requests: usize,
+    /// Healthy remembered page observations reused without re-fetching.
+    pub reused_observations: usize,
+    /// Total patrol wall-clock duration in milliseconds.
+    pub duration_ms: u64,
+}
+
 /// Change-oriented report produced by [`run_patrol`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatrolReport {
@@ -151,6 +166,9 @@ pub struct PatrolReport {
     /// Structured coverage accounting and limitations.
     #[serde(default)]
     pub coverage_matrix: CoverageMatrix,
+    /// Resource and AI expenditure ledger for this patrol.
+    #[serde(default)]
+    pub resource_ledger: PatrolResourceLedger,
     /// Anomalies detected during this patrol.
     pub anomalies: Vec<PatrolAnomaly>,
     /// Specialist competencies activated for anomaly investigation.
@@ -184,6 +202,7 @@ pub async fn run_patrol(
     llm: Option<&dyn LlmProvider>,
     backend: Arc<dyn DiagnosticBackend>,
 ) -> PatrolReport {
+    let started = std::time::Instant::now();
     let now = unix_now_secs();
     let origin = Origin::from_target(&seed);
     let app_id = memory::ApplicationId::from_origin(&origin);
@@ -429,6 +448,16 @@ pub async fn run_patrol(
         regression.as_ref(),
     );
 
+    let resource_ledger = PatrolResourceLedger {
+        http_requests: page_reports.len(),
+        browser_sessions: deep_inspected_urls,
+        llm_requests: investigation
+            .as_ref()
+            .map_or(0, |inv| inv.ledger.llm_turns_used),
+        reused_observations: reused_page_count,
+        duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+    };
+
     PatrolReport {
         patrol_id: format!("patrol-{patrol_number}-{now}"),
         patrol_number,
@@ -438,6 +467,7 @@ pub async fn run_patrol(
         sampling_plan,
         reused_page_count,
         coverage_matrix,
+        resource_ledger,
         anomalies,
         specialist_escalations,
         investigation,

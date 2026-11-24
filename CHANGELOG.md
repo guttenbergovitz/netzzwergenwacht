@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Patrol Resource Ledger & `nzw report` Command (2026-11-24)
+- Added `PatrolResourceLedger` (`http_requests`, `browser_sessions`, `llm_requests`, `reused_observations`, `duration_ms`) to `PatrolReport` (`src/patrol/mod.rs`).
+- Added `nzw report <file>` (`--format text|json|markdown`, `--audience`) to present stored Patrol, Investigation, or Audit reports (`src/main.rs`).
+
 ### `robots.txt` Sitemap Discovery & Quiet-Patrol Evaluation (2026-11-24)
 - Added `parse_robots_sitemaps` and `/robots.txt` `Sitemap:` fallback in `seed_sitemap_urls` (`src/discovery/mod.rs`).
 - Added `quiet_patrol_spends_zero_llm_calls_when_unchanged` evaluation test (`tests/patrol_eval.rs`).

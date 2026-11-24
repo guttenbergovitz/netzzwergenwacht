@@ -302,6 +302,7 @@ async fn quiet_patrol_spends_zero_llm_calls_when_unchanged() {
         Vec::<netzzwergenwacht::patrol::PatrolAnomaly>::new()
     );
     assert!(p2.investigation.is_none());
+    assert_eq!(p2.resource_ledger.llm_requests, 0);
     assert_eq!(*llm_p2.calls.lock().unwrap(), 0);
     let _ = fs::remove_dir_all(&mem_dir);
 }
