@@ -136,6 +136,8 @@ pub fn evaluate_policy(report: &AuditReport, policy: &PolicyConfig) -> PolicyEva
 
     if matches!(report.http, CollectorOutcome::Failed { .. }) {
         violations.push("HTTP collection failed".to_owned());
+    } else if matches!(report.http, CollectorOutcome::Skipped { .. }) {
+        violations.push("HTTP collection was skipped".to_owned());
     } else if matches!(report.http, CollectorOutcome::Partial { .. }) {
         violations.push("HTTP collection was partial (response truncated)".to_owned());
     }

@@ -4,6 +4,12 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Milestone A Foundation Defect Fixes (2026-11-24)
+- Fixed false historical resolutions in `persistence::diff_reports` by classifying skipped/unavailable baseline rules as `unverified_findings`.
+- Capped external adapter stdout/stderr buffers at 16 MiB in `adapters::run_bounded_command`.
+- Redacted `api_key` in `OpenAiCompatibleProvider`'s `Debug` impl, stream-capped LLM HTTP responses at 1 MiB, validated `related_rules`, and removed mid-JSON prompt truncation in `src/intelligence/mod.rs`.
+- Marked `CollectorOutcome::Skipped` HTTP outcomes as policy violations in `config::evaluate_policy`.
+
 ### Multi-Turn Investigation Hardening, `rig-core` Integration & Stakeholder Briefs (2026-11-24)
 - Integrated `rig-core` (`0.42.0`, MSRV `1.88`) with typed `PortableTool` implementations (`InspectBrowserRuntimeTool`, `InspectRenderedAccessibilityTool`) in `src/investigation/tools.rs`.
 - Fixed P0/P1 defects in `src/investigation/mod.rs`: deterministic `Inconclusive` enforcement when follow-up tools fail, `analyse_axe_only` avoiding empty-HTML re-analysis, remaining wall-clock budget propagation, unique `InvestigationId` generation, rule-ID verification, split `supporting_evidence`/`contradictory_evidence`, and full `snapshot` preservation.
