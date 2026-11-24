@@ -114,6 +114,9 @@ pub struct PolicyConfig {
     pub max_high: Option<usize>,
     /// Permit private/loopback targets (for local testing only).
     pub allow_private: bool,
+    /// Optional Level 2 collectors (`"browser"`, `"lighthouse"`, `"axe"`) that must
+    /// produce `"captured"` evidence for the quality gate to pass.
+    pub require_collectors: Vec<String>,
 }
 
 /// Result of evaluating an [`AuditReport`] against a [`PolicyConfig`].
@@ -140,6 +143,32 @@ pub fn evaluate_policy(report: &AuditReport, policy: &PolicyConfig) -> PolicyEva
         violations.push("HTTP collection was skipped".to_owned());
     } else if matches!(report.http, CollectorOutcome::Partial { .. }) {
         violations.push("HTTP collection was partial (response truncated)".to_owned());
+    }
+
+    for req in &policy.require_collectors {
+        let name = req.trim().to_ascii_lowercase();
+        if name.is_empty() {
+            continue;
+        }
+        match report
+            .level2_collectors
+            .iter()
+            .find(|c| c.collector == name)
+        {
+            Some(status) if status.state == "captured" => {}
+            Some(status) => {
+                let detail = status.detail.as_deref().unwrap_or("no detail");
+                violations.push(format!(
+                    "required collector `{name}` did not capture evidence (state={}, {detail})",
+                    status.state
+                ));
+            }
+            None => {
+                violations.push(format!(
+                    "required collector `{name}` outcome is missing from report"
+                ));
+            }
+        }
     }
 
     let has_explicit_thresholds = policy.fail_on_severity.is_some()
@@ -266,5 +295,50 @@ allow_private = true
             ..PolicyConfig::default()
         };
         assert!(!evaluate_policy(&report, &high_gate).passed);
+    }
+
+    #[test]
+    fn policy_gate_enforces_required_level2_collectors() {
+        let target = AuditTarget::parse("http://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let snap = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "http://example.org/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: Vec::new(),
+                    elapsed_ms: Measurement::Measured {
+                        value: 10,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 0,
+                    body_truncated: false,
+                    body_text: String::new(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "http".to_owned(),
+            },
+            browser: CollectorOutcome::Skipped {
+                reason: "not enabled".to_owned(),
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let report = analysis::run_all(&snap);
+        let gate = PolicyConfig {
+            fail_on_severity: Some(Severity::Critical),
+            require_collectors: vec!["browser".to_owned()],
+            ..PolicyConfig::default()
+        };
+        let eval = evaluate_policy(&report, &gate);
+        assert!(!eval.passed);
+        assert!(
+            eval.violations
+                .iter()
+                .any(|v| v.contains("required collector `browser` did not capture evidence"))
+        );
     }
 }
