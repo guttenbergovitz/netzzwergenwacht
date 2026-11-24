@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Large-Scale Sampling Evaluation, Anti-Starvation & CLI `--config` Routing (2026-11-24)
+- Added anti-starvation cap in `plan_returning_patrol` (`src/patrol/sampling.rs`) reserving at least 20% of `max_pages` for `RecentlyChanged` and `RotatingExploration`.
+- Wired `--config <FILE>` and `RigProviderRouter` (`[models]`) into `nzw patrol` (`src/main.rs`).
+- Added `tests/patrol_scale_eval.rs` evaluating `build_sampling_plan` across 2,000 URLs, 8 locales, and 12 template families.
+
 ### Rig-Native Providers & Per-Dwarf Model Routing (2026-11-24)
 - Replaced the custom raw `reqwest` OpenAI HTTP client in `src/intelligence/mod.rs` with `RigCompletionProvider` backed by `rig-core` (`openai::CompletionsClient`, `anthropic::Client`, `ollama::Client`).
 - Added `ProviderKind`, `ModelSpec`, and `ModelRoutingConfig` (`[models.default]`, `kommandant`, `specialist`, `dokumentation`, `dwarfs.<id>`) in `src/config.rs`, plus `RigProviderRouter` in `src/intelligence/mod.rs`.
