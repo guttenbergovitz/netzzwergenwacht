@@ -110,9 +110,18 @@ impl RigCompletionProvider {
         let api_key = match spec.provider {
             crate::config::ProviderKind::Ollama => std::env::var(env_var).ok(),
             crate::config::ProviderKind::OpenAi | crate::config::ProviderKind::Anthropic => {
-                let key = std::env::var(env_var)
-                    .or_else(|_| std::env::var("OPENAI_API_KEY"))
-                    .map_err(|_| format!("{env_var} is not set"))?;
+                let key = if spec.api_key_env.is_some()
+                    || spec.provider == crate::config::ProviderKind::Anthropic
+                {
+                    std::env::var(env_var).map_err(|_| format!("{env_var} is not set"))?
+                } else {
+                    std::env::var(env_var)
+                        .or_else(|_| std::env::var("OPENCODE_API_KEY"))
+                        .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                        .map_err(|_| {
+                            format!("{env_var} (or OPENCODE_API_KEY / OPENAI_API_KEY) is not set")
+                        })?
+                };
                 if key.trim().is_empty() {
                     return Err(format!("{env_var} is empty"));
                 }
@@ -132,16 +141,37 @@ impl RigCompletionProvider {
         })
     }
 
-    /// Builds a provider from environment variables (`NZW_LLM_API_KEY`, `NZW_LLM_BASE_URL`, `NZW_LLM_MODEL`).
+    /// Builds a provider from environment variables (`NZW_LLM_API_KEY`,
+    /// `OPENCODE_API_KEY`, `OPENAI_API_KEY`, `NZW_LLM_BASE_URL`, `NZW_LLM_MODEL`).
     ///
     /// # Errors
     ///
-    /// Returns an error if `NZW_LLM_API_KEY` (or `OPENAI_API_KEY`) is missing or empty.
+    /// Returns an error if no supported LLM API key environment variable is set.
     pub fn from_env() -> Result<Self, String> {
-        let model = std::env::var("NZW_LLM_MODEL")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "gpt-4o-mini".to_owned());
+        let non_empty = |var: &str| std::env::var(var).ok().filter(|s| !s.trim().is_empty());
+        if non_empty("NZW_LLM_API_KEY").is_some() {
+            let model = non_empty("NZW_LLM_MODEL").unwrap_or_else(|| "gpt-4o-mini".to_owned());
+            return Self::from_model_spec(&crate::config::ModelSpec {
+                model,
+                api_key_env: Some("NZW_LLM_API_KEY".to_owned()),
+                ..crate::config::ModelSpec::default()
+            });
+        }
+        if non_empty("OPENCODE_API_KEY").is_some() {
+            let model = non_empty("NZW_LLM_MODEL")
+                .or_else(|| non_empty("OPENCODE_MODEL"))
+                .unwrap_or_else(|| "deepseek-v4.1-flash".to_owned());
+            let base_url = non_empty("NZW_LLM_BASE_URL")
+                .or_else(|| non_empty("OPENCODE_BASE_URL"))
+                .or_else(|| Some("https://opencode.ai/zen/go/v1".to_owned()));
+            return Self::from_model_spec(&crate::config::ModelSpec {
+                model,
+                base_url,
+                api_key_env: Some("OPENCODE_API_KEY".to_owned()),
+                ..crate::config::ModelSpec::default()
+            });
+        }
+        let model = non_empty("NZW_LLM_MODEL").unwrap_or_else(|| "gpt-4o-mini".to_owned());
         Self::from_model_spec(&crate::config::ModelSpec {
             model,
             ..crate::config::ModelSpec::default()

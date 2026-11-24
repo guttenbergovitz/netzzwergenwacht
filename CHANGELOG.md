@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### OpenCode Go (`OPENCODE_API_KEY`) Auto-Detection & `.nzw/` Ignore (2026-11-24)
+- Updated `RigCompletionProvider::from_env` and `from_model_spec` (`src/intelligence/mod.rs`) to auto-detect `OPENCODE_API_KEY` (defaulting to `https://opencode.ai/zen/go/v1` when `NZW_LLM_API_KEY` is unset) and honour explicit `api_key_env` without falling back to `OPENAI_API_KEY`.
+- Added `.nzw/` to `.gitignore`.
+
 ### Shared Evidence & Collaborative Reasoning via Specialist Re-Consultation (2026-11-24)
 - Added `consult_specialist:<DwarfId>` tool for `KommandantZwerg` to re-consult domain specialists during investigation with full evidence context (findings, hypotheses, prior contributions).
 - Implemented `consult_specialist_during_investigation` (`src/investigation/mod.rs`) building comprehensive evidence summaries from `InvestigationContext` for specialist prompts.
