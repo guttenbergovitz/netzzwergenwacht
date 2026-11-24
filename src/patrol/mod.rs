@@ -26,9 +26,9 @@ use crate::discovery::{
 use crate::domain::{
     AuditTarget, CollectorOutcome, ExecutionBudget, Finding, Origin, Severity, TargetPolicy,
 };
-use crate::intelligence::LlmProvider;
+use crate::intelligence::{LlmBudget, LlmProvider, ProviderRouter};
 use crate::investigation::{
-    DiagnosticBackend, InvestigationBudget, InvestigationReport, run_investigation,
+    DiagnosticBackend, InvestigationBudget, InvestigationReport, prompts, run_investigation,
 };
 use crate::persistence::{self, RegressionReport};
 
@@ -155,6 +155,21 @@ pub struct PatrolResourceLedger {
     pub duration_ms: u64,
 }
 
+/// Result of delegating a material patrol anomaly to a specialist dwarf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpecialistDelegation {
+    /// Anomaly identifier addressed by this specialist.
+    pub anomaly_id: String,
+    /// Specialist dwarf competency invoked.
+    pub dwarf_id: DwarfId,
+    /// Model identifier used for this specialist's reasoning.
+    pub model_used: String,
+    /// Target URL inspected.
+    pub target_url: String,
+    /// Concise specialist assessment grounded in the anomaly observations.
+    pub assessment: String,
+}
+
 /// Change-oriented report produced by [`run_patrol`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatrolReport {
@@ -182,6 +197,9 @@ pub struct PatrolReport {
     pub anomalies: Vec<PatrolAnomaly>,
     /// Specialist competencies activated for anomaly investigation.
     pub specialist_escalations: Vec<DwarfId>,
+    /// Per-anomaly specialist assessments produced using per-dwarf model routing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub specialist_delegations: Vec<SpecialistDelegation>,
     /// Optional targeted `KommandantZwerg` investigation triggered by anomalies.
     pub investigation: Option<InvestigationReport>,
     /// Optional regression diff against the previous patrol's seed report.
@@ -206,8 +224,15 @@ fn unix_now_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-/// Executes an autonomous web quality patrol against `seed`.
-#[allow(clippy::too_many_lines)]
+struct SingleProviderRouter<'a>(Option<&'a dyn LlmProvider>);
+
+impl ProviderRouter for SingleProviderRouter<'_> {
+    fn resolve_for_dwarf(&self, _dwarf_id: DwarfId) -> Option<&dyn LlmProvider> {
+        self.0
+    }
+}
+
+/// Executes an autonomous web quality patrol against `seed` using a single optional LLM provider.
 pub async fn run_patrol(
     seed: AuditTarget,
     policy: TargetPolicy,
@@ -215,6 +240,30 @@ pub async fn run_patrol(
     patrol_budget: PatrolBudget,
     memory_dir: Option<&Path>,
     llm: Option<&dyn LlmProvider>,
+    backend: Arc<dyn DiagnosticBackend>,
+) -> PatrolReport {
+    let router = SingleProviderRouter(llm);
+    run_patrol_with_router(
+        seed,
+        policy,
+        exec_budget,
+        patrol_budget,
+        memory_dir,
+        Some(&router),
+        backend,
+    )
+    .await
+}
+
+/// Executes an autonomous web quality patrol against `seed` with per-dwarf [`ProviderRouter`].
+#[allow(clippy::too_many_lines)]
+pub async fn run_patrol_with_router(
+    seed: AuditTarget,
+    policy: TargetPolicy,
+    exec_budget: ExecutionBudget,
+    patrol_budget: PatrolBudget,
+    memory_dir: Option<&Path>,
+    router: Option<&dyn ProviderRouter>,
     backend: Arc<dyn DiagnosticBackend>,
 ) -> PatrolReport {
     let started = std::time::Instant::now();
@@ -324,11 +373,16 @@ pub async fn run_patrol(
         page_reports.push((sel.clone(), report, tpl, body_hash));
     }
 
-    // 3b. Verify reused healthy candidates via conditional HTTP; immediately re-inspect if changed.
+    // 3b. Verify reused healthy candidates via conditional HTTP (capped at max_pages);
+    // immediately re-inspect changed pages while active inspections remain < max_pages.
     let mut verified_reused_count = 0usize;
     let mut unverified_reused_count = 0usize;
     let mut conditional_checks = 0usize;
     for reused_url in &sampling_plan.reused_urls {
+        if conditional_checks >= patrol_budget.max_pages {
+            unverified_reused_count += 1;
+            continue;
+        }
         let rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
         if rem.is_zero() {
             budget_exhausted = true;
@@ -364,11 +418,11 @@ pub async fn run_patrol(
         if outcome == collection::ConditionalCheckOutcome::Unchanged {
             verified_reused_count += 1;
             if let Some(entry) = mem.page_records.get_mut(reused_url) {
-                entry.freshness = EvidenceFreshness::CurrentlyVerified;
+                entry.freshness = EvidenceFreshness::HttpRepresentationOnly;
                 entry.last_inspected_unix_secs = now;
             }
-        } else {
-            // Changed or unverifiable: immediately re-inspect in this patrol.
+        } else if page_reports.len() < patrol_budget.max_pages {
+            // Changed or unverifiable: immediately re-inspect within max_pages cap.
             let snap = collection::collect_http(&target, &step_budget, policy).await;
             let report = analysis::run_all(&snap);
             let (pt, tpl, body_hash) = if let CollectorOutcome::Captured { data } = &snap.http {
@@ -395,6 +449,8 @@ pub async fn run_patrol(
                 tpl,
                 body_hash,
             ));
+        } else {
+            unverified_reused_count += 1;
         }
     }
 
@@ -430,37 +486,86 @@ pub async fn run_patrol(
         is_returning,
     );
 
-    // 6. Selective specialist escalation directed at the actual anomalous URL.
+    // 6. Selective specialist delegation & KommandantZwerg escalation,
+    // bounded by the remaining patrol wall-clock deadline.
     let mut specialist_escalations: Vec<DwarfId> = Vec::new();
+    let mut specialist_delegations: Vec<SpecialistDelegation> = Vec::new();
+    let mut specialist_llm_calls = 0usize;
     let mut investigation: Option<InvestigationReport> = None;
-    if patrol_budget.allow_ai_escalation
-        && !anomalies.is_empty()
-        && let Some(provider) = llm
-    {
-        for a in &anomalies {
+    let esc_rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+    if esc_rem.is_zero() && !anomalies.is_empty() {
+        budget_exhausted = true;
+    } else if patrol_budget.allow_ai_escalation && !anomalies.is_empty() {
+        for a in anomalies.iter().take(3) {
             if !specialist_escalations.contains(&a.suggested_competency) {
                 specialist_escalations.push(a.suggested_competency);
             }
+            let spec_rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+            if spec_rem.is_zero() {
+                budget_exhausted = true;
+                break;
+            }
+            let spec_llm = router.and_then(|r| {
+                r.resolve_for_dwarf(a.suggested_competency)
+                    .or_else(|| r.resolve_for_dwarf(DwarfId::Kommandant))
+            });
+            if let Some(provider) = spec_llm {
+                let contract = prompts::specialist_prompt(a.suggested_competency, &a.summary);
+                let user_msg = format!(
+                    "Anomaly `{}` on `{}` ({:?}): {}",
+                    a.id, a.affected_url, a.severity, a.summary
+                );
+                let llm_budget = LlmBudget {
+                    max_tokens: 512,
+                    max_requests: 1,
+                    timeout: spec_rem.min(std::time::Duration::from_secs(15)),
+                };
+                specialist_llm_calls += 1;
+                if let Ok(assessment) = provider
+                    .complete(&contract.system_prompt, &user_msg, llm_budget)
+                    .await
+                {
+                    specialist_delegations.push(SpecialistDelegation {
+                        anomaly_id: a.id.clone(),
+                        dwarf_id: a.suggested_competency,
+                        model_used: provider.model_name().to_owned(),
+                        target_url: a.affected_url.clone(),
+                        assessment,
+                    });
+                }
+            }
         }
-        let investigation_target =
-            AuditTarget::parse(&anomalies[0].affected_url, policy).unwrap_or_else(|_| seed.clone());
-        let objective = format!(
-            "Investigate {} patrol anomaly(ies); top concern on {}: {}",
-            anomalies.len(),
-            investigation_target.as_str(),
-            anomalies[0].summary
-        );
-        investigation = Some(
-            run_investigation(
-                investigation_target,
-                objective,
-                policy,
-                InvestigationBudget::default(),
-                Arc::clone(&backend),
-                provider,
-            )
-            .await,
-        );
+
+        let kommandant_rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+        if kommandant_rem.is_zero() {
+            budget_exhausted = true;
+        } else if let Some(provider) = router.and_then(|r| r.resolve_for_dwarf(DwarfId::Kommandant))
+        {
+            let investigation_target = AuditTarget::parse(&anomalies[0].affected_url, policy)
+                .unwrap_or_else(|_| seed.clone());
+            let objective = format!(
+                "Investigate {} patrol anomaly(ies); top concern on {}: {}",
+                anomalies.len(),
+                investigation_target.as_str(),
+                anomalies[0].summary
+            );
+            let default_inv_budget = InvestigationBudget::default();
+            let bounded_inv_budget = InvestigationBudget {
+                max_duration: kommandant_rem.min(default_inv_budget.max_duration),
+                ..default_inv_budget
+            };
+            investigation = Some(
+                run_investigation(
+                    investigation_target,
+                    objective,
+                    policy,
+                    bounded_inv_budget,
+                    Arc::clone(&backend),
+                    provider,
+                )
+                .await,
+            );
+        }
     }
 
     // 7. Update institutional memory.
@@ -607,9 +712,10 @@ pub async fn run_patrol(
         discovery_requests: usize::from(!discovered.is_empty()).max(1),
         http_requests: page_reports.len(),
         browser_sessions: deep_inspected_urls,
-        llm_requests: investigation
-            .as_ref()
-            .map_or(0, |inv| inv.ledger.llm_turns_used),
+        llm_requests: specialist_llm_calls
+            + investigation
+                .as_ref()
+                .map_or(0, |inv| inv.ledger.llm_turns_used),
         investigation_tool_calls: investigation
             .as_ref()
             .map_or(0, |inv| inv.ledger.tool_calls_used),
@@ -630,6 +736,7 @@ pub async fn run_patrol(
         resource_ledger,
         anomalies,
         specialist_escalations,
+        specialist_delegations,
         investigation,
         regression,
         coverage_summary,

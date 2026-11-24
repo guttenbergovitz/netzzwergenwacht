@@ -275,6 +275,64 @@ impl RigProviderRouter {
     }
 }
 
+/// Trait resolving an optional [`LlmProvider`] per [`crate::brigade::DwarfId`].
+pub trait ProviderRouter: Send + Sync {
+    /// Returns the provider configured for `dwarf_id`, if available.
+    fn resolve_for_dwarf(&self, dwarf_id: crate::brigade::DwarfId) -> Option<&dyn LlmProvider>;
+}
+
+/// [`ProviderRouter`] backed by pre-resolved per-dwarf providers and an optional fallback.
+#[derive(Default)]
+pub struct CachedProviderRouter {
+    providers: std::collections::BTreeMap<crate::brigade::DwarfId, std::sync::Arc<dyn LlmProvider>>,
+    fallback: Option<std::sync::Arc<dyn LlmProvider>>,
+}
+
+impl CachedProviderRouter {
+    /// Builds a [`CachedProviderRouter`] from `routing`, skipping dwarfs whose credentials are unset.
+    #[must_use]
+    pub fn from_routing(routing: &crate::config::ModelRoutingConfig) -> Self {
+        let rig = RigProviderRouter::new(routing.clone());
+        let mut providers = std::collections::BTreeMap::new();
+        for profile in crate::brigade::ZWERGENBRIGADE {
+            if let Ok(p) = rig.provider_for(profile.id) {
+                let arc: std::sync::Arc<dyn LlmProvider> = std::sync::Arc::new(p);
+                providers.insert(profile.id, arc);
+            }
+        }
+        let fallback = RigCompletionProvider::from_env()
+            .ok()
+            .map(|p| std::sync::Arc::new(p) as std::sync::Arc<dyn LlmProvider>);
+        Self {
+            providers,
+            fallback,
+        }
+    }
+
+    /// Inserts a specific provider for `dwarf_id` (useful in multi-model tests).
+    pub fn insert(
+        &mut self,
+        dwarf_id: crate::brigade::DwarfId,
+        provider: std::sync::Arc<dyn LlmProvider>,
+    ) {
+        self.providers.insert(dwarf_id, provider);
+    }
+
+    /// Sets the fallback provider used when no dwarf-specific provider is registered.
+    pub fn set_fallback(&mut self, provider: std::sync::Arc<dyn LlmProvider>) {
+        self.fallback = Some(provider);
+    }
+}
+
+impl ProviderRouter for CachedProviderRouter {
+    fn resolve_for_dwarf(&self, dwarf_id: crate::brigade::DwarfId) -> Option<&dyn LlmProvider> {
+        self.providers
+            .get(&dwarf_id)
+            .map(AsRef::as_ref)
+            .or(self.fallback.as_deref())
+    }
+}
+
 /// Builds a system/user prompt pair with prompt-injection delimiters around
 /// untrusted external audit data.
 #[must_use]
