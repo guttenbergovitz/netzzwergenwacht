@@ -100,6 +100,67 @@ pub async fn collect_http(
     }
 }
 
+/// Outcome of a conditional HTTP revalidation check (`If-None-Match` / `If-Modified-Since`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionalCheckOutcome {
+    /// Server confirmed `304 Not Modified` or an identical `ETag` on the target URL.
+    Unchanged,
+    /// Resource changed, redirected, failed, or lacked verifiable validator headers.
+    ChangedOrUnverifiable,
+}
+
+/// Performs a bounded conditional `GET` using `etag` / `last_modified` without
+/// following redirects or downloading a full body on `304`.
+pub async fn check_if_unchanged(
+    target: &AuditTarget,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+) -> ConditionalCheckOutcome {
+    if etag.is_none() && last_modified.is_none() {
+        return ConditionalCheckOutcome::ChangedOrUnverifiable;
+    }
+    let Ok(pinned_addrs) = resolve_and_validate(target, policy).await else {
+        return ConditionalCheckOutcome::ChangedOrUnverifiable;
+    };
+    let host_for_pin = strip_ipv6_brackets(target.host());
+    let Ok(client) = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(Policy::none())
+        .timeout(budget.http_timeout)
+        .user_agent(USER_AGENT)
+        .resolve_to_addrs(host_for_pin, &pinned_addrs)
+        .build()
+    else {
+        return ConditionalCheckOutcome::ChangedOrUnverifiable;
+    };
+    let mut req = client.get(target.as_str());
+    if let Some(tag) = etag {
+        req = req.header("If-None-Match", tag);
+    }
+    if let Some(lm) = last_modified {
+        req = req.header("If-Modified-Since", lm);
+    }
+    let Ok(resp) = req.send().await else {
+        return ConditionalCheckOutcome::ChangedOrUnverifiable;
+    };
+    if resp.status() == reqwest::StatusCode::NOT_MODIFIED {
+        return ConditionalCheckOutcome::Unchanged;
+    }
+    if resp.status().is_success()
+        && let Some(expected_tag) = etag
+        && resp
+            .headers()
+            .get("etag")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|actual| actual == expected_tag)
+    {
+        return ConditionalCheckOutcome::Unchanged;
+    }
+    ConditionalCheckOutcome::ChangedOrUnverifiable
+}
+
 /// Collects HTTP and TLS evidence for multiple targets with concurrency bounded
 /// by `budget.max_concurrency`, preserving input target order.
 pub async fn collect_batch(
@@ -504,5 +565,47 @@ mod tests {
         assert_eq!(snaps.len(), 2);
         assert_eq!(snaps[0].target, t1);
         assert_eq!(snaps[1].target, t2);
+    }
+
+    #[tokio::test]
+    async fn check_if_unchanged_respects_304_and_missing_validators() {
+        let addr = spawn_mock_server(vec![
+            "HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nETag: \"v2\"\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi",
+        ])
+        .await;
+        let target =
+            AuditTarget::parse(&format!("http://{addr}/page"), TargetPolicy::AllowPrivate).unwrap();
+        let budget = ExecutionBudget::default();
+
+        // No validators -> unverifiable without any HTTP request.
+        assert_eq!(
+            check_if_unchanged(&target, None, None, &budget, TargetPolicy::AllowPrivate).await,
+            ConditionalCheckOutcome::ChangedOrUnverifiable
+        );
+        // 304 Not Modified -> Unchanged.
+        assert_eq!(
+            check_if_unchanged(
+                &target,
+                Some("\"v1\""),
+                None,
+                &budget,
+                TargetPolicy::AllowPrivate
+            )
+            .await,
+            ConditionalCheckOutcome::Unchanged
+        );
+        // Changed ETag -> ChangedOrUnverifiable.
+        assert_eq!(
+            check_if_unchanged(
+                &target,
+                Some("\"v1\""),
+                None,
+                &budget,
+                TargetPolicy::AllowPrivate
+            )
+            .await,
+            ConditionalCheckOutcome::ChangedOrUnverifiable
+        );
     }
 }

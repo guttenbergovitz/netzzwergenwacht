@@ -146,7 +146,10 @@ pub struct PatrolResourceLedger {
     /// Total diagnostic tool invocations consumed during specialist escalation.
     #[serde(default)]
     pub investigation_tool_calls: usize,
-    /// Healthy remembered page observations reused without re-fetching.
+    /// Conditional HTTP revalidation checks (`If-None-Match` / `If-Modified-Since`).
+    #[serde(default)]
+    pub conditional_checks: usize,
+    /// Healthy remembered page observations verified unchanged via conditional HTTP.
     pub reused_observations: usize,
     /// Total patrol wall-clock duration in milliseconds.
     pub duration_ms: u64,
@@ -419,6 +422,42 @@ pub async fn run_patrol(
     if seed_report.is_some() {
         mem.latest_report.clone_from(&seed_report);
     }
+    let mut verified_reused_count = 0usize;
+    let mut unverified_reused_count = 0usize;
+    let mut conditional_checks = 0usize;
+    for reused_url in &sampling_plan.reused_urls {
+        let Some(rec) = mem.page_records.get(reused_url).cloned() else {
+            unverified_reused_count += 1;
+            continue;
+        };
+        if rec.etag.is_none() && rec.last_modified.is_none() {
+            unverified_reused_count += 1;
+            continue;
+        }
+        if let Ok(target) = AuditTarget::parse(reused_url, policy) {
+            conditional_checks += 1;
+            let outcome = collection::check_if_unchanged(
+                &target,
+                rec.etag.as_deref(),
+                rec.last_modified.as_deref(),
+                &exec_budget,
+                policy,
+            )
+            .await;
+            if outcome == collection::ConditionalCheckOutcome::Unchanged {
+                verified_reused_count += 1;
+                if let Some(entry) = mem.page_records.get_mut(reused_url) {
+                    entry.freshness = EvidenceFreshness::CurrentlyVerified;
+                    entry.last_inspected_unix_secs = now;
+                }
+            } else {
+                unverified_reused_count += 1;
+            }
+        } else {
+            unverified_reused_count += 1;
+        }
+    }
+
     let memory_save_error = memory_dir
         .and_then(|dir| save_memory(dir, &mem).err())
         .map(|err| format!("failed to save patrol memory: {err}"));
@@ -426,7 +465,7 @@ pub async fn run_patrol(
     let execution_succeeded = seed_report
         .as_ref()
         .is_some_and(|r| !matches!(r.http, CollectorOutcome::Failed { .. }));
-    let reused_page_count = sampling_plan.reused_urls.len();
+    let reused_page_count = verified_reused_count;
     let has_subpage_regressions = subpage_regressions
         .iter()
         .any(|r| r.summary.new_count > 0 || r.summary.reintroduced_count > 0);
@@ -465,6 +504,11 @@ pub async fn run_patrol(
             "Level 2 headless browser diagnostics were not enabled for this patrol.".to_owned(),
         );
     }
+    if unverified_reused_count > 0 {
+        limitations.push(format!(
+            "{unverified_reused_count} healthy candidate(s) lacked verifiable ETag/Last-Modified confirmation and were not counted as verified unchanged."
+        ));
+    }
     let coverage_matrix = CoverageMatrix {
         discovered_urls: application_map.discovered_urls.len(),
         inspected_urls: page_reports.len(),
@@ -501,6 +545,7 @@ pub async fn run_patrol(
         investigation_tool_calls: investigation
             .as_ref()
             .map_or(0, |inv| inv.ledger.tool_calls_used),
+        conditional_checks,
         reused_observations: reused_page_count,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     };

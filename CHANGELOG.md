@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Conditional HTTP Reuse Verification (2026-11-24)
+- Added `collection::check_if_unchanged` (`If-None-Match` / `If-Modified-Since` conditional `GET`) in `src/collection.rs`.
+- Updated `run_patrol` (`src/patrol/mod.rs`) so `reused_page_count` and `PatrolResourceLedger::reused_observations` only count pages verified unchanged via `304 Not Modified` or matching `ETag`, recording `conditional_checks` and surfacing unverified candidates in `CoverageMatrix::limitations`.
+
 ### Patrol Subpage Diffing, Template Stratification & Targeted Escalation (2026-11-24)
 - Stored `latest_report`, `etag`, and `last_modified` per `RememberedPage` (`src/patrol/memory.rs`) and diffed every inspected subpage against its prior report (`src/patrol/mod.rs`).
 - Added template-family stratification and oldest-inspected-first `RotatingExploration` in `src/patrol/sampling.rs`.
