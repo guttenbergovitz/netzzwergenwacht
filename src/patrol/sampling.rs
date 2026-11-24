@@ -212,7 +212,7 @@ fn plan_initial_patrol(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn plan_returning_patrol(
     seed: &AuditTarget,
     candidates: &[AuditTarget],
@@ -296,28 +296,64 @@ fn plan_returning_patrol(
         }
     }
 
-    let mut rotated = false;
+    // Ensure at least one representative per remembered template family is covered.
+    let mut covered_templates: HashSet<&str> = selections
+        .iter()
+        .filter_map(|s| {
+            mem.page_records
+                .get(s.url.as_str())
+                .and_then(|r| r.template_fingerprint.as_deref())
+        })
+        .collect();
     for url in candidates {
-        if selected_set.contains(url.as_str()) {
-            continue;
+        if let Some(rec) = mem.page_records.get(url.as_str())
+            && let Some(tpl) = rec.template_fingerprint.as_deref()
+            && covered_templates.insert(tpl)
+        {
+            try_push_selection(
+                url,
+                SelectionReason::TemplateRepresentative,
+                false,
+                Some(rec.page_type),
+                max_pages,
+                max_deep,
+                deep_used,
+                selected_set,
+                selections,
+            );
         }
-        if let Some(rec) = mem.page_records.get(url.as_str()) {
-            if rotated {
-                reused_urls.push(url.as_str().to_owned());
-            } else {
-                rotated = true;
-                try_push_selection(
-                    url,
-                    SelectionReason::RotatingExploration,
-                    false,
-                    Some(rec.page_type),
-                    max_pages,
-                    max_deep,
-                    deep_used,
-                    selected_set,
-                    selections,
-                );
-            }
+    }
+
+    // Sort remaining fresh healthy candidates oldest-inspected first so rotating
+    // exploration genuinely cycles across all healthy pages over consecutive patrols.
+    let mut healthy_pool: Vec<(&AuditTarget, u64, PageType)> = candidates
+        .iter()
+        .filter(|url| !selected_set.contains(url.as_str()))
+        .filter_map(|url| {
+            mem.page_records
+                .get(url.as_str())
+                .map(|rec| (url, rec.last_inspected_unix_secs, rec.page_type))
+        })
+        .collect();
+    healthy_pool.sort_by_key(|(_, ts, _)| *ts);
+
+    let mut rotated = false;
+    for (url, _, page_type) in healthy_pool {
+        if rotated {
+            reused_urls.push(url.as_str().to_owned());
+        } else {
+            rotated = true;
+            try_push_selection(
+                url,
+                SelectionReason::RotatingExploration,
+                false,
+                Some(page_type),
+                max_pages,
+                max_deep,
+                deep_used,
+                selected_set,
+                selections,
+            );
         }
     }
 }
@@ -390,6 +426,9 @@ mod tests {
                     page_type: PageType::Unknown,
                     template_fingerprint: None,
                     content_hash: None,
+                    etag: None,
+                    last_modified: None,
+                    latest_report: None,
                     last_inspected_unix_secs: 1_000,
                     open_finding_count: open,
                     healthy_streak: usize::from(open == 0),
@@ -412,5 +451,50 @@ mod tests {
                 .any(|s| s.reason == SelectionReason::RotatingExploration)
         );
         assert_eq!(second.reused_urls.len(), 1);
+    }
+
+    #[test]
+    fn rotating_exploration_selects_oldest_inspected_healthy_page() {
+        let seed = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let newer =
+            AuditTarget::parse("https://example.org/newer", TargetPolicy::PublicOnly).unwrap();
+        let older =
+            AuditTarget::parse("https://example.org/older", TargetPolicy::PublicOnly).unwrap();
+        let discovered = vec![newer.clone(), older.clone()];
+
+        let mut mem = ApplicationMemory::new(&seed, 2_000);
+        mem.patrol_count = 1;
+        for (url, ts) in [
+            (seed.as_str(), 2_000_u64),
+            (newer.as_str(), 1_900_u64),
+            (older.as_str(), 1_500_u64),
+        ] {
+            mem.page_records.insert(
+                url.to_owned(),
+                RememberedPage {
+                    url: url.to_owned(),
+                    locale: None,
+                    page_type: PageType::Unknown,
+                    template_fingerprint: None,
+                    content_hash: None,
+                    etag: None,
+                    last_modified: None,
+                    latest_report: None,
+                    last_inspected_unix_secs: ts,
+                    open_finding_count: 0,
+                    healthy_streak: 1,
+                    freshness: EvidenceFreshness::CurrentlyVerified,
+                },
+            );
+        }
+
+        let plan = build_sampling_plan(&seed, &discovered, Some(&mem), 10, 2, 2_100, 3_600);
+        let rot = plan
+            .selections
+            .iter()
+            .find(|s| s.reason == SelectionReason::RotatingExploration)
+            .unwrap();
+        assert_eq!(rot.url, older);
+        assert_eq!(plan.reused_urls, vec![newer.as_str()]);
     }
 }

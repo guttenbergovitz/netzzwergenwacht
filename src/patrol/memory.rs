@@ -58,6 +58,15 @@ pub struct RememberedPage {
     pub template_fingerprint: Option<String>,
     /// Content hash of the last complete HTTP body observed.
     pub content_hash: Option<String>,
+    /// Optional `ETag` header from the last response.
+    #[serde(default)]
+    pub etag: Option<String>,
+    /// Optional `Last-Modified` header from the last response.
+    #[serde(default)]
+    pub last_modified: Option<String>,
+    /// Last full deterministic [`AuditReport`] captured for this page.
+    #[serde(default)]
+    pub latest_report: Option<AuditReport>,
     /// Unix timestamp of the last inspection.
     pub last_inspected_unix_secs: u64,
     /// Count of actionable (`Low`..`Critical`) findings on the last inspection.
