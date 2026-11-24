@@ -160,7 +160,9 @@ class TestWebBrowserZwerg:
             mock_get.return_value.content = b"<html><body>Test</body></html>"
             mock_get.return_value.url = "https://example.com"
 
-            with patch("playwright.async_api.async_playwright") as mock_playwright:
+            with patch(
+                "netzzwergenwacht.dwarfs.web_browser_zwerg.async_playwright"
+            ) as mock_playwright:
                 # Mock Playwright browser and page
                 mock_browser = AsyncMock()
                 mock_page = AsyncMock()
@@ -169,8 +171,9 @@ class TestWebBrowserZwerg:
                 mock_page.goto.return_value = AsyncMock(status=200)
                 mock_page.url = "https://example.com"
 
-                # Mock viewport testing results
+                # Mock viewport testing results (first call is performance_entries in _check_browser_rendering)
                 mock_page.evaluate.side_effect = [
+                    {},  # performance_entries
                     True,  # has_horizontal_scroll
                     [
                         {"tag": "BUTTON", "text": "Small button", "size": "20x20"}
@@ -208,7 +211,9 @@ class TestWebBrowserZwerg:
             mock_get.return_value.content = b"<html><body>Test</body></html>"
             mock_get.return_value.url = "https://example.com"
 
-            with patch("playwright.async_api.async_playwright") as mock_playwright:
+            with patch(
+                "netzzwergenwacht.dwarfs.web_browser_zwerg.async_playwright"
+            ) as mock_playwright:
                 # Mock Playwright browser and page
                 mock_browser = AsyncMock()
                 mock_page = AsyncMock()
@@ -250,7 +255,9 @@ class TestWebBrowserZwerg:
             mock_get.return_value.content = b"<html><body>Test</body></html>"
             mock_get.return_value.url = "https://example.com"
 
-            with patch("playwright.async_api.async_playwright") as mock_playwright:
+            with patch(
+                "netzzwergenwacht.dwarfs.web_browser_zwerg.async_playwright"
+            ) as mock_playwright:
                 # Mock Playwright browser and page
                 mock_browser = AsyncMock()
                 mock_page = AsyncMock()
@@ -259,9 +266,9 @@ class TestWebBrowserZwerg:
                 mock_page.goto.return_value = AsyncMock(status=200)
                 mock_page.url = "https://example.com"
 
-                # Mock small touch targets - the actual implementation returns different data
-                # Let's use the actual data structure that the implementation expects
+                # Mock small touch targets (first call is performance_entries in _check_browser_rendering)
                 mock_page.evaluate.side_effect = [
+                    {},  # performance_entries
                     False,  # has_horizontal_scroll
                     [
                         {

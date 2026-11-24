@@ -1,11 +1,39 @@
 """Tests for ZugaenglichkeitsZwerg."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from netzzwergenwacht.dwarfs.base import Severity
 from netzzwergenwacht.dwarfs.zugaenglichkeits_zwerg import ZugaenglichkeitsZwerg
+
+EXAMPLE_HTML = (
+    b"<!DOCTYPE html><html lang='en'><head><title>Example Domain</title></head>"
+    b"<body><h1>Example Domain</h1>"
+    b"<p>This domain is for use in illustrative examples in documents.</p>"
+    b"<a href='https://www.iana.org/domains/example'>More information...</a>"
+    b"</body></html>"
+)
+
+
+@pytest.fixture(autouse=True)
+def mock_httpx_get():
+    """Mock httpx.AsyncClient.get for offline deterministic unit tests."""
+
+    async def _fake_get(self, url, *args, **kwargs):
+        if "this-domain-should-not-exist" in str(url):
+            raise httpx.ConnectError("Connection failed")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {"content-type": "text/html"}
+        resp.content = EXAMPLE_HTML
+        resp.text = EXAMPLE_HTML.decode()
+        resp.url = str(url)
+        return resp
+
+    with patch("httpx.AsyncClient.get", new=_fake_get):
+        yield
 
 
 class TestZugaenglichkeitsZwerg:
