@@ -145,3 +145,9 @@ logs/
 # Scratchpad
 scratchpad.ipynb
 .aider*
+
+# result
+results.txt
+
+# Artifacts and reports
+output/
