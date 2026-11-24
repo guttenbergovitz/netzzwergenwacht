@@ -79,6 +79,22 @@ pub fn parse_lighthouse_json(raw: &str) -> Result<LighthouseMetrics, String> {
             }
         });
 
+    let provenance = Some(crate::domain::MeasurementProvenance {
+        viewport: root
+            .pointer("/configSettings/formFactor")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        throttling_profile: root
+            .pointer("/configSettings/throttlingMethod")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        origin: Some("lab".to_owned()),
+        captured_at: root
+            .get("fetchTime")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+    });
+
     Ok(LighthouseMetrics {
         lighthouse_version: version,
         lcp_ms,
@@ -86,6 +102,7 @@ pub fn parse_lighthouse_json(raw: &str) -> Result<LighthouseMetrics, String> {
         fcp_ms,
         tbt_ms,
         performance_score,
+        provenance,
     })
 }
 

@@ -229,6 +229,7 @@ mod tests {
                     broken_images: Vec::new(),
                     screenshot_path: None,
                 }],
+                provenance: None,
             },
         });
         let res = analyse(&snap);
@@ -260,6 +261,7 @@ mod tests {
                     }],
                     screenshot_path: None,
                 }],
+                provenance: None,
             },
         });
         let res = analyse(&snap);

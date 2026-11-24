@@ -728,6 +728,27 @@ pub struct BrowserEvidence {
     pub failed_requests: Vec<FailedNetworkRequest>,
     /// Per-viewport layout and broken-asset observations.
     pub viewports: Vec<ViewportLayoutObs>,
+    /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<MeasurementProvenance>,
+}
+
+/// Execution provenance attached to Level 2 browser/lab measurements.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct MeasurementProvenance {
+    /// Emulated or observed viewport (for example `"mobile"` or `"mobile (390x844), desktop (1280x720)"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<String>,
+    /// Network/CPU throttling profile (for example `"unthrottled"` or `"simulate"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub throttling_profile: Option<String>,
+    /// Measurement origin (`"lab"` or `"field"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// Capture timestamp (ISO-8601 when emitted by CDP/Lighthouse).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub captured_at: Option<String>,
 }
 
 /// Level 2 Core Web Vitals and performance metrics from Lighthouse.
@@ -745,6 +766,9 @@ pub struct LighthouseMetrics {
     pub tbt_ms: Measurement<u64>,
     /// Optional Lighthouse performance category score (`0..=100`).
     pub performance_score: Option<u8>,
+    /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<MeasurementProvenance>,
 }
 
 /// Single accessibility violation reported by `axe-core`.
