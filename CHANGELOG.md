@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `rewrite/rust`
 
+### Phase 3: Persistence & Regression Analysis (2026-11-24)
+- Added deterministic `FindingFingerprint` (`domain.rs`) populated automatically for every emitted finding in `analysis::run_all`.
+- Added JSONL audit history persistence and `diff_reports` regression classification (`src/persistence.rs`).
+- Added `--history <path>` to `nzw check` and `nzw diff <baseline> <current>` CLI subcommand.
+
 ### Phase 1: Zwergenbrigade, Shared Document Model & Core Hardening (2026-11-24)
 - Added TLS peer certificate extraction (`reqwest::tls::TlsInfo` + `x509-parser`) and `sec.tls.certificate_expiry` check in `SicherheitsZwerg`.
 - Added `InhaltsZwerg` (`analysis::content`) consuming shared `DocumentObservations` visible text statistics.
