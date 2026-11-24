@@ -51,6 +51,18 @@ pub struct AuditSummary {
     pub unavailable_checks: usize,
 }
 
+/// Compact status summary for an optional Level 2 collector (`browser`, `lighthouse`, `axe`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Level2CollectorStatus {
+    /// Collector identifier (`"browser"`, `"lighthouse"`, or `"axe"`).
+    pub collector: String,
+    /// Outcome state (`"captured"`, `"partial"`, `"failed"`, or `"skipped"`).
+    pub state: String,
+    /// Optional failure, skip, or partial-capture detail.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 /// Complete deterministic audit report ready for CLI or JSON rendering.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuditReport {
@@ -62,10 +74,16 @@ pub struct AuditReport {
     pub captured_at_unix_secs: u64,
     /// Outcome of HTTP collection.
     pub http: CollectorOutcome<HttpEvidence>,
+    /// Status summaries for optional Level 2 collectors (`browser`, `lighthouse`, `axe`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub level2_collectors: Vec<Level2CollectorStatus>,
     /// Per-Zwerg analyser outputs.
     pub analysers: Vec<AnalyserResult>,
     /// Deterministic finding and check counts.
     pub summary: AuditSummary,
+    /// Optional non-authoritative AI synthesis attached when `--ai` is enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_synthesis: Option<crate::intelligence::AiSynthesis>,
 }
 
 /// Runs all Phase 1 deterministic Zwerg analysers against `snapshot`.
@@ -117,14 +135,28 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
     populate_fingerprints(snapshot.target.as_str(), &mut analysers);
 
     let summary = summarise(&analysers);
+    let level2_collectors = [
+        ("browser", snapshot.browser.status_summary()),
+        ("lighthouse", snapshot.lighthouse.status_summary()),
+        ("axe", snapshot.axe.status_summary()),
+    ]
+    .into_iter()
+    .map(|(name, (state, detail))| Level2CollectorStatus {
+        collector: name.to_owned(),
+        state: state.to_owned(),
+        detail,
+    })
+    .collect();
 
     AuditReport {
         schema_version: REPORT_SCHEMA_VERSION.to_owned(),
         target: snapshot.target.clone(),
         captured_at_unix_secs: snapshot.captured_at_unix_secs,
         http: snapshot.http.clone(),
+        level2_collectors,
         analysers,
         summary,
+        ai_synthesis: None,
     }
 }
 

@@ -656,6 +656,19 @@ impl<T> Default for CollectorOutcome<T> {
     }
 }
 
+impl<T> CollectorOutcome<T> {
+    /// Returns a compact `(state, detail)` summary without cloning the payload.
+    #[must_use]
+    pub fn status_summary(&self) -> (&'static str, Option<String>) {
+        match self {
+            Self::Captured { .. } => ("captured", None),
+            Self::Partial { warnings, .. } => ("partial", Some(warnings.join("; "))),
+            Self::Failed { error } => ("failed", Some(error.clone())),
+            Self::Skipped { reason } => ("skipped", Some(reason.clone())),
+        }
+    }
+}
+
 /// JavaScript console error observed during Level 2 browser execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConsoleErrorEvent {

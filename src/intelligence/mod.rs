@@ -45,7 +45,7 @@ impl Default for LlmBudget {
 }
 
 /// Non-authoritative AI synthesis produced by `KommandantZwerg`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AiSynthesis {
     /// Model identifier that generated this synthesis.
     pub model: String,

@@ -596,7 +596,7 @@ async fn run_check(
             },
         };
     }
-    let report = analysis::run_all(&snapshot);
+    let mut report = analysis::run_all(&snapshot);
 
     if let Some(history_path) = history
         && let Err(err) = persistence::append_report(history_path, &report)
@@ -611,6 +611,10 @@ async fn run_check(
     let eval = config::evaluate_policy(&report, &policy_cfg);
     let code = exit_code_for_report(&report, &eval);
 
+    if ai {
+        report.ai_synthesis = run_optional_ai(&report).await;
+    }
+
     match format {
         OutputFormat::Json => match serde_json::to_string_pretty(&report) {
             Ok(json) => {
@@ -624,38 +628,45 @@ async fn run_check(
         },
         OutputFormat::Text | OutputFormat::Markdown => {
             print_text_report(&report, &eval);
-            if ai {
-                print_optional_ai(&report).await;
+            if let Some(syn) = &report.ai_synthesis {
+                print_ai_synthesis(syn);
             }
             code
         }
     }
 }
 
-async fn print_optional_ai(report: &analysis::AuditReport) {
+async fn run_optional_ai(
+    report: &analysis::AuditReport,
+) -> Option<netzzwergenwacht::intelligence::AiSynthesis> {
     let provider = match netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env() {
         Ok(p) => p,
         Err(err) => {
             eprintln!("KommandantZwerg skipped: {err}");
-            return;
+            return None;
         }
     };
     let budget = netzzwergenwacht::intelligence::LlmBudget::default();
     match netzzwergenwacht::intelligence::synthesise(report, &provider, &budget).await {
-        Ok(syn) => {
-            println!(
-                "\nKommandantZwerg (advisory AI synthesis, model={}):",
-                syn.model
-            );
-            println!("  {}", syn.executive_summary);
-            for (idx, action) in syn.prioritised_actions.iter().enumerate() {
-                println!("  {}. {action}", idx + 1);
-            }
-            for corr in &syn.correlations {
-                println!("  - [AI] {}: {}", corr.title, corr.summary);
-            }
+        Ok(syn) => Some(syn),
+        Err(err) => {
+            eprintln!("KommandantZwerg failed: {err}");
+            None
         }
-        Err(err) => eprintln!("KommandantZwerg failed (deterministic report preserved): {err}"),
+    }
+}
+
+fn print_ai_synthesis(syn: &netzzwergenwacht::intelligence::AiSynthesis) {
+    println!(
+        "\nKommandantZwerg (advisory AI synthesis, model={}):",
+        syn.model
+    );
+    println!("  {}", syn.executive_summary);
+    for (idx, action) in syn.prioritised_actions.iter().enumerate() {
+        println!("  {}. {action}", idx + 1);
+    }
+    for corr in &syn.correlations {
+        println!("  - [AI] {}: {}", corr.title, corr.summary);
     }
 }
 

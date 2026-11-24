@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Level 2 Collector Policy Gates & Structured AI JSON Output (2026-11-24)
+- Added `Level2CollectorStatus` and `AuditReport::level2_collectors` (`src/analysis/mod.rs`), plus `PolicyConfig::require_collectors` gating in `config::evaluate_policy` (`src/config.rs`).
+- Added optional `AuditReport::ai_synthesis` (`AiSynthesis` with `JsonSchema`) and populated it in `nzw check --format json --ai` (`src/main.rs`).
+
 ### Shared Audit Budget & Browser Partial Load Semantics (2026-11-24)
 - Enforced a shared `audit_timeout` deadline across `collect_http` and Level 2 adapters (`lighthouse`, `browser`, `axe`) in `run_check` (`src/main.rs`), skipping remaining adapters when exhausted.
 - Recorded `load_timed_out` in `CDP_HARNESS_JS` and added `parse_browser_outcome` (`src/adapters/browser.rs`) to emit `CollectorOutcome::Partial` with a warning when `Page.loadEventFired` times out.
