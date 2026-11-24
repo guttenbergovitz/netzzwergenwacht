@@ -83,10 +83,50 @@ Requires `ANTHROPIC_API_KEY` environment variable.
 [models.default]
 kind = "ollama"
 model = "llama3.2:3b"
-# endpoint = "http://localhost:11434"  # Optional: custom Ollama endpoint
+base_url = "http://localhost:11434"  # Optional: custom Ollama endpoint
 ```
 
 Requires running Ollama server locally.
+
+#### OpenAI-Compatible Providers
+
+Any provider with OpenAI-compatible API works via `kind = "openai"` with custom `base_url`:
+
+**OpenRouter** (access 100+ models):
+```toml
+[models.default]
+kind = "openai"
+model = "anthropic/claude-3.5-sonnet"  # or any OpenRouter model
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"    # Optional: custom env var
+```
+
+**DeepSeek**:
+```toml
+[models.specialist]
+kind = "openai"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com"
+api_key_env = "DEEPSEEK_API_KEY"
+```
+
+**Kimi** (Moonshot AI):
+```toml
+[models.specialist]
+kind = "openai"
+model = "moonshot-v1-8k"
+base_url = "https://api.moonshot.cn/v1"
+api_key_env = "MOONSHOT_API_KEY"
+```
+
+**vLLM / LiteLLM** (self-hosted):
+```toml
+[models.default]
+kind = "openai"
+model = "meta-llama/Llama-3.1-8B-Instruct"
+base_url = "http://your-server:8000/v1"
+# No API key needed for self-hosted
+```
 
 ### Die Zwergenbrigade Agent Roles
 
@@ -178,7 +218,6 @@ Optional Ollama configuration:
 
 **Current Limitations:**
 - Specialist re-consultation during investigation currently uses Kommandant's model (P1: should resolve per-specialist)
-- No support for Azure OpenAI or other OpenAI-compatible endpoints yet
 - Temperature parameter applies globally, not per-turn
 
 **Validation:**
@@ -219,6 +258,27 @@ model = "claude-3-5-sonnet-20241022"
 [models.default]
 kind = "ollama"
 model = "llama3.2:3b"
+```
+
+**OpenRouter** (access many providers via one API):
+```toml
+[models.default]
+kind = "openai"
+model = "anthropic/claude-3.5-haiku"  # Cheap default
+base_url = "https://openrouter.ai/api/v1"
+
+[models.kommandant]
+kind = "openai"
+model = "anthropic/claude-3.5-sonnet"  # More capable
+base_url = "https://openrouter.ai/api/v1"
+```
+
+**DeepSeek** (cost-effective Chinese provider):
+```toml
+[models.default]
+kind = "openai"
+model = "deepseek-chat"
+base_url = "https://api.deepseek.com"
 ```
 
 ## Patrol Configuration
