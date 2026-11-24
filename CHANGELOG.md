@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Multi-Turn Investigation Hardening, `rig-core` Integration & Stakeholder Briefs (2026-11-24)
+- Integrated `rig-core` (`0.42.0`, MSRV `1.88`) with typed `PortableTool` implementations (`InspectBrowserRuntimeTool`, `InspectRenderedAccessibilityTool`) in `src/investigation/tools.rs`.
+- Fixed P0/P1 defects in `src/investigation/mod.rs`: deterministic `Inconclusive` enforcement when follow-up tools fail, `analyse_axe_only` avoiding empty-HTML re-analysis, remaining wall-clock budget propagation, unique `InvestigationId` generation, rule-ID verification, split `supporting_evidence`/`contradictory_evidence`, and full `snapshot` preservation.
+- Upgraded `run_investigation` to a bounded multi-turn loop and added `ExecutiveBrief` + `RemediationTask` outputs on `InvestigationReport`.
+
 ### Agentic Investigation Proof of Concept (Milestone B) (2026-11-24)
 - Added `src/investigation/mod.rs` (`InvestigationContext`, `InvestigationBudget`, `BudgetLedger`, `DiagnosticHypothesis`, `LiveDiagnosticBackend`, `run_investigation`) implementing the `KommandantZwerg` hypothesis-driven diagnostic loop.
 - Added `nzw investigate <url> [--objective ...]` CLI subcommand in `src/main.rs`.

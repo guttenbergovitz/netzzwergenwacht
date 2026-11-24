@@ -70,6 +70,19 @@ pub fn analyse_with_axe(
     }
 }
 
+/// Evaluates only Level 2 `axe-core` evidence without re-running source HTML checks.
+#[must_use]
+pub fn analyse_axe_only(axe: &CollectorOutcome<AxeEvidence>) -> AnalyserResult {
+    let mut findings = Vec::new();
+    let mut checks = Vec::new();
+    check_axe_violations(axe, &mut findings, &mut checks);
+    AnalyserResult {
+        dwarf_id: DwarfId::Zugaenglichkeits,
+        findings,
+        checks,
+    }
+}
+
 fn check_axe_violations(
     axe: &CollectorOutcome<AxeEvidence>,
     findings: &mut Vec<Finding>,
