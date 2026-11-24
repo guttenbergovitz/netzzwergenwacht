@@ -7,6 +7,7 @@
 //! [`InvestigationReport`]s.
 
 pub mod events;
+pub mod prompts;
 pub mod reporting;
 pub mod tools;
 
@@ -672,13 +673,8 @@ async fn propose_hypothesis(
         .filter(|name| !used_tools.contains(*name))
         .collect();
 
-    let sys = format!(
-        "You are KommandantZwerg. Available unused tools: {available:?}. \
-Propose one falsifiable hypothesis grounded in an existing rule_id and pick one unused tool, \
-or set `ready_to_conclude: true` if sufficient evidence was gathered. \
-Respond strictly with JSON: {{\"ready_to_conclude\": bool, \"originating_rule\": string, \
-\"proposed_explanation\": string, \"requested_tool\": string, \"conclusion\": string|null}}."
-    );
+    let contract = prompts::kommandant_hypothesis_prompt(&available);
+    let sys = contract.system_prompt;
 
     let summary: Vec<_> = report
         .analysers
@@ -1078,9 +1074,8 @@ async fn evaluate_hypothesis(
         return Ok(msg);
     }
 
-    let sys = "You are KommandantZwerg evaluating a diagnostic hypothesis against follow-up \
-evidence. Respond strictly with JSON: {\"status\": \"supported\"|\"rejected\"|\"inconclusive\", \
-\"evaluation_summary\": string, \"conclusion\": string}.";
+    let contract = prompts::kommandant_evaluation_prompt();
+    let sys = &contract.system_prompt;
 
     let follow_up: Vec<_> = new_results
         .iter()

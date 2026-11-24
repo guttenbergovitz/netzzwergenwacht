@@ -175,6 +175,9 @@ enum Command {
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Target stakeholder perspective for Markdown output.
+        #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
+        audience: AudienceArg,
     },
 }
 
@@ -355,6 +358,7 @@ async fn main() -> ExitCode {
             max_pages,
             allow_private,
             format,
+            audience,
         } => {
             run_patrol_cmd(
                 url.as_deref(),
@@ -364,12 +368,14 @@ async fn main() -> ExitCode {
                 max_pages,
                 allow_private,
                 format,
+                audience,
             )
             .await
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_patrol_cmd(
     url: Option<&str>,
     targets_path: Option<&Path>,
@@ -378,6 +384,7 @@ async fn run_patrol_cmd(
     max_pages: usize,
     allow_private: bool,
     format: OutputFormat,
+    audience: AudienceArg,
 ) -> ExitCode {
     let llm_provider = netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env().ok();
     let backend: std::sync::Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
@@ -446,7 +453,14 @@ async fn run_patrol_cmd(
                 return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
             }
         },
-        OutputFormat::Text | OutputFormat::Markdown => {
+        OutputFormat::Markdown => {
+            let role = audience.into();
+            println!(
+                "{}",
+                netzzwergenwacht::patrol::render_patrol_markdown(&report, role)
+            );
+        }
+        OutputFormat::Text => {
             println!(
                 "NETZZWERGENWACHT — Autonomous Patrol #{} ({MOTTO})",
                 report.patrol_number

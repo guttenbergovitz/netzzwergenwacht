@@ -110,6 +110,27 @@ impl Default for PatrolBudget {
     }
 }
 
+/// Explicit coverage accounting across discovery, sampling, reuse, and limitations.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct CoverageMatrix {
+    /// Total URLs discovered on the origin.
+    pub discovered_urls: usize,
+    /// URLs actively inspected during this patrol.
+    pub inspected_urls: usize,
+    /// URLs inspected with Level 2 deep browser diagnostics.
+    pub deep_inspected_urls: usize,
+    /// Healthy remembered URLs whose prior observations were reused.
+    pub reused_urls: usize,
+    /// Distinct locale/market tags observed.
+    pub locales_observed: Vec<String>,
+    /// Distinct page types observed.
+    pub page_types_observed: usize,
+    /// Distinct structural template families observed.
+    pub template_families_observed: usize,
+    /// Explicit limitations and unverified scope boundaries.
+    pub limitations: Vec<String>,
+}
+
 /// Change-oriented report produced by [`run_patrol`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PatrolReport {
@@ -127,6 +148,9 @@ pub struct PatrolReport {
     pub sampling_plan: SamplingPlan,
     /// Number of remembered healthy pages whose prior observations were reused.
     pub reused_page_count: usize,
+    /// Structured coverage accounting and limitations.
+    #[serde(default)]
+    pub coverage_matrix: CoverageMatrix,
     /// Anomalies detected during this patrol.
     pub anomalies: Vec<PatrolAnomaly>,
     /// Specialist competencies activated for anomaly investigation.
@@ -359,6 +383,37 @@ pub async fn run_patrol(
         last_patrolled_unix_secs: now,
     };
 
+    let deep_inspected_urls = page_reports
+        .iter()
+        .filter(|(sel, _, _, _)| {
+            patrol_budget.enable_level2 && sel.depth == sampling::DiagnosticDepth::Level2Deep
+        })
+        .count();
+    let distinct_page_types: BTreeSet<PageType> =
+        application_map.page_types.values().copied().collect();
+    let distinct_templates: BTreeSet<&str> = application_map
+        .template_families
+        .values()
+        .map(String::as_str)
+        .collect();
+    let mut limitations =
+        vec!["Authenticated customer journeys and post-login state were not inspected.".to_owned()];
+    if !patrol_budget.enable_level2 {
+        limitations.push(
+            "Level 2 headless browser diagnostics were not enabled for this patrol.".to_owned(),
+        );
+    }
+    let coverage_matrix = CoverageMatrix {
+        discovered_urls: application_map.discovered_urls.len(),
+        inspected_urls: page_reports.len(),
+        deep_inspected_urls,
+        reused_urls: reused_page_count,
+        locales_observed: application_map.locales_observed.clone(),
+        page_types_observed: distinct_page_types.len(),
+        template_families_observed: distinct_templates.len(),
+        limitations,
+    };
+
     let coverage_summary = format!(
         "Patrol #{patrol_number}: {} discovered URLs, {} inspected, {} reused healthy observations, {} locale(s) observed.",
         application_map.discovered_urls.len(),
@@ -382,6 +437,7 @@ pub async fn run_patrol(
         application_map,
         sampling_plan,
         reused_page_count,
+        coverage_matrix,
         anomalies,
         specialist_escalations,
         investigation,
@@ -390,6 +446,78 @@ pub async fn run_patrol(
         executive_summary,
         is_quiet_patrol,
     }
+}
+
+/// Renders a change-oriented Markdown situation report for the requested stakeholder perspective.
+#[must_use]
+pub fn render_patrol_markdown(
+    report: &PatrolReport,
+    audience: crate::investigation::reporting::RolePerspective,
+) -> String {
+    use std::fmt::Write as _;
+    let mut md = String::new();
+    let _ = writeln!(
+        md,
+        "# NetzZwergenWacht — Routine Patrol #{} ({audience:?})\n",
+        report.patrol_number
+    );
+    let _ = writeln!(md, "**Application:** `{}`  ", report.target.as_str());
+    let _ = writeln!(md, "**Overall assessment:** {}\n", report.executive_summary);
+
+    if report.is_quiet_patrol {
+        let persisting = report
+            .regression
+            .as_ref()
+            .map_or(0, |r| r.summary.persisting_count);
+        let _ = writeln!(
+            md,
+            "No material changes detected within the investigated scope ({persisting} previously known finding(s) persisting).\n"
+        );
+    } else if !report.anomalies.is_empty() {
+        let _ = writeln!(md, "## Material Anomalies\n");
+        for a in &report.anomalies {
+            let _ = writeln!(
+                md,
+                "- **[{}]** ({:?}, `{}`) {}",
+                a.id, a.severity, a.affected_url, a.summary
+            );
+        }
+        let _ = writeln!(md);
+    }
+
+    if let Some(reg) = &report.regression {
+        let _ = writeln!(md, "## Changes Since Previous Patrol\n");
+        let _ = writeln!(
+            md,
+            "- New: {} | Persisting: {} | Resolved: {} | Reintroduced: {} | Unverified: {}\n",
+            reg.summary.new_count,
+            reg.summary.persisting_count,
+            reg.summary.resolved_count,
+            reg.summary.reintroduced_count,
+            reg.summary.unverified_count
+        );
+    }
+
+    let _ = writeln!(md, "## Coverage & Limitations\n");
+    let _ = writeln!(
+        md,
+        "- Discovered URLs: {} | Inspected: {} | Deep Level 2: {} | Reused healthy: {}",
+        report.coverage_matrix.discovered_urls,
+        report.coverage_matrix.inspected_urls,
+        report.coverage_matrix.deep_inspected_urls,
+        report.coverage_matrix.reused_urls
+    );
+    if !report.coverage_matrix.locales_observed.is_empty() {
+        let _ = writeln!(
+            md,
+            "- Locales observed: {}",
+            report.coverage_matrix.locales_observed.join(", ")
+        );
+    }
+    for lim in &report.coverage_matrix.limitations {
+        let _ = writeln!(md, "- Limitation: {lim}");
+    }
+    md
 }
 
 fn suggested_competency(f: &Finding) -> DwarfId {
