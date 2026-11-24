@@ -732,7 +732,11 @@ async fn propose_hypothesis(
     let mut available: Vec<String> = tool_defs
         .iter()
         .map(|d| d.name.clone())
-        .filter(|name| !used_tools.contains(name))
+        .filter(|name| {
+            !used_tools.contains(name)
+                && name != "inspect_previous_findings"
+                && name != "verify_finding"
+        })
         .collect();
 
     // Add specialist consultation tools.
