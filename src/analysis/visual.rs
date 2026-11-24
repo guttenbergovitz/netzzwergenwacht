@@ -3,6 +3,7 @@
 //! Analyses per-viewport [`BrowserEvidence`](crate::domain::BrowserEvidence)
 //! observations for horizontal overflow and broken images (`naturalWidth == 0`).
 
+use crate::analysis::document::DocumentObservations;
 use crate::analysis::skip_all;
 use crate::brigade::DwarfId;
 use crate::domain::{
@@ -13,44 +14,99 @@ use crate::domain::{
 
 const RULE_HORIZONTAL_OVERFLOW: &str = "vis.layout.horizontal_overflow";
 const RULE_BROKEN_IMAGES: &str = "vis.assets.broken_images";
+const RULE_VIEWPORT_META: &str = "vis.mobile.viewport_meta";
+const RULE_IMAGE_DIMENSIONS: &str = "vis.layout.image_dimensions";
 
 /// All Level 2 rules owned by `GestaltungsZwerg`.
 pub const ALL_RULES: &[&str] = &[RULE_HORIZONTAL_OVERFLOW, RULE_BROKEN_IMAGES];
 
+/// All Level 1 source-document rules owned by `GestaltungsZwerg`.
+pub const ALL_SOURCE_RULES: &[&str] = &[RULE_VIEWPORT_META, RULE_IMAGE_DIMENSIONS];
+
 /// Evaluates rendered viewport layout and image integrity observations.
 #[must_use]
 pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
+    analyse_with_document(snapshot, None)
+}
+
+/// Evaluates `GestaltungsZwerg` when complete HTML document observations are unavailable.
+#[must_use]
+pub fn analyse_without_document(snapshot: &EvidenceSnapshot, reason: &str) -> AnalyserResult {
+    let mut res = skip_all(
+        DwarfId::Gestaltungs,
+        ALL_SOURCE_RULES,
+        EvidenceLevel::Source,
+        reason,
+    );
+    let mut rendered = analyse(snapshot);
+    res.findings.append(&mut rendered.findings);
+    res.checks.append(&mut rendered.checks);
+    res
+}
+
+/// Evaluates rendered viewport layout/images plus optional source-DOM layout checks.
+#[must_use]
+pub fn analyse_with_document(
+    snapshot: &EvidenceSnapshot,
+    obs: Option<&DocumentObservations>,
+) -> AnalyserResult {
+    let mut findings = Vec::new();
+    let mut checks = Vec::new();
+
+    if let Some(doc) = obs {
+        check_viewport_meta(doc, &mut findings, &mut checks);
+        check_image_dimensions(doc, &mut findings, &mut checks);
+    }
+
     let browser = match &snapshot.browser {
         CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
         CollectorOutcome::Skipped { reason } => {
-            return skip_all(
+            let mut res = skip_all(
                 DwarfId::Gestaltungs,
                 ALL_RULES,
                 EvidenceLevel::Rendered,
                 reason,
             );
+            findings.extend(res.findings);
+            checks.append(&mut res.checks);
+            return AnalyserResult {
+                dwarf_id: DwarfId::Gestaltungs,
+                findings,
+                checks,
+            };
         }
         CollectorOutcome::Failed { error } => {
-            return skip_all(
+            let mut res = skip_all(
                 DwarfId::Gestaltungs,
                 ALL_RULES,
                 EvidenceLevel::Rendered,
                 error,
             );
+            findings.extend(res.findings);
+            checks.append(&mut res.checks);
+            return AnalyserResult {
+                dwarf_id: DwarfId::Gestaltungs,
+                findings,
+                checks,
+            };
         }
     };
 
     if browser.viewports.is_empty() {
-        return skip_all(
+        let mut res = skip_all(
             DwarfId::Gestaltungs,
             ALL_RULES,
             EvidenceLevel::Rendered,
             "no browser viewport observations captured",
         );
+        findings.extend(res.findings);
+        checks.append(&mut res.checks);
+        return AnalyserResult {
+            dwarf_id: DwarfId::Gestaltungs,
+            findings,
+            checks,
+        };
     }
-
-    let mut findings = Vec::new();
-    let mut checks = Vec::new();
 
     check_horizontal_overflow(browser, &mut findings, &mut checks);
     check_broken_images(browser, &mut findings, &mut checks);
@@ -180,6 +236,126 @@ fn check_broken_images(
     });
 }
 
+fn check_viewport_meta(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(vp) = obs.viewport_meta.as_deref() else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_VIEWPORT_META.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Missing mobile viewport meta tag".to_owned(),
+            summary: "Document lacks `<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">`."
+                .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "meta.viewport=absent",
+            )],
+            remediation: Some(
+                "Add `<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_VIEWPORT_META.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    };
+
+    let lower = vp.to_ascii_lowercase();
+    if lower.contains("user-scalable=no") || lower.contains("user-scalable=0") {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_VIEWPORT_META.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Viewport meta disables user pinch-zoom".to_owned(),
+            summary: format!("Viewport directive `{vp}` disables zoom (`user-scalable=no`)."),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("meta.viewport={vp}"),
+            )],
+            remediation: Some(
+                "Remove `user-scalable=no` so users can zoom freely on mobile devices.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_VIEWPORT_META.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_VIEWPORT_META.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_image_dimensions(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.images.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_IMAGE_DIMENSIONS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no <img> elements present".to_owned(),
+        });
+        return;
+    }
+
+    let missing_dims = obs
+        .images
+        .iter()
+        .filter(|img| img.width.is_none() || img.height.is_none())
+        .count();
+
+    if missing_dims == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_IMAGE_DIMENSIONS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_IMAGE_DIMENSIONS.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Images missing explicit width/height ({missing_dims})"),
+            summary: format!(
+                "{missing_dims} of {} `<img>` element(s) lack explicit `width` or `height` attributes, risking layout shifts (CLS).",
+                obs.images.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("missing_dimensions={missing_dims}/{}", obs.images.len()),
+            )],
+            remediation: Some(
+                "Specify intrinsic `width` and `height` attributes on `<img>` elements."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_IMAGE_DIMENSIONS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +443,25 @@ mod tests {
         let res = analyse(&snap);
         assert_eq!(res.findings.len(), 2);
         assert!(res.findings.iter().all(|f| !f.evidence_refs.is_empty()));
+    }
+
+    #[test]
+    fn flags_missing_viewport_and_image_dimensions() {
+        let snap = base_snapshot(CollectorOutcome::default());
+        let obs = DocumentObservations::from_html(
+            r#"<html><head><meta name="viewport" content="width=device-width, user-scalable=no"></head>
+            <body><img src="/a.png" alt="A"></body></html>"#,
+        );
+        let res = analyse_with_document(&snap, Some(&obs));
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_VIEWPORT_META)
+        );
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_IMAGE_DIMENSIONS)
+        );
     }
 }
