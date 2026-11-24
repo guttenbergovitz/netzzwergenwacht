@@ -10,6 +10,7 @@ pub mod analysis;
 pub mod brigade;
 pub mod collection;
 pub mod config;
+pub mod discovery;
 pub mod domain;
 pub mod intelligence;
 pub mod investigation;

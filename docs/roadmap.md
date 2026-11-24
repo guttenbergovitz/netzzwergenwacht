@@ -24,10 +24,11 @@ Status legend:
 - [x] **`rig-core` (`0.42.0`) crate integration**: *Implemented, Tested* (MSRV `1.88`-compatible `PortableTool` + `ToolDefinition`)
 - [x] **Initial `ExecutiveBrief` & backlog-ready `RemediationTask`s** (`src/investigation/mod.rs`): *Implemented, Tested*
 
-## Milestone C: Application-Level Investigation *(Planned)*
-- Bounded crawling, URL normalisation, and origin/depth caps
-- Page type classification and adaptive sampling
-- Systemic issue clustering across pages and templates
+## Milestone C: Application-Level Investigation *(In Progress)*
+- [x] **Bounded crawling, URL normalisation, and origin/depth caps** (`src/discovery/mod.rs`): *Implemented, Tested*
+- [x] **Page type classification (`PageType`)** (`src/discovery/mod.rs`): *Implemented, Tested*
+- [x] **Systemic issue clustering across pages (`SystemicIssue`)** (`src/discovery/mod.rs`): *Implemented, Tested*
+- [ ] **Adaptive sampling integration into `KommandantZwerg` (`nzw investigate`)**: *Planned*
 
 ## Milestone D: Stakeholder Value *(Planned)*
 - Executive brief (2-minute summary), PM/PO delivery report, and technical report (`DokumentationsZwerg`)

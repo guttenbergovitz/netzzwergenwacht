@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Adaptive Crawling & Systemic Issue Clustering (Milestone C) (2026-11-24)
+- Added `src/discovery/mod.rs` (`CrawlBudget`, `DiscoveredPage`, `PageType`, `PageCrawlStatus`, `SystemicIssue`, `discover_same_origin_links`, `classify_page`, `cluster_systemic_issues`, `crawl_and_cluster`).
+- Extended `DocumentObservations` (`src/analysis/document.rs`) to capture `link_hrefs` in the single HTML5 pass.
+
 ### Milestone A Foundation Defect Fixes (2026-11-24)
 - Fixed false historical resolutions in `persistence::diff_reports` by classifying skipped/unavailable baseline rules as `unverified_findings`.
 - Capped external adapter stdout/stderr buffers at 16 MiB in `adapters::run_bounded_command`.
