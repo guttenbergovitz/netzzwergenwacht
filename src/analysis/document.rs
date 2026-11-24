@@ -43,6 +43,8 @@ pub struct ImageObs {
     pub height: Option<String>,
     /// Explicit `loading` attribute (for example `"lazy"` or `"eager"`), if present.
     pub loading: Option<String>,
+    /// Whether `srcset` is declared on `<img>` or an enclosing `<picture>` `<source>`.
+    pub has_srcset: bool,
 }
 
 /// Observed `<a href="...">` link element.
@@ -232,6 +234,10 @@ pub struct DocumentObservations {
     pub has_skip_link: bool,
     /// Whether a favicon `<link rel="icon">` or `<link rel="shortcut icon">` is declared.
     pub has_favicon: bool,
+    /// Count of `<link rel="preconnect">` or `<link rel="dns-prefetch">` hints.
+    pub preconnect_count: usize,
+    /// Count of inline `<svg>` elements lacking `aria-hidden="true"` and an accessible label.
+    pub inline_svg_without_a11y: usize,
 }
 
 impl DocumentObservations {
@@ -256,6 +262,10 @@ impl DocumentObservations {
             json_ld_blocks,
             social_meta: extract_social_meta(&doc),
             has_favicon: count_selector(&doc, r#"link[rel="icon"], link[rel="shortcut icon"]"#) > 0,
+            preconnect_count: count_selector(
+                &doc,
+                r#"link[rel="preconnect"], link[rel="dns-prefetch"]"#,
+            ),
             ..Self::default()
         };
 
@@ -417,13 +427,31 @@ fn extract_landmarks(doc: &Html, obs: &mut DocumentObservations) {
 fn extract_images_and_forms(doc: &Html, obs: &mut DocumentObservations) {
     if let Ok(img_sel) = Selector::parse("img") {
         for el in doc.select(&img_sel) {
+            let has_srcset = non_empty_attr(&el, "srcset").is_some()
+                || has_ancestor_with_selector(&el, "picture", "source[srcset]");
             obs.images.push(ImageObs {
                 src: el.value().attr("src").map(str::to_owned),
                 alt: el.value().attr("alt").map(str::to_owned),
                 width: non_empty_attr(&el, "width"),
                 height: non_empty_attr(&el, "height"),
                 loading: non_empty_attr(&el, "loading"),
+                has_srcset,
             });
+        }
+    }
+
+    if let Ok(svg_sel) = Selector::parse("svg") {
+        for el in doc.select(&svg_sel) {
+            let hidden = el
+                .value()
+                .attr("aria-hidden")
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+            let has_label = non_empty_attr(&el, "aria-label").is_some()
+                || non_empty_attr(&el, "aria-labelledby").is_some()
+                || Selector::parse("title").is_ok_and(|t| el.select(&t).next().is_some());
+            if !hidden && !has_label {
+                obs.inline_svg_without_a11y += 1;
+            }
         }
     }
 
@@ -616,6 +644,22 @@ fn has_ancestor(el: &ElementRef<'_>, tag_name: &str) -> bool {
             && parent_el.value().name() == tag_name
         {
             return true;
+        }
+        current = node.parent();
+    }
+    false
+}
+
+fn has_ancestor_with_selector(el: &ElementRef<'_>, tag_name: &str, selector: &str) -> bool {
+    let Ok(sel) = Selector::parse(selector) else {
+        return false;
+    };
+    let mut current = el.parent();
+    while let Some(node) = current {
+        if let Some(parent_el) = ElementRef::wrap(node)
+            && parent_el.value().name() == tag_name
+        {
+            return parent_el.select(&sel).next().is_some();
         }
         current = node.parent();
     }

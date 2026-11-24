@@ -98,6 +98,9 @@ pub struct ApplicationMemory {
     pub page_records: BTreeMap<String, RememberedPage>,
     /// Distinct locale tags observed across patrols.
     pub known_locales: Vec<String>,
+    /// Graph rule IDs observed on the most recent patrol (prevents repeat `NewDefect` escalation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_graph_rule_ids: Vec<String>,
     /// Unix timestamp of the most recent patrol.
     pub last_patrolled_unix_secs: u64,
 }
@@ -116,6 +119,7 @@ impl ApplicationMemory {
             latest_report: None,
             page_records: BTreeMap::new(),
             known_locales: Vec::new(),
+            known_graph_rule_ids: Vec::new(),
             last_patrolled_unix_secs: now_unix_secs,
         }
     }
