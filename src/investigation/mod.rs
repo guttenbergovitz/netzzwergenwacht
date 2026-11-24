@@ -201,6 +201,9 @@ pub struct DiagnosticHypothesis {
     pub supporting_evidence: Vec<EvidenceRef>,
     /// Contradictory evidence references (populated only when `Rejected`).
     pub contradictory_evidence: Vec<EvidenceRef>,
+    /// Evidence gaps recorded when observations were absent or insufficient.
+    #[serde(default)]
+    pub missing_evidence: Vec<String>,
 }
 
 /// Audit trail entry for a single typed diagnostic tool invocation.
@@ -565,6 +568,7 @@ pub async fn run_investigation(
             evaluation_summary: None,
             supporting_evidence: Vec::new(),
             contradictory_evidence: Vec::new(),
+            missing_evidence: Vec::new(),
         };
 
         ctx.events.push(InvestigationEvent::ToolRequested {
@@ -1112,6 +1116,12 @@ evidence. Respond strictly with JSON: {\"status\": \"supported\"|\"rejected\"|\"
         .flat_map(|r| r.findings.iter())
         .flat_map(|f| f.evidence_refs.iter().cloned())
         .collect();
+    if refs.is_empty() && eval.status == HypothesisStatus::Supported {
+        hypothesis.missing_evidence.push(
+            "Follow-up tool emitted no supporting findings; treat conclusion with caution."
+                .to_owned(),
+        );
+    }
     match eval.status {
         HypothesisStatus::Supported => hypothesis.supporting_evidence = refs,
         HypothesisStatus::Rejected => hypothesis.contradictory_evidence = refs,

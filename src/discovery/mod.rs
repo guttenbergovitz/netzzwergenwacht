@@ -181,6 +181,59 @@ pub fn discover_same_origin_links(
     out
 }
 
+/// Extracts and normalises same-origin URLs from an XML sitemap `<loc>` list.
+#[must_use]
+pub fn parse_sitemap_urls(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> Vec<AuditTarget> {
+    let base_origin = Origin::from_target(base);
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(start) = rest.find("<loc>") {
+        let after = &rest[start + 5..];
+        let Some(end) = after.find("</loc>") else {
+            break;
+        };
+        let raw = after[..end].trim();
+        if let Ok(target) = AuditTarget::parse(raw, policy)
+            && Origin::from_target(&target) == base_origin
+            && seen.insert(target.as_str().to_owned())
+        {
+            out.push(target);
+        }
+        rest = &after[end + 6..];
+    }
+    out
+}
+
+/// Orders discovered URLs so journey-critical pages are sampled ahead of legal/boilerplate pages.
+#[must_use]
+pub fn prioritise_representative_urls(mut urls: Vec<AuditTarget>) -> Vec<AuditTarget> {
+    urls.sort_by_key(|u| {
+        let p = Url::parse(u.as_str())
+            .map(|parsed| parsed.path().to_ascii_lowercase())
+            .unwrap_or_default();
+        if p == "/" || p.is_empty() {
+            0
+        } else if p.contains("checkout")
+            || p.contains("cart")
+            || p.contains("product")
+            || p.contains("pricing")
+            || p.contains("login")
+        {
+            1
+        } else if p.contains("privacy")
+            || p.contains("terms")
+            || p.contains("legal")
+            || p.contains("imprint")
+        {
+            3
+        } else {
+            2
+        }
+    });
+    urls
+}
+
 /// Classifies a page from its URL path and [`DocumentObservations`].
 #[must_use]
 pub fn classify_page(url: &AuditTarget, obs: &DocumentObservations) -> PageType {
@@ -485,5 +538,30 @@ mod tests {
         assert_eq!(alt_cluster.affected_urls.len(), 3);
         assert_eq!(alt_cluster.recurrence_confidence, Confidence::High);
         assert_eq!(alt_cluster.shared_cause_confidence, Confidence::Low);
+    }
+
+    #[test]
+    fn parses_sitemap_and_prioritises_journey_pages_before_legal() {
+        let base = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let xml = r"
+            <urlset>
+                <url><loc>https://example.org/privacy</loc></url>
+                <url><loc>https://other.example.com/offsite</loc></url>
+                <url><loc>https://example.org/checkout</loc></url>
+                <url><loc>https://example.org/blog</loc></url>
+            </urlset>
+        ";
+        let parsed = parse_sitemap_urls(xml, &base, TargetPolicy::PublicOnly);
+        assert_eq!(parsed.len(), 3);
+        let ordered = prioritise_representative_urls(parsed);
+        let paths: Vec<&str> = ordered.iter().map(AuditTarget::as_str).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "https://example.org/checkout",
+                "https://example.org/blog",
+                "https://example.org/privacy",
+            ]
+        );
     }
 }
