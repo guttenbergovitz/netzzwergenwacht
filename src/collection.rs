@@ -4,12 +4,15 @@
 //! [`EvidenceSnapshot`] governed by [`ExecutionBudget`] and [`TargetPolicy`].
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::StatusCode;
 use reqwest::redirect::Policy;
 use reqwest::tls::TlsInfo;
 use tokio::net::lookup_host;
+use tokio::sync::Semaphore;
+use tokio::task::JoinSet;
 use url::Url;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
@@ -78,6 +81,37 @@ pub async fn collect_http(
         http,
         tls,
     }
+}
+
+/// Collects HTTP and TLS evidence for multiple targets with concurrency bounded
+/// by `budget.max_concurrency`, preserving input target order.
+pub async fn collect_batch(
+    targets: Vec<AuditTarget>,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+) -> Vec<EvidenceSnapshot> {
+    let limit = budget.max_concurrency.max(1);
+    let semaphore = Arc::new(Semaphore::new(limit));
+    let budget = *budget;
+    let mut join_set = JoinSet::new();
+
+    for (idx, target) in targets.into_iter().enumerate() {
+        let sem = Arc::clone(&semaphore);
+        join_set.spawn(async move {
+            let _permit = sem.acquire_owned().await;
+            let snapshot = collect_http(&target, &budget, policy).await;
+            (idx, snapshot)
+        });
+    }
+
+    let mut ordered: Vec<(usize, EvidenceSnapshot)> = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(pair) = res {
+            ordered.push(pair);
+        }
+    }
+    ordered.sort_by_key(|(idx, _)| *idx);
+    ordered.into_iter().map(|(_, snap)| snap).collect()
 }
 
 async fn execute_bounded_get(
@@ -425,5 +459,33 @@ mod tests {
 
         let snapshot = collect_http(&target, &budget, TargetPolicy::AllowPrivate).await;
         assert!(matches!(snapshot.http, CollectorOutcome::Failed { .. }));
+    }
+
+    #[tokio::test]
+    async fn collect_batch_preserves_order_with_bounded_concurrency() {
+        let addr = spawn_mock_server(vec![
+            "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\na",
+            "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nb",
+        ])
+        .await;
+
+        let t1 =
+            AuditTarget::parse(&format!("http://{addr}/1"), TargetPolicy::AllowPrivate).unwrap();
+        let t2 =
+            AuditTarget::parse(&format!("http://{addr}/2"), TargetPolicy::AllowPrivate).unwrap();
+        let budget = ExecutionBudget {
+            max_concurrency: 1,
+            ..ExecutionBudget::default()
+        };
+
+        let snaps = collect_batch(
+            vec![t1.clone(), t2.clone()],
+            &budget,
+            TargetPolicy::AllowPrivate,
+        )
+        .await;
+        assert_eq!(snaps.len(), 2);
+        assert_eq!(snaps[0].target, t1);
+        assert_eq!(snaps[1].target, t2);
     }
 }

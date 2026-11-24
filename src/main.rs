@@ -1,17 +1,19 @@
 //! `NetzZwergenWacht` CLI entry point (`DokumentationsZwerg` presentation).
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::Serialize;
 
 use netzzwergenwacht::analysis::{self, AuditReport};
 use netzzwergenwacht::brigade::{self, DwarfId, MOTTO};
 use netzzwergenwacht::collection;
+use netzzwergenwacht::config::{self, AppConfig, PolicyConfig, PolicyEvaluation};
 use netzzwergenwacht::domain::{
-    AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, ExecutionBudget, Measurement,
-    Severity, TargetPolicy,
+    AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, Measurement, Severity, TargetPolicy,
 };
 use netzzwergenwacht::persistence::{self, RegressionReport};
 
@@ -36,6 +38,9 @@ enum Command {
     Check {
         /// Target HTTP or HTTPS URL to audit.
         url: String,
+        /// Optional path to a TOML configuration file (`nzw.toml`).
+        #[arg(long)]
+        config: Option<PathBuf>,
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
@@ -43,15 +48,41 @@ enum Command {
         #[arg(long)]
         allow_private: bool,
         /// Per-request HTTP timeout in seconds.
-        #[arg(long, default_value_t = 30)]
-        timeout_secs: u64,
+        #[arg(long)]
+        timeout_secs: Option<u64>,
         /// End-to-end collection deadline in seconds (including DNS and redirects).
-        #[arg(long, default_value_t = 60)]
-        audit_timeout_secs: u64,
+        #[arg(long)]
+        audit_timeout_secs: Option<u64>,
         /// Maximum number of HTTP redirects to follow.
-        #[arg(long, default_value_t = 5)]
-        max_redirects: usize,
+        #[arg(long)]
+        max_redirects: Option<usize>,
+        /// Fail quality gate if any finding has severity >= this threshold.
+        #[arg(long, value_enum)]
+        fail_on: Option<FailOnSeverity>,
         /// Optional JSONL file path to append this audit report for history/regression tracking.
+        #[arg(long)]
+        history: Option<PathBuf>,
+    },
+    /// Run a bounded deterministic audit over a list of URLs (one per line, `#` comments allowed).
+    Batch {
+        /// Path to a file containing target URLs.
+        targets_file: PathBuf,
+        /// Optional path to a TOML configuration file (`nzw.toml`).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+        /// Allow loopback and private network targets (for local testing only).
+        #[arg(long)]
+        allow_private: bool,
+        /// Maximum concurrent targets.
+        #[arg(long)]
+        max_concurrency: Option<usize>,
+        /// Fail quality gate if any target has a finding with severity >= this threshold.
+        #[arg(long, value_enum)]
+        fail_on: Option<FailOnSeverity>,
+        /// Optional JSONL file path to append all generated audit reports.
         #[arg(long)]
         history: Option<PathBuf>,
     },
@@ -81,6 +112,48 @@ enum OutputFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum FailOnSeverity {
+    Critical,
+    High,
+    Medium,
+    Low,
+    Info,
+}
+
+impl From<FailOnSeverity> for Severity {
+    fn from(value: FailOnSeverity) -> Self {
+        match value {
+            FailOnSeverity::Critical => Self::Critical,
+            FailOnSeverity::High => Self::High,
+            FailOnSeverity::Medium => Self::Medium,
+            FailOnSeverity::Low => Self::Low,
+            FailOnSeverity::Info => Self::Info,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct TargetErrorEntry {
+    raw_target: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchItem {
+    report: AuditReport,
+    policy: PolicyEvaluation,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchReport {
+    total_targets: usize,
+    completed: usize,
+    failed_targets: usize,
+    target_errors: Vec<TargetErrorEntry>,
+    items: Vec<BatchItem>,
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -105,66 +178,304 @@ async fn main() -> ExitCode {
         }
         Command::Check {
             url,
+            config: config_path,
             format,
             allow_private,
             timeout_secs,
             audit_timeout_secs,
             max_redirects,
+            fail_on,
             history,
         } => {
-            let policy = target_policy(allow_private);
-            let target = match AuditTarget::parse(&url, policy) {
-                Ok(target) => target,
-                Err(err) => {
-                    eprintln!("invalid target: {err}");
-                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
-                }
-            };
-
-            let budget = ExecutionBudget {
-                audit_timeout: Duration::from_secs(audit_timeout_secs.max(1)),
-                http_timeout: Duration::from_secs(timeout_secs.max(1)),
+            run_check(
+                &url,
+                config_path.as_deref(),
+                format,
+                allow_private,
+                timeout_secs,
+                audit_timeout_secs,
                 max_redirects,
-                ..ExecutionBudget::default()
-            };
-
-            let snapshot = collection::collect_http(&target, &budget, policy).await;
-            let report = analysis::run_all(&snapshot);
-
-            if let Some(history_path) = history
-                && let Err(err) = persistence::append_report(&history_path, &report)
-            {
-                eprintln!(
-                    "failed to append audit history to {}: {err}",
-                    history_path.display()
-                );
-                return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
-            }
-
-            let code = exit_code_for_report(&report);
-
-            match format {
-                OutputFormat::Json => match serde_json::to_string_pretty(&report) {
-                    Ok(json) => {
-                        println!("{json}");
-                        code
-                    }
-                    Err(err) => {
-                        eprintln!("failed to serialise JSON report: {err}");
-                        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
-                    }
-                },
-                OutputFormat::Text => {
-                    print_text_report(&report);
-                    code
-                }
-            }
+                fail_on,
+                history.as_deref(),
+            )
+            .await
+        }
+        Command::Batch {
+            targets_file,
+            config: config_path,
+            format,
+            allow_private,
+            max_concurrency,
+            fail_on,
+            history,
+        } => {
+            run_batch(
+                &targets_file,
+                config_path.as_deref(),
+                format,
+                allow_private,
+                max_concurrency,
+                fail_on,
+                history.as_deref(),
+            )
+            .await
         }
         Command::Diff {
             baseline,
             current,
             format,
         } => run_diff(&baseline, &current, format),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_check(
+    url: &str,
+    config_path: Option<&Path>,
+    format: OutputFormat,
+    allow_private: bool,
+    timeout_secs: Option<u64>,
+    audit_timeout_secs: Option<u64>,
+    max_redirects: Option<usize>,
+    fail_on: Option<FailOnSeverity>,
+    history: Option<&Path>,
+) -> ExitCode {
+    let app_cfg = match load_optional_config(config_path) {
+        Ok(cfg) => cfg,
+        Err(code) => return code,
+    };
+    let policy_cfg = merge_policy(&app_cfg.policy, allow_private, fail_on);
+    let target_pol = if policy_cfg.allow_private {
+        TargetPolicy::AllowPrivate
+    } else {
+        TargetPolicy::PublicOnly
+    };
+    let target = match AuditTarget::parse(url, target_pol) {
+        Ok(target) => target,
+        Err(err) => {
+            eprintln!("invalid target: {err}");
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+
+    let mut budget = app_cfg.execution_budget();
+    if let Some(secs) = timeout_secs {
+        budget.http_timeout = Duration::from_secs(secs.max(1));
+    }
+    if let Some(secs) = audit_timeout_secs {
+        budget.audit_timeout = Duration::from_secs(secs.max(1));
+    }
+    if let Some(hops) = max_redirects {
+        budget.max_redirects = hops;
+    }
+
+    let snapshot = collection::collect_http(&target, &budget, target_pol).await;
+    let report = analysis::run_all(&snapshot);
+
+    if let Some(history_path) = history
+        && let Err(err) = persistence::append_report(history_path, &report)
+    {
+        eprintln!(
+            "failed to append audit history to {}: {err}",
+            history_path.display()
+        );
+        return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+    }
+
+    let eval = config::evaluate_policy(&report, &policy_cfg);
+    let code = exit_code_for_report(&report, &eval);
+
+    match format {
+        OutputFormat::Json => match serde_json::to_string_pretty(&report) {
+            Ok(json) => {
+                println!("{json}");
+                code
+            }
+            Err(err) => {
+                eprintln!("failed to serialise JSON report: {err}");
+                ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+            }
+        },
+        OutputFormat::Text => {
+            print_text_report(&report, &eval);
+            code
+        }
+    }
+}
+
+fn load_optional_config(path: Option<&Path>) -> Result<AppConfig, ExitCode> {
+    let Some(path) = path else {
+        return Ok(AppConfig::default());
+    };
+    AppConfig::from_toml_file(path).map_err(|err| {
+        eprintln!("failed to load config {}: {err}", path.display());
+        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+    })
+}
+
+fn merge_policy(
+    base: &PolicyConfig,
+    allow_private_flag: bool,
+    fail_on: Option<FailOnSeverity>,
+) -> PolicyConfig {
+    let mut merged = base.clone();
+    if allow_private_flag {
+        merged.allow_private = true;
+    }
+    if let Some(sev) = fail_on {
+        merged.fail_on_severity = Some(sev.into());
+    }
+    merged
+}
+
+async fn run_batch(
+    targets_file: &Path,
+    config_path: Option<&Path>,
+    format: OutputFormat,
+    allow_private: bool,
+    max_concurrency: Option<usize>,
+    fail_on: Option<FailOnSeverity>,
+    history: Option<&Path>,
+) -> ExitCode {
+    let app_cfg = match load_optional_config(config_path) {
+        Ok(cfg) => cfg,
+        Err(code) => return code,
+    };
+    let policy_cfg = merge_policy(&app_cfg.policy, allow_private, fail_on);
+    let target_pol = if policy_cfg.allow_private {
+        TargetPolicy::AllowPrivate
+    } else {
+        TargetPolicy::PublicOnly
+    };
+    let mut budget = app_cfg.execution_budget();
+    if let Some(conc) = max_concurrency {
+        budget.max_concurrency = conc.max(1);
+    }
+
+    let (total_targets, valid_targets, target_errors) =
+        match parse_targets_file(targets_file, target_pol) {
+            Ok(parsed) => parsed,
+            Err(code) => return code,
+        };
+
+    let snapshots = collection::collect_batch(valid_targets, &budget, target_pol).await;
+    let mut items = Vec::with_capacity(snapshots.len());
+    let mut any_collection_failed = !target_errors.is_empty();
+    let mut any_policy_failed = false;
+
+    for snap in &snapshots {
+        let report = analysis::run_all(snap);
+        if let Some(history_path) = history
+            && let Err(err) = persistence::append_report(history_path, &report)
+        {
+            eprintln!(
+                "failed to append audit history to {}: {err}",
+                history_path.display()
+            );
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+        if matches!(report.http, CollectorOutcome::Failed { .. }) {
+            any_collection_failed = true;
+        }
+        let policy = config::evaluate_policy(&report, &policy_cfg);
+        if !policy.passed {
+            any_policy_failed = true;
+        }
+        items.push(BatchItem { report, policy });
+    }
+
+    let batch_report = BatchReport {
+        total_targets,
+        completed: items.len(),
+        failed_targets: target_errors.len(),
+        target_errors,
+        items,
+    };
+
+    let code = if any_collection_failed {
+        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+    } else if any_policy_failed {
+        ExitCode::from(EXIT_FINDINGS)
+    } else {
+        ExitCode::from(EXIT_OK)
+    };
+
+    render_batch_report(&batch_report, format, code)
+}
+
+fn parse_targets_file(
+    targets_file: &Path,
+    target_pol: TargetPolicy,
+) -> Result<(usize, Vec<AuditTarget>, Vec<TargetErrorEntry>), ExitCode> {
+    let raw_lines = fs::read_to_string(targets_file).map_err(|err| {
+        eprintln!(
+            "failed to read targets file {}: {err}",
+            targets_file.display()
+        );
+        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+    })?;
+
+    let mut valid_targets = Vec::new();
+    let mut target_errors = Vec::new();
+    let mut total_targets = 0usize;
+
+    for line in raw_lines.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        total_targets += 1;
+        match AuditTarget::parse(trimmed, target_pol) {
+            Ok(t) => valid_targets.push(t),
+            Err(err) => target_errors.push(TargetErrorEntry {
+                raw_target: trimmed.to_owned(),
+                error: err.to_string(),
+            }),
+        }
+    }
+
+    Ok((total_targets, valid_targets, target_errors))
+}
+
+fn render_batch_report(
+    batch_report: &BatchReport,
+    format: OutputFormat,
+    code: ExitCode,
+) -> ExitCode {
+    match format {
+        OutputFormat::Json => match serde_json::to_string_pretty(batch_report) {
+            Ok(json) => {
+                println!("{json}");
+                code
+            }
+            Err(err) => {
+                eprintln!("failed to serialise batch JSON: {err}");
+                ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+            }
+        },
+        OutputFormat::Text => {
+            println!("NETZZWERGENWACHT BATCH AUDIT");
+            println!(
+                "Targets: {} total, {} completed, {} invalid\n",
+                batch_report.total_targets, batch_report.completed, batch_report.failed_targets
+            );
+            for err in &batch_report.target_errors {
+                println!("  [INVALID] {} -> {}", err.raw_target, err.error);
+            }
+            for item in &batch_report.items {
+                let status = if item.policy.passed { "PASS" } else { "FAIL" };
+                println!(
+                    "  [{}] {} (C:{} H:{} M:{} L:{})",
+                    status,
+                    item.report.target.as_str(),
+                    item.report.summary.critical_findings,
+                    item.report.summary.high_findings,
+                    item.report.summary.medium_findings,
+                    item.report.summary.low_findings,
+                );
+            }
+            code
+        }
     }
 }
 
@@ -240,24 +551,18 @@ const fn target_policy(allow_private: bool) -> TargetPolicy {
     }
 }
 
-fn exit_code_for_report(report: &AuditReport) -> ExitCode {
+fn exit_code_for_report(report: &AuditReport, eval: &PolicyEvaluation) -> ExitCode {
     if matches!(report.http, CollectorOutcome::Failed { .. }) {
         return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
     }
-    let has_actionable = report.summary.critical_findings > 0
-        || report.summary.high_findings > 0
-        || report.summary.medium_findings > 0
-        || report.summary.low_findings > 0
-        || matches!(report.http, CollectorOutcome::Partial { .. });
-
-    if has_actionable {
-        ExitCode::from(EXIT_FINDINGS)
-    } else {
+    if eval.passed {
         ExitCode::from(EXIT_OK)
+    } else {
+        ExitCode::from(EXIT_FINDINGS)
     }
 }
 
-fn print_text_report(report: &AuditReport) {
+fn print_text_report(report: &AuditReport, eval: &PolicyEvaluation) {
     println!("NETZZWERGENWACHT");
     println!("Die Zwergenbrigade\n");
     println!("Target: {}", report.target.as_str());
@@ -290,6 +595,9 @@ fn print_text_report(report: &AuditReport) {
         report.summary.low_findings,
         report.summary.info_findings,
     );
+    if !eval.passed {
+        println!("Policy Gate: FAILED ({})", eval.violations.join("; "));
+    }
 
     for analyser in &report.analysers {
         if analyser.findings.is_empty() {
@@ -380,8 +688,9 @@ mod tests {
             },
         };
         let report = analysis::run_all(&snap);
+        let eval = config::evaluate_policy(&report, &PolicyConfig::default());
         assert_eq!(
-            exit_code_for_report(&report),
+            exit_code_for_report(&report, &eval),
             ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
         );
     }
@@ -412,6 +721,10 @@ mod tests {
             },
         };
         let report = analysis::run_all(&snap);
-        assert_eq!(exit_code_for_report(&report), ExitCode::from(EXIT_FINDINGS));
+        let eval = config::evaluate_policy(&report, &PolicyConfig::default());
+        assert_eq!(
+            exit_code_for_report(&report, &eval),
+            ExitCode::from(EXIT_FINDINGS)
+        );
     }
 }
