@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### CDP Subresource Policy, Process-Group Cleanup & Reintroduced History Tracking (2026-11-24)
+- Enforced Chromium CDP `Fetch.enable` subresource SSRF/private-IP blocking under `PublicOnly` in `src/adapters/browser.rs`.
+- Added Unix process-group isolation (`process_group(0)`) and `kill -9 -<pgid>` termination in `src/adapters/mod.rs`.
+- Added `persistence::diff_history` to detect `reintroduced_findings` across multi-run history, plus `--events` flag on `nzw investigate`.
+
 ### Prove the Brigade — Slices A–E (2026-11-24)
 - **Slice A (`fix/slice-a-trustworthy-execution`)**: Removed unconditional `--no-sandbox` from Lighthouse and Chromium adapters (ADR 0006), introduced `Origin` & `InvestigationScope` enforcing complete `(scheme, host, port)` boundaries, stabilised page-level fingerprints (`host + path + rule_id`), added `not_comparable_reason` and `changed_findings` to `persistence::diff_reports`, and aligned `nzw investigate` exit codes (`0`/`1`/`2`).
 - **Slice B (`feat/slice-b-collaborative-diagnosis`)**: Refactored `src/investigation/` into `events.rs`, `reporting.rs`, `tools.rs`, and `mod.rs`; added `inspect_page_performance` (`LeistungsZwerg`), `inspect_document_structure` (`StrukturZwerg`), and `inspect_security_posture` (`SicherheitsZwerg`) `rig-core` `PortableTool`s; added `SpecialistContribution` and `InvestigationEvent` tracing.

@@ -36,9 +36,9 @@ Status legend:
 - [x] **Role-tailored report perspectives & Markdown export (`--audience pm|po|cto|technical`, `--format markdown`)**: *Implemented, Tested*
 
 ## Milestone E: Continuous Quality Assurance *(In Progress)*
-- [x] **Comparable regression semantics (`unverified_findings`, `changed_findings`, `not_comparable_reason`)** (`src/persistence.rs`): *Implemented, Tested*
+- [x] **Comparable regression semantics (`unverified_findings`, `changed_findings`, `reintroduced_findings`, `not_comparable_reason`)** (`src/persistence.rs`): *Implemented, Tested*
 - [x] **`nzw verify --baseline <path> <url>` remediation verification**: *Implemented, Tested via Zwergenprüfstand*
-- [ ] **Multi-run `reintroduced` tracking, quality baselines, and portfolio comparisons**: *Planned*
+- [ ] **Scheduled monitoring and portfolio comparisons**: *Planned*
 
 ## Milestone F: Product Hardening & Integration *(In Progress)*
 - [x] **`Zwergenprüfstand` benchmark fixtures & Mode A vs Mode C evaluation** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): *Implemented, Experimentally demonstrated (local HTTP server + scripted LLM)*

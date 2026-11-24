@@ -261,6 +261,63 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
     }
 }
 
+/// Compares `current` against the latest report in `history`, classifying any
+/// finding that was absent from the immediate baseline but appeared in an
+/// earlier historical run for the same target as `reintroduced_findings`.
+#[must_use]
+pub fn diff_history(history: &[AuditReport], current: &AuditReport) -> RegressionReport {
+    let Some(latest) = history.last() else {
+        let new_findings: Vec<Finding> = current
+            .analysers
+            .iter()
+            .flat_map(|a| a.findings.iter().cloned())
+            .collect();
+        let new_count = new_findings.len();
+        return RegressionReport {
+            baseline_target: current.target.as_str().to_owned(),
+            current_target: current.target.as_str().to_owned(),
+            baseline_captured_at_unix_secs: 0,
+            current_captured_at_unix_secs: current.captured_at_unix_secs,
+            not_comparable_reason: Some("no prior baseline report in history".to_owned()),
+            new_findings,
+            persisting_findings: Vec::new(),
+            resolved_findings: Vec::new(),
+            unverified_findings: Vec::new(),
+            changed_findings: Vec::new(),
+            reintroduced_findings: Vec::new(),
+            summary: RegressionSummary {
+                new_count,
+                ..RegressionSummary::default()
+            },
+        };
+    };
+
+    let mut report = diff_reports(latest, current);
+    if report.not_comparable_reason.is_some() || history.len() < 2 {
+        return report;
+    }
+
+    let earlier_fps: HashSet<&FindingFingerprint> = history[..history.len() - 1]
+        .iter()
+        .filter(|r| r.target.as_str() == current.target.as_str())
+        .flat_map(|r| r.analysers.iter())
+        .flat_map(|a| a.findings.iter().map(|f| &f.fingerprint))
+        .collect();
+
+    let mut remaining_new = Vec::new();
+    for f in report.new_findings {
+        if earlier_fps.contains(&f.fingerprint) {
+            report.reintroduced_findings.push(f);
+        } else {
+            remaining_new.push(f);
+        }
+    }
+    report.new_findings = remaining_new;
+    report.summary.new_count = report.new_findings.len();
+    report.summary.reintroduced_count = report.reintroduced_findings.len();
+    report
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -388,5 +445,35 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id.0 == "a11y.images.alt")
         );
+    }
+
+    #[test]
+    fn diff_history_detects_reintroduced_findings() {
+        let run1 = make_report(
+            "<html><body><h1>Title</h1><img src='/a.png'></body></html>",
+            Vec::new(),
+            100,
+        );
+        // Fixed in run2
+        let run2 = make_report(
+            "<html><body><h1>Title</h1><img src='/a.png' alt='ok'></body></html>",
+            Vec::new(),
+            200,
+        );
+        // Reintroduced in run3
+        let run3 = make_report(
+            "<html><body><h1>Title</h1><img src='/a.png'></body></html>",
+            Vec::new(),
+            300,
+        );
+
+        let diff = diff_history(&[run1, run2], &run3);
+        assert!(
+            diff.reintroduced_findings
+                .iter()
+                .any(|f| f.rule_id.0 == "a11y.images.alt")
+        );
+        assert_eq!(diff.summary.reintroduced_count, 1);
+        assert_eq!(diff.summary.new_count, 0);
     }
 }
