@@ -242,3 +242,66 @@ async fn consecutive_patrols_reuse_healthy_memory_and_escalate_new_anomaly() {
     let _ = CollectorOutcome::<()>::default();
     let _ = fs::remove_dir_all(&mem_dir);
 }
+
+#[tokio::test]
+async fn quiet_patrol_spends_zero_llm_calls_when_unchanged() {
+    let regressed = Arc::new(AtomicBool::new(false));
+    let base = spawn_multilingual_site(Arc::clone(&regressed)).await;
+    let seed = AuditTarget::parse(&format!("{base}/"), TargetPolicy::AllowPrivate).unwrap();
+    let mem_dir = std::env::temp_dir().join("nzw_patrol_quiet_mem");
+    let _ = fs::remove_dir_all(&mem_dir);
+
+    let exec_budget = ExecutionBudget {
+        audit_timeout: Duration::from_secs(5),
+        http_timeout: Duration::from_secs(2),
+        ..ExecutionBudget::default()
+    };
+    let patrol_budget = PatrolBudget {
+        max_pages: 10,
+        max_deep_samples: 2,
+        freshness_ttl_secs: 3_600,
+        allow_ai_escalation: true,
+        enable_level2: false,
+    };
+    let backend: Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
+        Arc::new(LiveDiagnosticBackend);
+    let llm_p1 = SequenceLlm {
+        responses: Mutex::new(VecDeque::new()),
+        calls: Mutex::new(0),
+    };
+    let _ = run_patrol(
+        seed.clone(),
+        TargetPolicy::AllowPrivate,
+        exec_budget,
+        patrol_budget,
+        Some(&mem_dir),
+        Some(&llm_p1),
+        Arc::clone(&backend),
+    )
+    .await;
+
+    // Patrol #2 on an unchanged application: must be quiet and spend 0 LLM calls.
+    let llm_p2 = SequenceLlm {
+        responses: Mutex::new(VecDeque::new()),
+        calls: Mutex::new(0),
+    };
+    let p2 = run_patrol(
+        seed,
+        TargetPolicy::AllowPrivate,
+        exec_budget,
+        patrol_budget,
+        Some(&mem_dir),
+        Some(&llm_p2),
+        backend,
+    )
+    .await;
+    assert_eq!(p2.patrol_number, 2);
+    assert!(p2.is_quiet_patrol);
+    assert_eq!(
+        p2.anomalies,
+        Vec::<netzzwergenwacht::patrol::PatrolAnomaly>::new()
+    );
+    assert!(p2.investigation.is_none());
+    assert_eq!(*llm_p2.calls.lock().unwrap(), 0);
+    let _ = fs::remove_dir_all(&mem_dir);
+}

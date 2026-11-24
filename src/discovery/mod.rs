@@ -265,6 +265,34 @@ pub fn template_fingerprint(obs: &DocumentObservations) -> String {
     format!("tpl-{hash:016x}")
 }
 
+/// Extracts same-origin `Sitemap:` URLs from `robots.txt`.
+#[must_use]
+pub fn parse_robots_sitemaps(
+    robots_txt: &str,
+    base: &AuditTarget,
+    policy: TargetPolicy,
+) -> Vec<AuditTarget> {
+    let base_origin = Origin::from_target(base);
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for line in robots_txt.lines() {
+        let trimmed = line.trim();
+        let Some((key, val)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if !key.trim().eq_ignore_ascii_case("sitemap") {
+            continue;
+        }
+        if let Ok(target) = AuditTarget::parse(val.trim(), policy)
+            && Origin::from_target(&target) == base_origin
+            && seen.insert(target.as_str().to_owned())
+        {
+            out.push(target);
+        }
+    }
+    out
+}
+
 /// Extracts and normalises same-origin URLs from an XML sitemap `<loc>` list.
 #[must_use]
 pub fn parse_sitemap_urls(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> Vec<AuditTarget> {
@@ -573,21 +601,49 @@ pub async fn seed_sitemap_urls(
         ..exec_budget
     };
     let sm_snap = collection::collect_http(&sm_target, &sm_budget, policy).await;
-    let CollectorOutcome::Captured { data } = sm_snap.http else {
-        return Vec::new();
-    };
-    if data.status_code != 200 {
-        return Vec::new();
-    }
-    let child_sitemaps = parse_sitemap_index_urls(&data.body_text, seed, policy);
-    if child_sitemaps.is_empty() {
-        return prioritise_representative_urls(parse_sitemap_urls(&data.body_text, seed, policy));
+    if let CollectorOutcome::Captured { data } = sm_snap.http
+        && data.status_code == 200
+    {
+        let child_sitemaps = parse_sitemap_index_urls(&data.body_text, seed, policy);
+        if child_sitemaps.is_empty() {
+            return prioritise_representative_urls(parse_sitemap_urls(
+                &data.body_text,
+                seed,
+                policy,
+            ));
+        }
+        return collect_child_sitemaps(child_sitemaps, seed, &sm_budget, policy).await;
     }
 
+    // Fallback: check /robots.txt for Sitemap: directives on the same origin.
+    let Ok(robots_url) = seed_url.join("/robots.txt") else {
+        return Vec::new();
+    };
+    let Ok(robots_target) = AuditTarget::parse(robots_url.as_str(), policy) else {
+        return Vec::new();
+    };
+    let robots_snap = collection::collect_http(&robots_target, &sm_budget, policy).await;
+    if let CollectorOutcome::Captured { data } = robots_snap.http
+        && data.status_code == 200
+    {
+        let sitemaps = parse_robots_sitemaps(&data.body_text, seed, policy);
+        if !sitemaps.is_empty() {
+            return collect_child_sitemaps(sitemaps, seed, &sm_budget, policy).await;
+        }
+    }
+    Vec::new()
+}
+
+async fn collect_child_sitemaps(
+    child_sitemaps: Vec<AuditTarget>,
+    seed: &AuditTarget,
+    sm_budget: &ExecutionBudget,
+    policy: TargetPolicy,
+) -> Vec<AuditTarget> {
     let mut all_urls = Vec::new();
     let mut visited_urls = HashSet::new();
     for child in child_sitemaps.into_iter().take(5) {
-        let child_snap = collection::collect_http(&child, &sm_budget, policy).await;
+        let child_snap = collection::collect_http(&child, sm_budget, policy).await;
         if let CollectorOutcome::Captured { data: child_data } = child_snap.http
             && child_data.status_code == 200
         {
@@ -773,5 +829,21 @@ mod tests {
         );
         assert_eq!(template_fingerprint(&p1), template_fingerprint(&p2));
         assert_ne!(template_fingerprint(&p1), template_fingerprint(&form));
+    }
+
+    #[test]
+    fn parses_robots_sitemaps_same_origin_only() {
+        let base = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let robots = "\
+            User-agent: *\n\
+            Disallow: /admin\n\
+            Sitemap: https://example.org/sitemap-custom.xml\n\
+            Sitemap: https://evil.example.com/sitemap.xml\n";
+        let sitemaps = parse_robots_sitemaps(robots, &base, TargetPolicy::PublicOnly);
+        assert_eq!(sitemaps.len(), 1);
+        assert_eq!(
+            sitemaps[0].as_str(),
+            "https://example.org/sitemap-custom.xml"
+        );
     }
 }
