@@ -1,6 +1,6 @@
 # ADR 0004: Optional Intelligence Layer (`KommandantZwerg`)
 
-- **Status**: Accepted
+- **Status**: Amended by [ADR 0005](0005-agentic-investigation-architecture.md) (narrow scope: post-audit synthesis only)
 - **Date**: 2026-11-24
 
 ## Context
