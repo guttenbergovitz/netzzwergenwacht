@@ -65,6 +65,12 @@ enum Command {
         /// Run optional Level 2 Lighthouse subprocess adapter for Core Web Vitals.
         #[arg(long)]
         lighthouse: bool,
+        /// Run optional Level 2 headless Chromium subprocess adapter (`BrowserZwerg` & `GestaltungsZwerg`).
+        #[arg(long)]
+        browser: bool,
+        /// Run optional Level 2 `axe-core` subprocess adapter (`ZugänglichkeitsZwerg`).
+        #[arg(long)]
+        axe: bool,
     },
     /// Run a bounded deterministic audit over a list of URLs (one per line, `#` comments allowed).
     Batch {
@@ -190,6 +196,8 @@ async fn main() -> ExitCode {
             fail_on,
             history,
             lighthouse,
+            browser,
+            axe,
         } => {
             run_check(
                 &url,
@@ -201,7 +209,11 @@ async fn main() -> ExitCode {
                 max_redirects,
                 fail_on,
                 history.as_deref(),
-                lighthouse,
+                AdapterOptions {
+                    lighthouse,
+                    browser,
+                    axe,
+                },
             )
             .await
         }
@@ -233,6 +245,13 @@ async fn main() -> ExitCode {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AdapterOptions {
+    lighthouse: bool,
+    browser: bool,
+    axe: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_check(
     url: &str,
@@ -244,7 +263,7 @@ async fn run_check(
     max_redirects: Option<usize>,
     fail_on: Option<FailOnSeverity>,
     history: Option<&Path>,
-    lighthouse: bool,
+    adapters: AdapterOptions,
 ) -> ExitCode {
     let app_cfg = match load_optional_config(config_path) {
         Ok(cfg) => cfg,
@@ -276,10 +295,18 @@ async fn run_check(
     }
 
     let mut snapshot = collection::collect_http(&target, &budget, target_pol).await;
-    if lighthouse {
+    if adapters.lighthouse {
         snapshot.lighthouse =
             netzzwergenwacht::adapters::lighthouse::run_lighthouse(&target, budget.audit_timeout)
                 .await;
+    }
+    if adapters.browser {
+        snapshot.browser =
+            netzzwergenwacht::adapters::browser::run_browser(&target, budget.audit_timeout).await;
+    }
+    if adapters.axe {
+        snapshot.axe =
+            netzzwergenwacht::adapters::axe::run_axe(&target, budget.audit_timeout).await;
     }
     let report = analysis::run_all(&snapshot);
 

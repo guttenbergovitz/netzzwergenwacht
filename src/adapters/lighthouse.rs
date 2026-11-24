@@ -3,12 +3,12 @@
 //! Invokes the `lighthouse` CLI in headless mode with an explicit timeout and
 //! parses its JSON report into typed [`LighthouseMetrics`].
 
-use std::process::Stdio;
 use std::time::Duration;
 
 use serde_json::Value;
 use tokio::process::Command;
 
+use crate::adapters::run_bounded_command;
 use crate::domain::{
     AuditTarget, CollectorOutcome, LighthouseMetrics, Measurement, MeasurementUnit,
 };
@@ -26,38 +26,13 @@ pub async fn run_lighthouse(
         .arg("--output=json")
         .arg("--output-path=stdout")
         .arg("--quiet")
-        .arg("--chrome-flags=--headless --no-sandbox --disable-gpu")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+        .arg("--chrome-flags=--headless --no-sandbox --disable-gpu");
 
-    let output = match tokio::time::timeout(timeout, cmd.output()).await {
-        Ok(Ok(out)) => out,
-        Ok(Err(err)) => {
-            return CollectorOutcome::Failed {
-                error: format!("failed to launch lighthouse: {err}"),
-            };
-        }
-        Err(_) => {
-            return CollectorOutcome::Failed {
-                error: format!("lighthouse timed out after {} ms", timeout.as_millis()),
-            };
-        }
+    let stdout = match run_bounded_command("lighthouse", &mut cmd, timeout).await {
+        Ok(out) => out,
+        Err(error) => return CollectorOutcome::Failed { error },
     };
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return CollectorOutcome::Failed {
-            error: format!(
-                "lighthouse exited with {}: {}",
-                output.status,
-                stderr.trim()
-            ),
-        };
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
     match parse_lighthouse_json(&stdout) {
         Ok(metrics) => CollectorOutcome::Captured { data: metrics },
         Err(error) => CollectorOutcome::Failed { error },
