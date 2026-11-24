@@ -4,6 +4,9 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### OpenCode Go `x-opencode-session` Header (2026-11-24)
+- Attached `x-opencode-session` (from `OPENCODE_SESSION_ID` or `nzw-<pid>`) via `rig-core` `.http_client(...)` when `base_url` targets `opencode.ai` (`src/intelligence/mod.rs`).
+
 ### OpenCode Go (`OPENCODE_API_KEY`) Auto-Detection & `.nzw/` Ignore (2026-11-24)
 - Updated `RigCompletionProvider::from_env` and `from_model_spec` (`src/intelligence/mod.rs`) to auto-detect `OPENCODE_API_KEY` (defaulting to `https://opencode.ai/zen/go/v1` when `NZW_LLM_API_KEY` is unset) and honour explicit `api_key_env` without falling back to `OPENAI_API_KEY`.
 - Added `.nzw/` to `.gitignore`.

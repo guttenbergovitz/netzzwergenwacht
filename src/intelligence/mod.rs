@@ -238,6 +238,19 @@ impl LlmProvider for RigCompletionProvider {
                         rig_core::providers::openai::CompletionsClient::builder().api_key(key);
                     if let Some(url) = &self.base_url {
                         builder = builder.base_url(url);
+                        if url.contains("opencode.ai") {
+                            let session_id = std::env::var("OPENCODE_SESSION_ID")
+                                .ok()
+                                .filter(|s| !s.trim().is_empty())
+                                .unwrap_or_else(|| format!("nzw-{}", std::process::id()));
+                            let mut headers = rig_core::http_client::HeaderMap::new();
+                            if let Ok(val) =
+                                rig_core::http_client::HeaderValue::from_str(&session_id)
+                            {
+                                headers.insert("x-opencode-session", val);
+                            }
+                            builder = builder.http_headers(headers);
+                        }
                     }
                     let client = builder
                         .build()
