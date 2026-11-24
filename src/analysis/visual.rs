@@ -16,12 +16,25 @@ const RULE_HORIZONTAL_OVERFLOW: &str = "vis.layout.horizontal_overflow";
 const RULE_BROKEN_IMAGES: &str = "vis.assets.broken_images";
 const RULE_VIEWPORT_META: &str = "vis.mobile.viewport_meta";
 const RULE_IMAGE_DIMENSIONS: &str = "vis.layout.image_dimensions";
+const RULE_MODERN_IMAGE_FORMATS: &str = "vis.images.modern_formats";
+const RULE_IMAGE_SRCSET: &str = "vis.images.responsive_srcset";
+const RULE_IMAGE_FILENAME: &str = "vis.images.filename_quality";
+const RULE_IMAGE_HOTLINKED: &str = "vis.images.hotlinked";
+const RULE_INLINE_SVG_A11Y: &str = "vis.images.inline_svg_a11y";
 
 /// All Level 2 rules owned by `GestaltungsZwerg`.
 pub const ALL_RULES: &[&str] = &[RULE_HORIZONTAL_OVERFLOW, RULE_BROKEN_IMAGES];
 
 /// All Level 1 source-document rules owned by `GestaltungsZwerg`.
-pub const ALL_SOURCE_RULES: &[&str] = &[RULE_VIEWPORT_META, RULE_IMAGE_DIMENSIONS];
+pub const ALL_SOURCE_RULES: &[&str] = &[
+    RULE_VIEWPORT_META,
+    RULE_IMAGE_DIMENSIONS,
+    RULE_MODERN_IMAGE_FORMATS,
+    RULE_IMAGE_SRCSET,
+    RULE_IMAGE_FILENAME,
+    RULE_IMAGE_HOTLINKED,
+    RULE_INLINE_SVG_A11Y,
+];
 
 /// Evaluates rendered viewport layout and image integrity observations.
 #[must_use]
@@ -56,6 +69,11 @@ pub fn analyse_with_document(
     if let Some(doc) = obs {
         check_viewport_meta(doc, &mut findings, &mut checks);
         check_image_dimensions(doc, &mut findings, &mut checks);
+        check_modern_image_formats(doc, &mut findings, &mut checks);
+        check_image_srcset(doc, &mut findings, &mut checks);
+        check_image_filename_quality(doc, &mut findings, &mut checks);
+        check_hotlinked_images(snapshot, doc, &mut findings, &mut checks);
+        check_inline_svg_a11y(doc, &mut findings, &mut checks);
     }
 
     let browser = match &snapshot.browser {
@@ -356,6 +374,314 @@ fn check_image_dimensions(
     }
 }
 
+fn check_modern_image_formats(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mut legacy_count = 0usize;
+    let mut modern_count = 0usize;
+
+    for img in &obs.images {
+        let Some(src) = img.src.as_deref() else {
+            continue;
+        };
+        let path_part = src.split(['?', '#']).next().unwrap_or(src);
+        let ext = std::path::Path::new(path_part)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase);
+        match ext.as_deref() {
+            Some("webp" | "avif" | "svg") => modern_count += 1,
+            Some("jpg" | "jpeg" | "png" | "bmp") => legacy_count += 1,
+            _ => {}
+        }
+    }
+
+    if legacy_count == 0 && modern_count == 0 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_MODERN_IMAGE_FORMATS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no raster/vector image extensions observed".to_owned(),
+        });
+        return;
+    }
+
+    if legacy_count >= 3 && modern_count == 0 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MODERN_IMAGE_FORMATS.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::Medium,
+            title: format!("Only legacy raster image formats detected ({legacy_count})"),
+            summary: format!(
+                "Found {legacy_count} JPEG/PNG/BMP image(s) and 0 WebP/AVIF/SVG assets."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("legacy_images={legacy_count};modern_images=0"),
+            )],
+            remediation: Some(
+                "Serve WebP or AVIF variants via `<picture>` or content negotiation.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MODERN_IMAGE_FORMATS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MODERN_IMAGE_FORMATS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_image_srcset(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let raster_images: Vec<_> = obs
+        .images
+        .iter()
+        .filter(|img| {
+            img.src.as_deref().is_some_and(|s| {
+                !s.to_ascii_lowercase().ends_with(".svg") && !s.starts_with("data:")
+            })
+        })
+        .collect();
+
+    if raster_images.len() < 3 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_IMAGE_SRCSET.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "fewer than 3 non-SVG images".to_owned(),
+        });
+        return;
+    }
+
+    let missing_srcset = raster_images.iter().filter(|img| !img.has_srcset).count();
+    if missing_srcset == raster_images.len() {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_IMAGE_SRCSET.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: format!("Images lack responsive `srcset` ({missing_srcset})"),
+            summary: format!(
+                "None of the {missing_srcset} raster `<img>` elements declare `srcset` or `<picture><source srcset>`."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("missing_srcset={missing_srcset}"),
+            )],
+            remediation: Some(
+                "Provide responsive `srcset` + `sizes` descriptors for multi-viewport delivery."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_IMAGE_SRCSET.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_IMAGE_SRCSET.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_image_filename_quality(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.images.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_IMAGE_FILENAME.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no <img> elements present".to_owned(),
+        });
+        return;
+    }
+
+    let poor_names = obs
+        .images
+        .iter()
+        .filter(|img| {
+            img.src.as_deref().is_some_and(|raw| {
+                if raw.starts_with("data:") {
+                    return false;
+                }
+                let file = raw
+                    .split(['?', '#'])
+                    .next()
+                    .unwrap_or(raw)
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                file.contains("%20")
+                    || file.contains(' ')
+                    || file.starts_with("img_")
+                    || file.starts_with("dsc_")
+                    || file.starts_with("screenshot")
+                    || file.starts_with("untitled")
+            })
+        })
+        .count();
+
+    if poor_names == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_IMAGE_FILENAME.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_IMAGE_FILENAME.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::High,
+            title: format!("Generic or unencoded image filenames ({poor_names})"),
+            summary: format!(
+                "{poor_names} image(s) use generic camera/screenshot names or whitespace in filenames."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("poor_image_filenames={poor_names}"),
+            )],
+            remediation: Some(
+                "Use descriptive, hyphenated, lowercase image filenames.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_IMAGE_FILENAME.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_hotlinked_images(
+    snapshot: &EvidenceSnapshot,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.images.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_IMAGE_HOTLINKED.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no <img> elements present".to_owned(),
+        });
+        return;
+    }
+
+    let page_url = match &snapshot.http {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+            &data.final_url
+        }
+        _ => snapshot.target.as_str(),
+    };
+    let page_origin = url::Url::parse(page_url).ok().map(|u| u.origin());
+
+    let external = obs
+        .images
+        .iter()
+        .filter(|img| {
+            img.src.as_deref().is_some_and(|raw| {
+                url::Url::parse(raw)
+                    .is_ok_and(|u| page_origin.as_ref().is_some_and(|o| u.origin() != *o))
+            })
+        })
+        .count();
+
+    if external == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_IMAGE_HOTLINKED.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_IMAGE_HOTLINKED.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::High,
+            title: format!("External/cross-origin image dependencies ({external})"),
+            summary: format!(
+                "{external} `<img>` element(s) load from external origins rather than the page's own origin."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("external_images={external}"),
+            )],
+            remediation: Some(
+                "Host critical visual assets on your own origin or controlled CDN.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_IMAGE_HOTLINKED.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_inline_svg_a11y(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.inline_svg_without_a11y == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INLINE_SVG_A11Y.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_INLINE_SVG_A11Y.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!(
+                "Inline <svg> elements without aria-hidden or label ({})",
+                obs.inline_svg_without_a11y
+            ),
+            summary: format!(
+                "Found {} inline `<svg>` element(s) lacking `aria-hidden=\"true\"`, `aria-label`, or `<title>`.",
+                obs.inline_svg_without_a11y
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("inline_svg_without_a11y={}", obs.inline_svg_without_a11y),
+            )],
+            remediation: Some(
+                "Add `aria-hidden=\"true\"` to decorative SVGs or `<title>`/`aria-label` to meaningful graphics."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_INLINE_SVG_A11Y.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,5 +789,26 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_IMAGE_DIMENSIONS)
         );
+    }
+
+    #[test]
+    fn flags_legacy_formats_missing_srcset_poor_filenames_hotlink_and_svg_a11y() {
+        let snap = base_snapshot(CollectorOutcome::default());
+        let obs = DocumentObservations::from_html(
+            r#"<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+            <body>
+                <img src="https://other.example.org/IMG_001.jpg" alt="One">
+                <img src="/a.png" alt="Two">
+                <img src="/b.jpeg" alt="Three">
+                <svg viewBox="0 0 10 10"></svg>
+            </body></html>"#,
+        );
+        let res = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_MODERN_IMAGE_FORMATS));
+        assert!(ids.contains(&RULE_IMAGE_SRCSET));
+        assert!(ids.contains(&RULE_IMAGE_FILENAME));
+        assert!(ids.contains(&RULE_IMAGE_HOTLINKED));
+        assert!(ids.contains(&RULE_INLINE_SVG_A11Y));
     }
 }

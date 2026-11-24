@@ -20,6 +20,12 @@ const RULE_CACHE_HEADERS: &str = "perf.http.cache_headers";
 const RULE_CORE_WEB_VITALS: &str = "perf.browser.core_web_vitals";
 const RULE_RENDER_BLOCKING_SCRIPTS: &str = "perf.dom.render_blocking_scripts";
 const RULE_THIRD_PARTY_SCRIPTS: &str = "perf.dom.third_party_scripts";
+const RULE_DOM_SIZE: &str = "perf.dom.size";
+const RULE_INLINE_SCRIPT_WEIGHT: &str = "perf.dom.inline_script_weight";
+const RULE_DUPLICATE_SCRIPTS: &str = "perf.dom.duplicate_scripts";
+const RULE_RENDER_BLOCKING_CSS: &str = "perf.dom.render_blocking_stylesheets";
+const RULE_PRECONNECT: &str = "perf.assets.preconnect";
+const RULE_LAZY_LOADING: &str = "perf.assets.lazy_loading";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -28,6 +34,12 @@ const ALL_SOURCE_RULES: &[&str] = &[
     RULE_CACHE_HEADERS,
     RULE_RENDER_BLOCKING_SCRIPTS,
     RULE_THIRD_PARTY_SCRIPTS,
+    RULE_DOM_SIZE,
+    RULE_INLINE_SCRIPT_WEIGHT,
+    RULE_DUPLICATE_SCRIPTS,
+    RULE_RENDER_BLOCKING_CSS,
+    RULE_PRECONNECT,
+    RULE_LAZY_LOADING,
 ];
 
 /// Configurable thresholds for Phase 1 HTTP performance checks.
@@ -107,6 +119,12 @@ fn analyse_with_thresholds_and_document(
     if let Some(doc) = obs {
         check_render_blocking_scripts(doc, &mut findings, &mut checks);
         check_third_party_scripts(http, doc, &mut findings, &mut checks);
+        check_dom_size(doc, &mut findings, &mut checks);
+        check_inline_script_weight(doc, &mut findings, &mut checks);
+        check_duplicate_scripts(doc, &mut findings, &mut checks);
+        check_render_blocking_css(doc, &mut findings, &mut checks);
+        check_preconnect(http, doc, &mut findings, &mut checks);
+        check_lazy_loading(doc, &mut findings, &mut checks);
     }
     check_core_web_vitals(&snapshot.lighthouse, &mut findings, &mut checks);
 
@@ -568,6 +586,321 @@ fn check_third_party_scripts(
     }
 }
 
+fn check_dom_size(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.total_elements > 1_500 {
+        let severity = if obs.total_elements > 3_000 {
+            Severity::Medium
+        } else {
+            Severity::Low
+        };
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DOM_SIZE.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity,
+            confidence: Confidence::High,
+            title: format!("Large DOM size ({} elements)", obs.total_elements),
+            summary: format!(
+                "Source HTML contains {} DOM elements (> 1,500 threshold), increasing style and layout cost.",
+                obs.total_elements
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("total_elements={}", obs.total_elements),
+            )],
+            remediation: Some(
+                "Simplify deeply nested wrapper markup and virtualise large lists.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DOM_SIZE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DOM_SIZE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_inline_script_weight(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let inline_bytes: usize = obs.scripts.iter().map(|s| s.inline_bytes).sum();
+    if inline_bytes > 50 * 1024 {
+        let severity = if inline_bytes > 150 * 1024 {
+            Severity::Medium
+        } else {
+            Severity::Low
+        };
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_INLINE_SCRIPT_WEIGHT.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity,
+            confidence: Confidence::High,
+            title: format!("Heavy inline script/hydration payload ({} KiB)", inline_bytes / 1024),
+            summary: format!(
+                "Inline `<script>` blocks total {inline_bytes} bytes (> 50 KiB), bloating initial HTML transfer and parse time."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("inline_script_bytes={inline_bytes}"),
+            )],
+            remediation: Some(
+                "Trim embedded hydration/state JSON and externalise cacheable scripts.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_INLINE_SCRIPT_WEIGHT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INLINE_SCRIPT_WEIGHT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_duplicate_scripts(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mut seen = std::collections::HashSet::new();
+    let mut duplicates = Vec::new();
+    for src in obs.scripts.iter().filter_map(|s| s.src.as_deref()) {
+        if !seen.insert(src) {
+            duplicates.push(src);
+        }
+    }
+
+    if duplicates.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DUPLICATE_SCRIPTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DUPLICATE_SCRIPTS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!(
+                "Duplicate external script references ({})",
+                duplicates.len()
+            ),
+            summary: format!(
+                "Same external `<script src>` appears multiple times: {}.",
+                duplicates
+                    .iter()
+                    .take(3)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("duplicate_scripts={}", duplicates.len()),
+            )],
+            remediation: Some("Deduplicate repeated `<script>` inclusions.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DUPLICATE_SCRIPTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_render_blocking_css(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let blocking_css = obs
+        .stylesheets
+        .iter()
+        .filter(|c| {
+            c.media
+                .as_deref()
+                .is_none_or(|m| m.eq_ignore_ascii_case("all") || m.eq_ignore_ascii_case("screen"))
+        })
+        .count();
+
+    if blocking_css > 3 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_RENDER_BLOCKING_CSS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Multiple render-blocking stylesheets ({blocking_css})"),
+            summary: format!(
+                "Found {blocking_css} blocking `<link rel=\"stylesheet\">` requests (> 3)."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("blocking_stylesheets={blocking_css}"),
+            )],
+            remediation: Some(
+                "Inline critical CSS and bundle or defer non-critical stylesheets.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_RENDER_BLOCKING_CSS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_RENDER_BLOCKING_CSS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_preconnect(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let page_origin = url::Url::parse(&http.final_url).ok().map(|u| u.origin());
+    let third_party_origins: std::collections::HashSet<String> = obs
+        .scripts
+        .iter()
+        .filter_map(|s| s.src.as_deref())
+        .chain(obs.stylesheets.iter().map(|c| c.href.as_str()))
+        .filter_map(|raw| {
+            let parsed = url::Url::parse(raw).ok()?;
+            if page_origin.as_ref().is_some_and(|o| parsed.origin() != *o) {
+                Some(parsed.origin().ascii_serialization())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    if third_party_origins.len() < 3 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_PRECONNECT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "fewer than 3 third-party asset origins".to_owned(),
+        });
+        return;
+    }
+
+    if obs.preconnect_count > 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_PRECONNECT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_PRECONNECT.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: "Missing preconnect hints for third-party origins".to_owned(),
+            summary: format!(
+                "Page loads assets from {} third-party origins without `<link rel=\"preconnect\">` or `dns-prefetch`.",
+                third_party_origins.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("third_party_origins={}", third_party_origins.len()),
+            )],
+            remediation: Some(
+                "Add `<link rel=\"preconnect\" href=\"...\">` for critical third-party asset origins."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_PRECONNECT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_lazy_loading(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.images.len() < 5 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_LAZY_LOADING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "fewer than 5 <img> elements on page".to_owned(),
+        });
+        return;
+    }
+
+    let lazy_count = obs
+        .images
+        .iter()
+        .filter(|img| {
+            img.loading
+                .as_deref()
+                .is_some_and(|l| l.eq_ignore_ascii_case("lazy"))
+        })
+        .count();
+
+    if lazy_count > 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_LAZY_LOADING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_LAZY_LOADING.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: format!(
+                "No lazy-loaded images among {} <img> elements",
+                obs.images.len()
+            ),
+            summary: "None of the page's images declare `loading=\"lazy\"` for offscreen deferral."
+                .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("images={};lazy=0", obs.images.len()),
+            )],
+            remediation: Some(
+                "Add `loading=\"lazy\"` to below-the-fold images (keep the hero/LCP image eager)."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_LAZY_LOADING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -726,5 +1059,56 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_THIRD_PARTY_SCRIPTS)
         );
+    }
+
+    #[test]
+    fn flags_duplicate_scripts_blocking_css_preconnect_and_lazy_loading() {
+        let html = r#"<html><head>
+            <script src="https://cdn1.example.org/a.js" defer></script>
+            <script src="https://cdn1.example.org/a.js" defer></script>
+            <script src="https://cdn2.example.org/b.js" defer></script>
+            <script src="https://cdn3.example.org/c.js" defer></script>
+            <link rel="stylesheet" href="/1.css">
+            <link rel="stylesheet" href="/2.css">
+            <link rel="stylesheet" href="/3.css">
+            <link rel="stylesheet" href="/4.css">
+        </head><body>
+            <img src="/1.png"><img src="/2.png"><img src="/3.png"><img src="/4.png"><img src="/5.png">
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let snap = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: Vec::new(),
+                    elapsed_ms: Measurement::Measured {
+                        value: 50,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: html.len(),
+                    body_truncated: false,
+                    body_text: html.to_owned(),
+                },
+            },
+            tls: CollectorOutcome::default(),
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_DUPLICATE_SCRIPTS));
+        assert!(ids.contains(&RULE_RENDER_BLOCKING_CSS));
+        assert!(ids.contains(&RULE_PRECONNECT));
+        assert!(ids.contains(&RULE_LAZY_LOADING));
     }
 }

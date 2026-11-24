@@ -246,6 +246,14 @@ pub struct PatrolReport {
     pub memory_save_error: Option<String>,
 }
 
+fn extract_first_url_from_summary(summary: &str) -> Option<String> {
+    summary
+        .split_whitespace()
+        .map(|tok| tok.trim_matches(|c: char| matches!(c, ',' | ';' | '.' | ')' | '(' | '`')))
+        .find(|tok| tok.starts_with("http://") || tok.starts_with("https://"))
+        .map(str::to_owned)
+}
+
 fn unix_now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -315,6 +323,8 @@ pub async fn run_patrol_with_router(
 
     // 1. Level 0 discovery: sitemap / sitemap-index + remembered URLs.
     let mut discovered = seed_sitemap_urls(&seed, exec_budget, policy).await;
+    let sitemap_urls: std::collections::HashSet<String> =
+        discovered.iter().map(|u| u.as_str().to_owned()).collect();
     for url_str in mem.page_records.keys() {
         if let Ok(t) = AuditTarget::parse(url_str, policy)
             && Origin::from_target(&t) == origin
@@ -511,20 +521,27 @@ pub async fn run_patrol_with_router(
     // 5. Application Graph analysis + anomaly detection across seed + subpages.
     let graph_inputs: Vec<crate::analysis::graph::GraphPageInput> = page_reports
         .iter()
-        .map(|(sel, rep, _, _)| match &rep.http {
-            CollectorOutcome::Captured { data } => crate::discovery::build_captured_graph_input(
-                &sel.url,
-                data,
-                &crate::analysis::document::DocumentObservations::from_html(&data.body_text),
-                usize::from(sel.url != seed),
-                false,
-                policy,
-            ),
-            _ => crate::discovery::unreachable_graph_input(
-                &sel.url,
-                usize::from(sel.url != seed),
-                false,
-            ),
+        .map(|(sel, rep, _, _)| {
+            let in_sitemap = sitemap_urls.contains(sel.url.as_str());
+            match &rep.http {
+                CollectorOutcome::Captured { data } => {
+                    crate::discovery::build_captured_graph_input(
+                        &sel.url,
+                        data,
+                        &crate::analysis::document::DocumentObservations::from_html(
+                            &data.body_text,
+                        ),
+                        usize::from(sel.url != seed),
+                        in_sitemap,
+                        policy,
+                    )
+                }
+                _ => crate::discovery::unreachable_graph_input(
+                    &sel.url,
+                    usize::from(sel.url != seed),
+                    in_sitemap,
+                ),
+            }
         })
         .collect();
     let app_graph = crate::analysis::graph::ApplicationGraph::from_pages(
@@ -539,13 +556,24 @@ pub async fn run_patrol_with_router(
         &subpage_regressions,
         is_returning,
     );
+    let prev_graph_rules: std::collections::HashSet<&str> = mem
+        .known_graph_rule_ids
+        .iter()
+        .map(String::as_str)
+        .collect();
+    let mut current_graph_rules: BTreeSet<String> = BTreeSet::new();
     for res in &graph_results {
         for f in &res.findings {
-            if f.severity >= Severity::Medium {
+            current_graph_rules.insert(f.rule_id.0.clone());
+            let is_new_graph_defect =
+                !is_returning || !prev_graph_rules.contains(f.rule_id.0.as_str());
+            if f.severity >= Severity::Medium && is_new_graph_defect {
+                let affected_url = extract_first_url_from_summary(&f.summary)
+                    .unwrap_or_else(|| seed.as_str().to_owned());
                 anomalies.push(PatrolAnomaly {
                     id: format!("anom-graph-{}", anomalies.len() + 1),
                     category: AnomalyCategory::NewDefect,
-                    affected_url: seed.as_str().to_owned(),
+                    affected_url,
                     severity: f.severity,
                     summary: format!("[Graph: {}] {}", f.rule_id.0, f.title),
                     suggested_competency: res.dwarf_id,
@@ -766,6 +794,7 @@ pub async fn run_patrol_with_router(
     mem.patrol_count = patrol_number;
     mem.last_patrolled_unix_secs = now;
     mem.known_locales = locales_set.iter().cloned().collect();
+    mem.known_graph_rule_ids = current_graph_rules.into_iter().collect();
     if mem.baseline_report.is_none() {
         mem.baseline_report.clone_from(&seed_report);
     }
