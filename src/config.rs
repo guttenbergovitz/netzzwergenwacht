@@ -1,5 +1,6 @@
 //! TOML configuration loading and policy quality-gate evaluation.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -9,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::analysis::AuditReport;
+use crate::brigade::DwarfId;
 use crate::domain::{CollectorOutcome, ExecutionBudget, Severity, TargetPolicy};
 
 /// Errors returned when loading or validating an [`AppConfig`].
@@ -30,6 +32,8 @@ pub struct AppConfig {
     pub budget: BudgetConfig,
     /// Audit policy and CI quality-gate thresholds.
     pub policy: PolicyConfig,
+    /// Per-role and per-dwarf LLM provider/model routing.
+    pub models: ModelRoutingConfig,
 }
 
 impl AppConfig {
@@ -82,6 +86,89 @@ impl AppConfig {
             TargetPolicy::AllowPrivate
         } else {
             TargetPolicy::PublicOnly
+        }
+    }
+}
+
+/// Supported `rig-core` LLM provider families.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderKind {
+    /// `OpenAI` and OpenAI-compatible endpoints (`OpenRouter`, vLLM, `LiteLLM`).
+    #[default]
+    #[serde(rename = "openai")]
+    OpenAi,
+    /// Anthropic Claude Messages API.
+    Anthropic,
+    /// Local Ollama server.
+    Ollama,
+}
+
+/// Provider and model selection for an agent role or specific dwarf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelSpec {
+    /// Provider family (`openai`, `anthropic`, `ollama`).
+    pub provider: ProviderKind,
+    /// Model identifier (for example `"gpt-4o-mini"` or `"claude-3-5-sonnet-latest"`).
+    pub model: String,
+    /// Optional base URL override.
+    pub base_url: Option<String>,
+    /// Optional environment variable name holding the API key.
+    pub api_key_env: Option<String>,
+}
+
+impl Default for ModelSpec {
+    fn default() -> Self {
+        Self {
+            provider: ProviderKind::OpenAi,
+            model: "gpt-4o-mini".to_owned(),
+            base_url: None,
+            api_key_env: None,
+        }
+    }
+}
+
+/// Per-role and per-dwarf model routing configuration (`[models]`).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelRoutingConfig {
+    /// Default fallback model used when no role or dwarf override is set.
+    pub default: ModelSpec,
+    /// Optional model override for `KommandantZwerg`.
+    pub kommandant: Option<ModelSpec>,
+    /// Optional model override for specialist dwarfs.
+    pub specialist: Option<ModelSpec>,
+    /// Optional model override for `DokumentationsZwerg`.
+    pub dokumentation: Option<ModelSpec>,
+    /// Optional per-dwarf overrides keyed by lowercase dwarf ID (e.g. `"leistungs"`, `"gestaltungs"`).
+    pub dwarfs: BTreeMap<String, ModelSpec>,
+}
+
+impl ModelRoutingConfig {
+    /// Resolves the effective [`ModelSpec`] for `dwarf_id`.
+    #[must_use]
+    pub fn resolve_for_dwarf(&self, dwarf_id: DwarfId) -> &ModelSpec {
+        let key = match dwarf_id {
+            DwarfId::Netz => "netz",
+            DwarfId::Sicherheits => "sicherheits",
+            DwarfId::Leistungs => "leistungs",
+            DwarfId::Struktur => "struktur",
+            DwarfId::Zugaenglichkeits => "zugaenglichkeits",
+            DwarfId::Such => "such",
+            DwarfId::Inhalts => "inhalts",
+            DwarfId::Gestaltungs => "gestaltungs",
+            DwarfId::Browser => "browser",
+            DwarfId::Dokumentations => "dokumentations",
+            DwarfId::Kommandant => "kommandant",
+        };
+        if let Some(specific) = self.dwarfs.get(key) {
+            return specific;
+        }
+        match dwarf_id {
+            DwarfId::Kommandant => self.kommandant.as_ref().unwrap_or(&self.default),
+            DwarfId::Dokumentations => self.dokumentation.as_ref().unwrap_or(&self.default),
+            _ => self.specialist.as_ref().unwrap_or(&self.default),
         }
     }
 }
@@ -339,6 +426,36 @@ allow_private = true
             eval.violations
                 .iter()
                 .any(|v| v.contains("required collector `browser` did not capture evidence"))
+        );
+    }
+
+    #[test]
+    fn model_routing_resolves_per_dwarf_then_role_then_default() {
+        let raw = r#"
+[models.default]
+provider = "openai"
+model = "gpt-4o-mini"
+
+[models.kommandant]
+provider = "anthropic"
+model = "claude-3-5-sonnet-latest"
+
+[models.dwarfs.inhalts]
+provider = "ollama"
+model = "llama3.2"
+"#;
+        let cfg: AppConfig = toml::from_str(raw).unwrap();
+        assert_eq!(
+            cfg.models.resolve_for_dwarf(DwarfId::Kommandant).model,
+            "claude-3-5-sonnet-latest"
+        );
+        assert_eq!(
+            cfg.models.resolve_for_dwarf(DwarfId::Inhalts).provider,
+            ProviderKind::Ollama
+        );
+        assert_eq!(
+            cfg.models.resolve_for_dwarf(DwarfId::Leistungs).model,
+            "gpt-4o-mini"
         );
     }
 }
