@@ -148,16 +148,19 @@ pub fn load_memory(
     Ok(Some(mem))
 }
 
-/// Persists [`ApplicationMemory`] atomically-ish to `<dir>/<app_id>.json`.
+/// Persists [`ApplicationMemory`] atomically (`write temp + rename`) to `<dir>/<app_id>.json`.
 ///
 /// # Errors
 ///
-/// Returns [`PersistenceError`] if directory creation, serialisation, or writing fails.
+/// Returns [`PersistenceError`] if directory creation, serialisation, writing,
+/// or atomic rename fails.
 pub fn save_memory(dir: &Path, memory: &ApplicationMemory) -> Result<(), PersistenceError> {
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.json", memory.app_id.0));
+    let tmp_path = dir.join(format!("{}.json.tmp", memory.app_id.0));
     let json = serde_json::to_string_pretty(memory)?;
-    fs::write(path, json)?;
+    fs::write(&tmp_path, json)?;
+    fs::rename(&tmp_path, &path)?;
     Ok(())
 }
 

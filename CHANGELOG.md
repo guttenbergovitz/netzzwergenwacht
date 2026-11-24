@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### P0/P1 Patrol Integrity, Conditional Re-Inspection & Atomic Memory (2026-11-24)
+- Re-inspect changed `reused_urls` candidates immediately during the same patrol when conditional HTTP returns `ChangedOrUnverifiable` (`src/patrol/mod.rs`).
+- Prevented `is_quiet_patrol` from being `true` when unverified reused candidates, budget exhaustion, or memory load errors exist; preserved full sitemap `discovered_urls` in `ApplicationMap`; enforced shared `exec_budget.audit_timeout` deadline across patrol loops.
+- Made `save_memory` atomic via `.tmp` write + `fs::rename` (`src/patrol/memory.rs`) and surfaced `memory_load_error` on `PatrolReport`.
+
 ### Conditional HTTP Reuse Verification (2026-11-24)
 - Added `collection::check_if_unchanged` (`If-None-Match` / `If-Modified-Since` conditional `GET`) in `src/collection.rs`.
 - Updated `run_patrol` (`src/patrol/mod.rs`) so `reused_page_count` and `PatrolResourceLedger::reused_observations` only count pages verified unchanged via `304 Not Modified` or matching `ETag`, recording `conditional_checks` and surfacing unverified candidates in `CoverageMatrix::limitations`.

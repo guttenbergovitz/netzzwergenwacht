@@ -190,8 +190,11 @@ pub struct PatrolReport {
     pub coverage_summary: String,
     /// Concise change-oriented stakeholder summary.
     pub executive_summary: String,
-    /// `true` when no material changes or anomalies were detected.
+    /// `true` when no material changes, anomalies, or unverified gaps were detected.
     pub is_quiet_patrol: bool,
+    /// Non-empty when loading existing [`ApplicationMemory`] failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_load_error: Option<String>,
     /// Non-empty when persisting updated [`ApplicationMemory`] failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_save_error: Option<String>,
@@ -219,9 +222,17 @@ pub async fn run_patrol(
     let origin = Origin::from_target(&seed);
     let app_id = memory::ApplicationId::from_origin(&origin);
 
-    let mut mem = memory_dir
-        .and_then(|dir| load_memory(dir, &app_id).ok().flatten())
-        .unwrap_or_else(|| ApplicationMemory::new(&seed, now));
+    let (mut mem, memory_load_error) = match memory_dir {
+        Some(dir) => match load_memory(dir, &app_id) {
+            Ok(Some(loaded)) => (loaded, None),
+            Ok(None) => (ApplicationMemory::new(&seed, now), None),
+            Err(err) => (
+                ApplicationMemory::new(&seed, now),
+                Some(format!("failed to load patrol memory: {err}")),
+            ),
+        },
+        None => (ApplicationMemory::new(&seed, now), None),
+    };
     let is_returning = mem.patrol_count > 0;
     let patrol_number = mem.patrol_count + 1;
 
@@ -260,17 +271,33 @@ pub async fn run_patrol(
             template_families.insert(url.clone(), tpl.clone());
         }
     }
+    for url in &discovered {
+        page_types
+            .entry(url.as_str().to_owned())
+            .or_insert(PageType::Unknown);
+    }
 
     let mut extra_links: Vec<AuditTarget> = Vec::new();
+    let mut budget_exhausted = false;
     for sel in &sampling_plan.selections {
-        let mut snap = collection::collect_http(&sel.url, &exec_budget, policy).await;
+        let rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+        if rem.is_zero() {
+            budget_exhausted = true;
+            break;
+        }
+        let step_budget = ExecutionBudget {
+            audit_timeout: rem,
+            http_timeout: exec_budget.http_timeout.min(rem),
+            ..exec_budget
+        };
+        let mut snap = collection::collect_http(&sel.url, &step_budget, policy).await;
         if patrol_budget.enable_level2 && sel.depth == sampling::DiagnosticDepth::Level2Deep {
-            snap.browser = crate::adapters::browser::run_browser_with_policy(
-                &sel.url,
-                exec_budget.audit_timeout,
-                policy,
-            )
-            .await;
+            let l2_rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+            if !l2_rem.is_zero() {
+                snap.browser =
+                    crate::adapters::browser::run_browser_with_policy(&sel.url, l2_rem, policy)
+                        .await;
+            }
         }
         let report = analysis::run_all(&snap);
         let (pt, tpl, body_hash) = if let CollectorOutcome::Captured { data } = &snap.http {
@@ -295,6 +322,80 @@ pub async fn run_patrol(
             seed_report = Some(report.clone());
         }
         page_reports.push((sel.clone(), report, tpl, body_hash));
+    }
+
+    // 3b. Verify reused healthy candidates via conditional HTTP; immediately re-inspect if changed.
+    let mut verified_reused_count = 0usize;
+    let mut unverified_reused_count = 0usize;
+    let mut conditional_checks = 0usize;
+    for reused_url in &sampling_plan.reused_urls {
+        let rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+        if rem.is_zero() {
+            budget_exhausted = true;
+            unverified_reused_count += 1;
+            continue;
+        }
+        let Some(rec) = mem.page_records.get(reused_url).cloned() else {
+            unverified_reused_count += 1;
+            continue;
+        };
+        if rec.etag.is_none() && rec.last_modified.is_none() {
+            unverified_reused_count += 1;
+            continue;
+        }
+        let Ok(target) = AuditTarget::parse(reused_url, policy) else {
+            unverified_reused_count += 1;
+            continue;
+        };
+        let step_budget = ExecutionBudget {
+            audit_timeout: rem,
+            http_timeout: exec_budget.http_timeout.min(rem),
+            ..exec_budget
+        };
+        conditional_checks += 1;
+        let outcome = collection::check_if_unchanged(
+            &target,
+            rec.etag.as_deref(),
+            rec.last_modified.as_deref(),
+            &step_budget,
+            policy,
+        )
+        .await;
+        if outcome == collection::ConditionalCheckOutcome::Unchanged {
+            verified_reused_count += 1;
+            if let Some(entry) = mem.page_records.get_mut(reused_url) {
+                entry.freshness = EvidenceFreshness::CurrentlyVerified;
+                entry.last_inspected_unix_secs = now;
+            }
+        } else {
+            // Changed or unverifiable: immediately re-inspect in this patrol.
+            let snap = collection::collect_http(&target, &step_budget, policy).await;
+            let report = analysis::run_all(&snap);
+            let (pt, tpl, body_hash) = if let CollectorOutcome::Captured { data } = &snap.http {
+                let obs = analysis::document::DocumentObservations::from_html(&data.body_text);
+                let pt = classify_page(&target, &obs);
+                let tpl = template_fingerprint(&obs);
+                (pt, Some(tpl), Some(hash_body(&data.body_text)))
+            } else {
+                (rec.page_type, None, None)
+            };
+            page_types.insert(reused_url.clone(), pt);
+            if let Some(t) = &tpl {
+                template_families.insert(reused_url.clone(), t.clone());
+            }
+            page_reports.push((
+                SampleSelection {
+                    url: target,
+                    reason: sampling::SelectionReason::RecentlyChanged,
+                    depth: sampling::DiagnosticDepth::Level1Deterministic,
+                    locale: rec.locale.clone(),
+                    page_type: Some(pt),
+                },
+                report,
+                tpl,
+                body_hash,
+            ));
+        }
     }
 
     // Include newly discovered homepage links in the application map for subsequent patrols.
@@ -422,42 +523,6 @@ pub async fn run_patrol(
     if seed_report.is_some() {
         mem.latest_report.clone_from(&seed_report);
     }
-    let mut verified_reused_count = 0usize;
-    let mut unverified_reused_count = 0usize;
-    let mut conditional_checks = 0usize;
-    for reused_url in &sampling_plan.reused_urls {
-        let Some(rec) = mem.page_records.get(reused_url).cloned() else {
-            unverified_reused_count += 1;
-            continue;
-        };
-        if rec.etag.is_none() && rec.last_modified.is_none() {
-            unverified_reused_count += 1;
-            continue;
-        }
-        if let Ok(target) = AuditTarget::parse(reused_url, policy) {
-            conditional_checks += 1;
-            let outcome = collection::check_if_unchanged(
-                &target,
-                rec.etag.as_deref(),
-                rec.last_modified.as_deref(),
-                &exec_budget,
-                policy,
-            )
-            .await;
-            if outcome == collection::ConditionalCheckOutcome::Unchanged {
-                verified_reused_count += 1;
-                if let Some(entry) = mem.page_records.get_mut(reused_url) {
-                    entry.freshness = EvidenceFreshness::CurrentlyVerified;
-                    entry.last_inspected_unix_secs = now;
-                }
-            } else {
-                unverified_reused_count += 1;
-            }
-        } else {
-            unverified_reused_count += 1;
-        }
-    }
-
     let memory_save_error = memory_dir
         .and_then(|dir| save_memory(dir, &mem).err())
         .map(|err| format!("failed to save patrol memory: {err}"));
@@ -471,6 +536,9 @@ pub async fn run_patrol(
         .any(|r| r.summary.new_count > 0 || r.summary.reintroduced_count > 0);
     let is_quiet_patrol = anomalies.is_empty()
         && !has_subpage_regressions
+        && unverified_reused_count == 0
+        && !budget_exhausted
+        && memory_load_error.is_none()
         && regression
             .as_ref()
             .is_none_or(|r| r.summary.new_count == 0 && r.summary.reintroduced_count == 0);
@@ -567,6 +635,7 @@ pub async fn run_patrol(
         coverage_summary,
         executive_summary,
         is_quiet_patrol,
+        memory_load_error,
         memory_save_error,
     }
 }
