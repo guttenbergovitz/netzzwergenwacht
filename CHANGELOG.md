@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Sitemap Discovery, Representative Sampling & Evidence Gap Tracking (2026-11-24)
+- Added `parse_sitemap_urls` and `prioritise_representative_urls` in `src/discovery/mod.rs` to prioritise journey-critical pages over legal boilerplate.
+- Added `missing_evidence` tracking on `DiagnosticHypothesis` in `src/investigation/mod.rs`.
+
 ### CDP Subresource Policy, Process-Group Cleanup & Reintroduced History Tracking (2026-11-24)
 - Enforced Chromium CDP `Fetch.enable` subresource SSRF/private-IP blocking under `PublicOnly` in `src/adapters/browser.rs`.
 - Added Unix process-group isolation (`process_group(0)`) and `kill -9 -<pgid>` termination in `src/adapters/mod.rs`.
