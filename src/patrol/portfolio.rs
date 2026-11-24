@@ -9,9 +9,9 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::domain::{AuditTarget, ExecutionBudget, TargetPolicy};
-use crate::intelligence::LlmProvider;
+use crate::intelligence::ProviderRouter;
 use crate::investigation::DiagnosticBackend;
-use crate::patrol::{PatrolBudget, PatrolReport, run_patrol};
+use crate::patrol::{PatrolBudget, PatrolReport, run_patrol_with_router};
 
 /// Business criticality tier for a portfolio application.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
@@ -124,7 +124,7 @@ pub async fn run_portfolio_patrol(
     exec_budget: ExecutionBudget,
     base_patrol_budget: PatrolBudget,
     memory_dir: Option<&Path>,
-    llm: Option<Arc<dyn LlmProvider>>,
+    router: Option<Arc<dyn ProviderRouter>>,
     backend: Arc<dyn DiagnosticBackend>,
 ) -> PortfolioPatrolReport {
     let mut indexed: Vec<(usize, ApplicationEntry)> =
@@ -139,7 +139,7 @@ pub async fn run_portfolio_patrol(
     for (order_idx, entry) in indexed {
         let sem = Arc::clone(&semaphore);
         let mem_dir_task = mem_dir_owned.clone();
-        let llm_task = llm.clone();
+        let router_task = router.clone();
         let backend_task = Arc::clone(&backend);
 
         join_set.spawn(async move {
@@ -183,14 +183,13 @@ pub async fn run_portfolio_patrol(
                     .max(1),
                 ..base_patrol_budget
             };
-            let llm_ref = llm_task.as_deref();
-            let report = run_patrol(
+            let report = run_patrol_with_router(
                 target,
                 policy,
                 exec_budget,
                 budget,
                 mem_dir_task.as_deref(),
-                llm_ref,
+                router_task.as_deref(),
                 backend_task,
             )
             .await;

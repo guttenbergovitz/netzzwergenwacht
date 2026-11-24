@@ -346,14 +346,14 @@ async fn patrol_delegates_to_distinct_per_dwarf_models() {
         DwarfId::Sicherheits,
         Arc::new(NamedMockLlm {
             model: "mock-sec-claude",
-            response: "HTTPS and security headers absent on HTTP origin.",
+            response: r#"{"confirmed_observations":["HTTPS absent on local origin"],"evidence_refs":["sec.transport.https"],"remaining_uncertainty":"None for passive transport","requested_tool":"inspect_security_posture","recommendation":"Enforce HTTPS and HSTS."}"#,
         }),
     );
     router.insert(
         DwarfId::Zugaenglichkeits,
         Arc::new(NamedMockLlm {
             model: "mock-a11y-gpt",
-            response: "Root page missing <html lang> and image alt attributes.",
+            response: r#"{"confirmed_observations":["Missing <html lang>"],"evidence_refs":["a11y.document.lang"],"remaining_uncertainty":"Full heading hierarchy unchecked","requested_tool":"inspect_document_structure","recommendation":"Restore lang and alt attributes."}"#,
         }),
     );
     router.set_fallback(Arc::new(NamedMockLlm {
@@ -389,5 +389,16 @@ async fn patrol_delegates_to_distinct_per_dwarf_models() {
             .iter()
             .any(|d| d.model_used == "mock-sec-claude" || d.model_used == "mock-a11y-gpt")
     );
-    assert!(report.investigation.is_some());
+    assert!(
+        report
+            .specialist_delegations
+            .iter()
+            .any(|d| d.tool_executed.is_some() && d.structured_output.is_some())
+    );
+    assert!(report.resource_ledger.investigation_tool_calls >= 1);
+    let inv = report.investigation.as_ref().unwrap();
+    assert_ne!(
+        inv.specialists,
+        Vec::<netzzwergenwacht::investigation::SpecialistContribution>::new()
+    );
 }

@@ -479,14 +479,13 @@ async fn run_patrol_cmd(
     format: OutputFormat,
     audience: AudienceArg,
 ) -> ExitCode {
-    use netzzwergenwacht::intelligence::ProviderRouter as _;
     let app_cfg = match load_optional_config(config_path) {
         Ok(cfg) => cfg,
         Err(code) => return code,
     };
-    let router =
-        netzzwergenwacht::intelligence::CachedProviderRouter::from_routing(&app_cfg.models);
-    let llm_provider = router.resolve_for_dwarf(netzzwergenwacht::brigade::DwarfId::Kommandant);
+    let router = std::sync::Arc::new(
+        netzzwergenwacht::intelligence::CachedProviderRouter::from_routing(&app_cfg.models),
+    );
     let exec_budget = app_cfg.execution_budget();
     let backend: std::sync::Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
         std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
@@ -505,21 +504,14 @@ async fn run_patrol_cmd(
                     return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
                 }
             };
-        let llm_arc: Option<std::sync::Arc<dyn netzzwergenwacht::intelligence::LlmProvider>> =
-            llm_provider.and_then(|_| {
-                netzzwergenwacht::intelligence::RigProviderRouter::new(app_cfg.models.clone())
-                    .provider_for(netzzwergenwacht::brigade::DwarfId::Kommandant)
-                    .or_else(|_| netzzwergenwacht::intelligence::RigCompletionProvider::from_env())
-                    .ok()
-                    .map(|p| std::sync::Arc::new(p) as _)
-            });
+        let router_arc: std::sync::Arc<dyn netzzwergenwacht::intelligence::ProviderRouter> = router;
         let portfolio = netzzwergenwacht::patrol::portfolio::run_portfolio_patrol(
             &cfg,
             allow_private || app_cfg.policy.allow_private,
             exec_budget,
             patrol_budget,
             Some(memory_dir),
-            llm_arc,
+            Some(router_arc),
             backend,
         )
         .await;
@@ -544,7 +536,7 @@ async fn run_patrol_cmd(
         exec_budget,
         patrol_budget,
         Some(memory_dir),
-        Some(&router),
+        Some(router.as_ref()),
         backend,
     )
     .await;

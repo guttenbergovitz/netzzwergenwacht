@@ -39,6 +39,9 @@ Rules:\n\
 - Distinguish observations from interpretations and hypotheses; preserve uncertainty.\n\
 - Terminate (`ready_to_conclude: true`) when additional work is unlikely to improve the assessment.\n\
 Available unused tools: {available_tools:?}.\n\
+Tools prefixed `consult_specialist:` allow you to consult a domain specialist with a specific question. \
+The specialist receives full investigation context (findings, hypotheses, prior contributions) and returns \
+domain-specific observations. Use when specialist expertise is needed to interpret evidence or resolve uncertainty.\n\
 Propose one falsifiable hypothesis grounded in an existing rule_id and pick one unused tool, \
 or set `ready_to_conclude: true` if sufficient evidence was gathered.\n\
 Respond strictly with JSON: {{\"ready_to_conclude\": bool, \"originating_rule\": string, \
@@ -75,7 +78,10 @@ Objective: {objective}\n\
 Rules:\n\
 - Do not repeat deterministic findings unless interpretation is necessary.\n\
 - Distinguish confirmed observations, measurements, hypotheses, contradictory evidence, and missing evidence.\n\
-- Do not invent evidence, exceed the authorised scope, or request additional resources without justification.",
+- Do not invent evidence, exceed the authorised scope, or request additional resources without justification.\n\
+- Optionally request ONE authorised tool (`inspect_document_structure`, `inspect_security_posture`, `inspect_page_performance`, `inspect_browser_runtime`, `inspect_rendered_accessibility`, or null).\n\
+Respond strictly with JSON: {{\"confirmed_observations\": [string], \"evidence_refs\": [string], \
+\"remaining_uncertainty\": string, \"requested_tool\": string|null, \"recommendation\": string}}.",
         profile.display_name, profile.responsibility
     );
     PromptContract {

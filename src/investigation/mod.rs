@@ -427,7 +427,6 @@ struct RawEvaluationDecision {
 }
 
 /// Executes the multi-turn `KommandantZwerg` agentic investigation loop.
-#[allow(clippy::too_many_lines)]
 pub async fn run_investigation(
     target: AuditTarget,
     objective: String,
@@ -435,6 +434,22 @@ pub async fn run_investigation(
     budget: InvestigationBudget,
     backend: Arc<dyn DiagnosticBackend>,
     llm: &dyn LlmProvider,
+) -> InvestigationReport {
+    run_investigation_with_specialists(target, objective, policy, budget, backend, llm, Vec::new())
+        .await
+}
+
+/// Executes the multi-turn `KommandantZwerg` investigation loop seeded with
+/// structured [`SpecialistContribution`]s from prior specialist delegations.
+#[allow(clippy::too_many_lines)]
+pub async fn run_investigation_with_specialists(
+    target: AuditTarget,
+    objective: String,
+    policy: TargetPolicy,
+    budget: InvestigationBudget,
+    backend: Arc<dyn DiagnosticBackend>,
+    llm: &dyn LlmProvider,
+    prior_specialists: Vec<SpecialistContribution>,
 ) -> InvestigationReport {
     let started = Instant::now();
     let id = InvestigationId::generate(target.host());
@@ -449,7 +464,7 @@ pub async fn run_investigation(
         follow_up_results: Vec::new(),
         discovered_pages: Vec::new(),
         systemic_issues: Vec::new(),
-        specialists: Vec::new(),
+        specialists: prior_specialists,
         hypotheses: Vec::new(),
         tool_trace: Vec::new(),
         events: vec![
@@ -587,16 +602,56 @@ pub async fn run_investigation(
             tool_id: decision.requested_tool.clone(),
         });
 
-        let (tool_succeeded, new_results) = execute_rig_tool(
-            &decision.requested_tool,
-            &target,
-            policy,
-            tool_rem,
-            Arc::clone(&backend),
-            &mut snapshot,
-            &mut ctx,
-        )
-        .await;
+        // Check for specialist consultation requests.
+        let (tool_succeeded, new_results) = if let Some(dwarf_str) = decision
+            .requested_tool
+            .strip_prefix("consult_specialist:")
+        {
+            let dwarf_id = match dwarf_str {
+                "Netz" => Some(DwarfId::Netz),
+                "Sicherheits" => Some(DwarfId::Sicherheits),
+                "Leistungs" => Some(DwarfId::Leistungs),
+                "Struktur" => Some(DwarfId::Struktur),
+                "Zugaenglichkeits" => Some(DwarfId::Zugaenglichkeits),
+                "Such" => Some(DwarfId::Such),
+                "Inhalts" => Some(DwarfId::Inhalts),
+                "Gestaltungs" => Some(DwarfId::Gestaltungs),
+                "Browser" => Some(DwarfId::Browser),
+                "Dokumentations" => Some(DwarfId::Dokumentations),
+                _ => None,
+            };
+            if let Some(dwarf_id) = dwarf_id {
+                consult_specialist_during_investigation(
+                    dwarf_id,
+                    &hypothesis.proposed_explanation,
+                    &mut ctx,
+                    &initial_report,
+                    llm,
+                    tool_rem,
+                )
+                .await
+            } else {
+                ctx.tool_trace.push(ToolInvocationRecord {
+                    tool_id: decision.requested_tool.clone(),
+                    dwarf_id: DwarfId::Kommandant,
+                    authorised: false,
+                    succeeded: false,
+                    summary: format!("invalid dwarf_id in consult request: {dwarf_str}"),
+                });
+                (false, Vec::new())
+            }
+        } else {
+            execute_rig_tool(
+                &decision.requested_tool,
+                &target,
+                policy,
+                tool_rem,
+                Arc::clone(&backend),
+                &mut snapshot,
+                &mut ctx,
+            )
+            .await
+        };
         ctx.snapshot = Some(snapshot.clone());
         ctx.events.push(InvestigationEvent::ToolCompleted {
             tool_id: decision.requested_tool.clone(),
@@ -667,13 +722,32 @@ async fn propose_hypothesis(
         timeout,
         Arc::new(LiveDiagnosticBackend),
     );
-    let available: Vec<&str> = tool_defs
+    let mut available: Vec<String> = tool_defs
         .iter()
-        .map(|d| d.name.as_str())
-        .filter(|name| !used_tools.contains(*name))
+        .map(|d| d.name.clone())
+        .filter(|name| !used_tools.contains(name))
         .collect();
 
-    let contract = prompts::kommandant_hypothesis_prompt(&available);
+    // Add specialist consultation tools.
+    for dwarf in &[
+        "Netz",
+        "Sicherheits",
+        "Leistungs",
+        "Struktur",
+        "Zugaenglichkeits",
+        "Such",
+        "Inhalts",
+        "Gestaltungs",
+        "Browser",
+    ] {
+        let tool_name = format!("consult_specialist:{dwarf}");
+        if !used_tools.contains(&tool_name) {
+            available.push(tool_name);
+        }
+    }
+    let available_refs: Vec<&str> = available.iter().map(|s| s.as_str()).collect();
+
+    let contract = prompts::kommandant_hypothesis_prompt(&available_refs);
     let sys = contract.system_prompt;
 
     let summary: Vec<_> = report
@@ -688,12 +762,26 @@ async fn propose_hypothesis(
         .iter()
         .map(|h| format!("{} ({:?})", h.id, h.status))
         .collect();
+    let specialist_notes: Vec<_> = ctx
+        .specialists
+        .iter()
+        .map(|s| {
+            format!(
+                "{:?} [{}]: {} (uncertainty: {})",
+                s.dwarf_id,
+                s.focus,
+                s.observations.join("; "),
+                s.uncertainty
+            )
+        })
+        .collect();
 
     let user = format!(
-        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nfindings: {}\n{CLOSE_TAG}",
+        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nspecialist_contributions: {}\nfindings: {}\n{CLOSE_TAG}",
         ctx.objective.replace(CLOSE_TAG, ""),
         ctx.target.as_str(),
         prior_hyps.join(", "),
+        specialist_notes.join(" | ").replace(CLOSE_TAG, ""),
         summary.join(" | ").replace(CLOSE_TAG, "")
     );
 
@@ -709,6 +797,40 @@ async fn propose_hypothesis(
         )
         .await?;
     serde_json::from_str(&raw).map_err(|e| format!("invalid hypothesis JSON: {e}"))
+}
+
+/// Executes a single authorised specialist diagnostic tool against `snapshot`.
+///
+/// Reuses `execute_rig_tool` so scope and target policies are enforced
+/// identically to `KommandantZwerg` investigations.
+pub async fn run_specialist_tool_on_snapshot(
+    tool_id: &str,
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    snapshot: &mut EvidenceSnapshot,
+) -> (bool, Vec<AnalyserResult>) {
+    let mut ctx = InvestigationContext {
+        id: InvestigationId("specialist-delegation".to_owned()),
+        target: target.clone(),
+        objective: format!("Specialist tool `{tool_id}`"),
+        state: InvestigationState::Investigating,
+        snapshot: None,
+        initial_report: None,
+        follow_up_results: Vec::new(),
+        discovered_pages: Vec::new(),
+        systemic_issues: Vec::new(),
+        specialists: Vec::new(),
+        hypotheses: Vec::new(),
+        tool_trace: Vec::new(),
+        events: Vec::new(),
+        ledger: BudgetLedger::new(InvestigationBudget::default()),
+    };
+    execute_rig_tool(
+        tool_id, target, policy, timeout, backend, snapshot, &mut ctx,
+    )
+    .await
 }
 
 async fn execute_rig_tool(
@@ -750,6 +872,114 @@ async fn execute_rig_tool(
                 succeeded: false,
                 summary: "rejected unrecognised or unauthorised tool request".to_owned(),
             });
+            (false, Vec::new())
+        }
+    }
+}
+
+/// Consults a specialist dwarf during investigation with full evidence context.
+async fn consult_specialist_during_investigation(
+    dwarf_id: DwarfId,
+    question: &str,
+    ctx: &mut InvestigationContext,
+    initial_report: &AuditReport,
+    llm: &dyn LlmProvider,
+    timeout: Duration,
+) -> (bool, Vec<AnalyserResult>) {
+    // Build evidence summary from investigation context.
+    let finding_summary: Vec<String> = initial_report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter())
+        .take(20)
+        .map(|f| format!("[{:?}] {}: {}", f.severity, f.rule_id.0, f.title))
+        .collect();
+    let follow_up_summary: Vec<String> = ctx
+        .follow_up_results
+        .iter()
+        .flat_map(|r| r.findings.iter())
+        .take(10)
+        .map(|f| format!("[{:?}] {}: {}", f.severity, f.rule_id.0, f.title))
+        .collect();
+    let prior_hyp_summary: Vec<String> = ctx
+        .hypotheses
+        .iter()
+        .map(|h| {
+            format!(
+                "{} ({:?}): {}",
+                h.id, h.status, h.proposed_explanation
+            )
+        })
+        .collect();
+    let prior_specialist_summary: Vec<String> = ctx
+        .specialists
+        .iter()
+        .map(|s| {
+            format!(
+                "{:?} [{}]: {}",
+                s.dwarf_id,
+                s.focus,
+                s.observations.join("; ")
+            )
+        })
+        .collect();
+
+    let contract = prompts::specialist_prompt(dwarf_id, question);
+    let evidence_context = format!(
+        "Investigation objective: {}\nTarget: {}\n\
+         Initial findings: {}\n\
+         Follow-up findings: {}\n\
+         Prior hypotheses: {}\n\
+         Prior specialist contributions: {}\n\
+         Question: {}",
+        ctx.objective,
+        ctx.target.as_str(),
+        finding_summary.join(" | "),
+        follow_up_summary.join(" | "),
+        prior_hyp_summary.join(" | "),
+        prior_specialist_summary.join(" | "),
+        question
+    );
+
+    let llm_budget = LlmBudget {
+        max_tokens: 512,
+        max_requests: 1,
+        timeout,
+    };
+
+    match llm
+        .complete(&contract.system_prompt, &evidence_context, llm_budget)
+        .await
+    {
+        Ok(raw_resp) => {
+            // Attempt structured parse; fall back to raw if invalid.
+            let contribution = if let Ok(out) =
+                serde_json::from_str::<crate::patrol::SpecialistOutput>(&raw_resp)
+            {
+                SpecialistContribution {
+                    dwarf_id,
+                    focus: question.to_owned(),
+                    observations: out.confirmed_observations,
+                    uncertainty: out.remaining_uncertainty,
+                }
+            } else {
+                SpecialistContribution {
+                    dwarf_id,
+                    focus: question.to_owned(),
+                    observations: vec![raw_resp],
+                    uncertainty: "unstructured specialist response".to_owned(),
+                }
+            };
+            ctx.specialists.push(contribution);
+            ctx.events.push(InvestigationEvent::SpecialistActivated {
+                dwarf_id,
+                focus: question.to_owned(),
+            });
+            // Return empty results since specialist consultation doesn't produce AnalyserResults.
+            (true, Vec::new())
+        }
+        Err(err) => {
+            eprintln!("Specialist consultation failed: {err}");
             (false, Vec::new())
         }
     }
@@ -1368,6 +1598,49 @@ mod tests {
         let cto_md =
             render_role_perspective_markdown(&report, RolePerspective::CtoEngineeringManager);
         assert!(cto_md.contains("## Specialist Contributions"));
+    }
+
+    #[tokio::test]
+    async fn kommandant_consults_specialist_with_full_context() {
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let backend = Arc::new(MockBackend {
+            browser: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                // Kommandant requests specialist consultation.
+                r#"{"ready_to_conclude":false,"originating_rule":"sec.http.tls","proposed_explanation":"TLS configuration unclear; consult SicherheitsZwerg","requested_tool":"consult_specialist:Sicherheits"}"#.to_owned(),
+                // Specialist responds with structured output.
+                r#"{"confirmed_observations":["TLS 1.2 negotiated","Certificate valid"],"evidence_refs":["sec.http.tls"],"remaining_uncertainty":"No TLS 1.3 support observed","requested_tool":null,"recommendation":"Upgrade to TLS 1.3"}"#.to_owned(),
+                // Kommandant evaluates with specialist input.
+                r#"{"status":"supported","evaluation_summary":"SicherheitsZwerg confirmed TLS 1.2 in use","conclusion":"TLS configuration confirmed but outdated."}"#.to_owned(),
+            ])),
+        };
+
+        let budget = InvestigationBudget {
+            max_tool_calls: 2,
+            max_llm_turns: 3,
+            ..InvestigationBudget::default()
+        };
+        let report = run_investigation(
+            target,
+            "Assess TLS configuration".to_owned(),
+            TargetPolicy::PublicOnly,
+            budget,
+            backend,
+            &llm,
+        )
+        .await;
+
+        assert_eq!(report.state, InvestigationState::Completed);
+        assert_eq!(report.specialists.len(), 1, "Should record one specialist consultation");
+        assert_eq!(report.specialists[0].dwarf_id, DwarfId::Sicherheits);
+        assert!(report.specialists[0].focus.contains("TLS configuration unclear"));
+        assert!(report.specialists[0].observations.iter().any(|o| o.contains("TLS 1.2")));
+        assert_eq!(report.hypotheses.len(), 1);
+        assert_eq!(report.hypotheses[0].status, HypothesisStatus::Supported);
     }
 
     #[tokio::test]

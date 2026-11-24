@@ -27,9 +27,7 @@ use crate::domain::{
     AuditTarget, CollectorOutcome, ExecutionBudget, Finding, Origin, Severity, TargetPolicy,
 };
 use crate::intelligence::{LlmBudget, LlmProvider, ProviderRouter};
-use crate::investigation::{
-    DiagnosticBackend, InvestigationBudget, InvestigationReport, prompts, run_investigation,
-};
+use crate::investigation::{DiagnosticBackend, InvestigationBudget, InvestigationReport, prompts};
 use crate::persistence::{self, RegressionReport};
 
 use self::memory::{
@@ -155,6 +153,24 @@ pub struct PatrolResourceLedger {
     pub duration_ms: u64,
 }
 
+/// Structured JSON contract returned by a delegated specialist dwarf.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpecialistOutput {
+    /// Confirmed observations grounded in collected evidence.
+    #[serde(default)]
+    pub confirmed_observations: Vec<String>,
+    /// Evidence or rule references cited by the specialist.
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+    /// Remaining uncertainty or missing evidence.
+    pub remaining_uncertainty: String,
+    /// Optional authorised diagnostic tool requested for follow-up evidence.
+    #[serde(default)]
+    pub requested_tool: Option<String>,
+    /// Concise recommendation handed back to `KommandantZwerg`.
+    pub recommendation: String,
+}
+
 /// Result of delegating a material patrol anomaly to a specialist dwarf.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpecialistDelegation {
@@ -168,6 +184,15 @@ pub struct SpecialistDelegation {
     pub target_url: String,
     /// Concise specialist assessment grounded in the anomaly observations.
     pub assessment: String,
+    /// Parsed structured output when the specialist returned valid contract JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_output: Option<SpecialistOutput>,
+    /// Diagnostic tool executed on behalf of the specialist, if requested and authorised.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_executed: Option<String>,
+    /// Number of findings produced by the executed specialist tool.
+    #[serde(default)]
+    pub tool_findings_count: usize,
 }
 
 /// Change-oriented report produced by [`run_patrol`].
@@ -310,6 +335,7 @@ pub async fn run_patrol_with_router(
     let mut seed_report: Option<AuditReport> = None;
     let mut page_reports: Vec<(SampleSelection, AuditReport, Option<String>, Option<String>)> =
         Vec::new();
+    let mut page_snapshots: BTreeMap<String, crate::domain::EvidenceSnapshot> = BTreeMap::new();
     let mut locales_set: BTreeSet<String> = mem.known_locales.iter().cloned().collect();
     let mut page_types: BTreeMap<String, PageType> = BTreeMap::new();
     let mut template_families: BTreeMap<String, String> = BTreeMap::new();
@@ -370,6 +396,7 @@ pub async fn run_patrol_with_router(
         if sel.url == seed {
             seed_report = Some(report.clone());
         }
+        page_snapshots.insert(sel.url.as_str().to_owned(), snap);
         page_reports.push((sel.clone(), report, tpl, body_hash));
     }
 
@@ -486,11 +513,14 @@ pub async fn run_patrol_with_router(
         is_returning,
     );
 
-    // 6. Selective specialist delegation & KommandantZwerg escalation,
+    // 6. Collaborative specialist delegation (with evidence context & authorised tool
+    // execution) followed by KommandantZwerg synthesis over specialist contributions,
     // bounded by the remaining patrol wall-clock deadline.
     let mut specialist_escalations: Vec<DwarfId> = Vec::new();
     let mut specialist_delegations: Vec<SpecialistDelegation> = Vec::new();
+    let mut prior_specialists: Vec<crate::investigation::SpecialistContribution> = Vec::new();
     let mut specialist_llm_calls = 0usize;
+    let mut specialist_tool_calls = 0usize;
     let mut investigation: Option<InvestigationReport> = None;
     let esc_rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
     if esc_rem.is_zero() && !anomalies.is_empty() {
@@ -510,10 +540,26 @@ pub async fn run_patrol_with_router(
                     .or_else(|| r.resolve_for_dwarf(DwarfId::Kommandant))
             });
             if let Some(provider) = spec_llm {
+                let page_findings: Vec<String> = page_reports
+                    .iter()
+                    .find(|(sel, _, _, _)| sel.url.as_str() == a.affected_url)
+                    .map(|(_, rep, _, _)| {
+                        rep.analysers
+                            .iter()
+                            .flat_map(|an| an.findings.iter())
+                            .take(10)
+                            .map(|f| format!("[{:?}] {}: {}", f.severity, f.rule_id.0, f.title))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 let contract = prompts::specialist_prompt(a.suggested_competency, &a.summary);
                 let user_msg = format!(
-                    "Anomaly `{}` on `{}` ({:?}): {}",
-                    a.id, a.affected_url, a.severity, a.summary
+                    "Anomaly `{}` on `{}` ({:?}): {}\nObserved deterministic findings on page: {}",
+                    a.id,
+                    a.affected_url,
+                    a.severity,
+                    a.summary,
+                    page_findings.join(" | ")
                 );
                 let llm_budget = LlmBudget {
                     max_tokens: 512,
@@ -521,16 +567,71 @@ pub async fn run_patrol_with_router(
                     timeout: spec_rem.min(std::time::Duration::from_secs(15)),
                 };
                 specialist_llm_calls += 1;
-                if let Ok(assessment) = provider
+                if let Ok(raw_resp) = provider
                     .complete(&contract.system_prompt, &user_msg, llm_budget)
                     .await
                 {
+                    let mut structured = serde_json::from_str::<SpecialistOutput>(&raw_resp).ok();
+                    let mut tool_executed = None;
+                    let mut tool_findings_count = 0usize;
+                    if let Some(ref mut out) = structured
+                        && let Some(tool_id) = out.requested_tool.as_deref()
+                        && let Ok(spec_target) = AuditTarget::parse(&a.affected_url, policy)
+                        && let Some(snap) = page_snapshots.get_mut(&a.affected_url)
+                    {
+                        let tool_rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+                        if !tool_rem.is_zero() {
+                            specialist_tool_calls += 1;
+                            let (ok, tool_outputs) =
+                                crate::investigation::run_specialist_tool_on_snapshot(
+                                    tool_id,
+                                    &spec_target,
+                                    policy,
+                                    tool_rem,
+                                    Arc::clone(&backend),
+                                    snap,
+                                )
+                                .await;
+                            if ok {
+                                tool_executed = Some(tool_id.to_owned());
+                                for res in &tool_outputs {
+                                    tool_findings_count += res.findings.len();
+                                    for f in &res.findings {
+                                        out.evidence_refs.push(f.rule_id.0.clone());
+                                        out.confirmed_observations
+                                            .push(format!("{}: {}", f.rule_id.0, f.title));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let contribution = if let Some(ref out) = structured {
+                        crate::investigation::SpecialistContribution {
+                            dwarf_id: a.suggested_competency,
+                            focus: format!("{} ({})", a.id, a.affected_url),
+                            observations: out.confirmed_observations.clone(),
+                            uncertainty: out.remaining_uncertainty.clone(),
+                        }
+                    } else {
+                        crate::investigation::SpecialistContribution {
+                            dwarf_id: a.suggested_competency,
+                            focus: format!("{} ({})", a.id, a.affected_url),
+                            observations: vec![raw_resp.clone()],
+                            uncertainty: "unstructured specialist response".to_owned(),
+                        }
+                    };
+                    prior_specialists.push(contribution);
+
                     specialist_delegations.push(SpecialistDelegation {
                         anomaly_id: a.id.clone(),
                         dwarf_id: a.suggested_competency,
                         model_used: provider.model_name().to_owned(),
                         target_url: a.affected_url.clone(),
-                        assessment,
+                        assessment: raw_resp,
+                        structured_output: structured,
+                        tool_executed,
+                        tool_findings_count,
                     });
                 }
             }
@@ -544,7 +645,8 @@ pub async fn run_patrol_with_router(
             let investigation_target = AuditTarget::parse(&anomalies[0].affected_url, policy)
                 .unwrap_or_else(|_| seed.clone());
             let objective = format!(
-                "Investigate {} patrol anomaly(ies); top concern on {}: {}",
+                "Synthesise {} specialist findings and investigate {} patrol anomaly(ies); top concern on {}: {}",
+                prior_specialists.len(),
                 anomalies.len(),
                 investigation_target.as_str(),
                 anomalies[0].summary
@@ -555,13 +657,14 @@ pub async fn run_patrol_with_router(
                 ..default_inv_budget
             };
             investigation = Some(
-                run_investigation(
+                crate::investigation::run_investigation_with_specialists(
                     investigation_target,
                     objective,
                     policy,
                     bounded_inv_budget,
                     Arc::clone(&backend),
                     provider,
+                    prior_specialists,
                 )
                 .await,
             );
@@ -716,9 +819,10 @@ pub async fn run_patrol_with_router(
             + investigation
                 .as_ref()
                 .map_or(0, |inv| inv.ledger.llm_turns_used),
-        investigation_tool_calls: investigation
-            .as_ref()
-            .map_or(0, |inv| inv.ledger.tool_calls_used),
+        investigation_tool_calls: specialist_tool_calls
+            + investigation
+                .as_ref()
+                .map_or(0, |inv| inv.ledger.tool_calls_used),
         conditional_checks,
         reused_observations: reused_page_count,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
