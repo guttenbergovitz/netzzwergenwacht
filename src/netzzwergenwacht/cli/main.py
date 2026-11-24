@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -999,20 +1000,22 @@ def _save_results(results: list, output_path: Path, output_format: str) -> None:
         import json
         from datetime import datetime
 
-        json_data = {
+        dwarfs_list: list[dict[str, Any]] = []
+        json_data: dict[str, Any] = {
             "timestamp": datetime.now().isoformat(),
             "total_dwarfs": len(results),
-            "dwarfs": [],
+            "dwarfs": dwarfs_list,
         }
 
         for result in results:
-            dwarf_data = {
+            issues_list: list[dict[str, Any]] = []
+            dwarf_data: dict[str, Any] = {
                 "dwarf_name": result.dwarf_name,
                 "url": result.url,
                 "success": result.success,
                 "error_message": result.error_message if not result.success else None,
                 "issues_count": len(result.issues),
-                "issues": [],
+                "issues": issues_list,
             }
 
             if result.success:
@@ -1028,9 +1031,9 @@ def _save_results(results: list, output_path: Path, output_format: str) -> None:
                         "message": issue.message,
                         "evidence": issue.evidence or {},
                     }
-                    dwarf_data["issues"].append(issue_data)
+                    issues_list.append(issue_data)
 
-            json_data["dwarfs"].append(dwarf_data)
+            dwarfs_list.append(dwarf_data)
 
         # Write JSON file
         with open(output_path, "w", encoding="utf-8") as f:

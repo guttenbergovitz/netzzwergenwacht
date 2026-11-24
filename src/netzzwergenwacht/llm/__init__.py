@@ -136,8 +136,8 @@ class LLMProcessor:
     ) -> dict[str, Any]:
         """Prepare a detailed report summary for LLM consumption with full issue context."""
         # Extract detailed insights from each dwarf
-        dwarf_summaries = []
-        all_detailed_issues = []
+        dwarf_summaries: list[dict[str, Any]] = []
+        all_detailed_issues: list[dict[str, Any]] = []
 
         for result in report.dwarf_results:
             if not result.success:
@@ -424,7 +424,8 @@ class LLMProcessor:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create comprehensive LLM-ready data
-        llm_data = {
+        dwarf_results_list: list[dict[str, Any]] = []
+        llm_data: dict[str, Any] = {
             "metadata": {
                 "url": report.url,
                 "timestamp": report.timestamp.isoformat() if report.timestamp else None,
@@ -439,7 +440,7 @@ class LLMProcessor:
                 "low_issues": report.low_issues,
                 "issues_by_category": report.issues_by_category,
             },
-            "dwarf_results": [],
+            "dwarf_results": dwarf_results_list,
             "llm_ready_summary": self._prepare_report_summary(report),
         }
 
@@ -472,7 +473,7 @@ class LLMProcessor:
             if hasattr(result, "visual_metrics") and result.visual_metrics:
                 dwarf_data["visual_metrics"] = asdict(result.visual_metrics)
 
-            llm_data["dwarf_results"].append(dwarf_data)
+            dwarf_results_list.append(dwarf_data)
 
         with open(path, "w", encoding="utf-8") as f:
             json.dump(llm_data, f, indent=2, ensure_ascii=False, default=str)

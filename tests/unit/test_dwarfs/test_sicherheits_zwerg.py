@@ -1,11 +1,47 @@
 """Tests for SicherheitsZwerg."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
+import httpx
 import pytest
 
 from netzzwergenwacht.dwarfs.base import Severity
 from netzzwergenwacht.dwarfs.sicherheits_zwerg import SicherheitsZwerg
+
+EXAMPLE_HTML = b"<!DOCTYPE html><html><head><title>Example</title></head><body><h1>Example</h1></body></html>"
+
+
+@pytest.fixture(autouse=True)
+def mock_network():
+    """Mock httpx.AsyncClient.get and SSL socket for offline deterministic unit tests."""
+
+    async def _fake_get(self, url, *args, **kwargs):
+        if "this-domain-should-not-exist" in str(url):
+            raise httpx.ConnectError("Connection failed")
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.headers = {"content-type": "text/html"}
+        resp.content = EXAMPLE_HTML
+        resp.text = EXAMPLE_HTML.decode()
+        resp.url = str(url)
+        return resp
+
+    mock_ssock = MagicMock()
+    mock_ssock.version.return_value = "TLSv1.3"
+    mock_ssock.getpeercert.return_value = {
+        "notAfter": "Dec 31 23:59:59 2030 GMT",
+        "subject": ((("commonName", "example.com"),),),
+        "issuer": ((("commonName", "Example CA"),),),
+    }
+    mock_ctx = MagicMock()
+    mock_ctx.wrap_socket.return_value.__enter__.return_value = mock_ssock
+
+    with (
+        patch("httpx.AsyncClient.get", new=_fake_get),
+        patch("socket.create_connection", return_value=MagicMock()),
+        patch("ssl.create_default_context", return_value=mock_ctx),
+    ):
+        yield
 
 
 class TestSicherheitsZwerg:

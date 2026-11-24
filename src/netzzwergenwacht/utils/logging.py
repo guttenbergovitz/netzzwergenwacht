@@ -13,7 +13,7 @@ def setup_structured_logging(
 ) -> None:
     """Configure structured logging with optional JSON output."""
 
-    processors = [
+    processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.StackInfoRenderer(),

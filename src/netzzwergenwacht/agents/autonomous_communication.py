@@ -90,7 +90,7 @@ class InvestigationTask:
 class AgentCommunicationHub:
     """Central hub for agent-to-agent communication."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.message_history: list[AgentMessage] = []
         self.active_tasks: list[InvestigationTask] = []
         self.agent_states: dict[str, str] = {}  # agent_name -> current_status

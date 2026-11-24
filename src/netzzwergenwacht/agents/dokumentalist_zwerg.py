@@ -87,7 +87,7 @@ autonomous agents collaborate, seeing beauty in the patterns others might miss."
         }
 
         # Identify most active collaborations
-        agent_interactions = {}
+        agent_interactions: dict[str, int] = {}
         for msg in all_messages:
             if msg.message_type == MessageType.COLLABORATION:
                 key = f"{msg.sender}-{msg.recipient}"

@@ -1,6 +1,7 @@
 """Web-Browser-Zwerg for web page analysis."""
 
 import time
+from typing import Any
 
 import httpx
 from bs4 import BeautifulSoup
@@ -10,6 +11,7 @@ from .base import (
     AnalysisResult,
     CodeLocation,
     DetailedAnalysisResult,
+    DetailedIssue,
     Dwarf,
     Issue,
     PerformanceMetrics,
@@ -20,7 +22,7 @@ from .base import (
 class WebBrowserZwerg(Dwarf):
     """Web-Browser-Zwerg - Analyzes websites for HTTP status, performance and basic structure."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             name="Web-Browser-Zwerg",
             description="HTTP-based web page analysis for quality and accessibility checks",
@@ -29,8 +31,8 @@ class WebBrowserZwerg(Dwarf):
     async def analyze(self, url: str) -> AnalysisResult:
         """Analyze a URL using HTTP requests and HTML parsing."""
         try:
-            issues = []
-            metadata = {}
+            issues: list[Issue] = []
+            metadata: dict[str, Any] = {}
 
             # Basic URL validation
             if not url.startswith(("http://", "https://")):
@@ -75,7 +77,9 @@ class WebBrowserZwerg(Dwarf):
                     if "text/html" in response.headers.get("content-type", ""):
                         soup = BeautifulSoup(response.content, "lxml")
                         metadata["title"] = (
-                            soup.title.string.strip() if soup.title else None
+                            soup.title.string.strip()
+                            if soup.title and soup.title.string
+                            else None
                         )
 
                         issues.extend(await self._check_html_structure(soup, url))
@@ -117,9 +121,9 @@ class WebBrowserZwerg(Dwarf):
     async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
         """Analyze a URL using HTTP requests, HTML parsing, and browser automation with detailed context."""
         try:
-            detailed_issues = []
+            detailed_issues: list[DetailedIssue] = []
             perf_metrics = PerformanceMetrics()
-            raw_data = {}
+            raw_data: dict[str, Any] = {}
 
             # Basic URL validation
             if not url.startswith(("http://", "https://")):
@@ -225,7 +229,11 @@ class WebBrowserZwerg(Dwarf):
                     # Parse HTML and perform content checks
                     if "text/html" in response.headers.get("content-type", ""):
                         soup = BeautifulSoup(response.content, "lxml")
-                        title = soup.title.string.strip() if soup.title else None
+                        title = (
+                            soup.title.string.strip()
+                            if soup.title and soup.title.string
+                            else None
+                        )
                         perf_metrics.image_count = len(soup.find_all("img"))
                         perf_metrics.css_count = len(
                             soup.find_all("link", rel="stylesheet")
@@ -457,11 +465,13 @@ class WebBrowserZwerg(Dwarf):
 
         return issues, metadata
 
-    async def _analyze_with_playwright_detailed(self, url: str):
+    async def _analyze_with_playwright_detailed(
+        self, url: str
+    ) -> tuple[list[DetailedIssue], dict[str, Any], dict[str, Any]]:
         """Analyze page using Playwright and return detailed issues, metrics, and raw data."""
-        issues = []
-        metadata = {}
-        raw = {}
+        issues: list[DetailedIssue] = []
+        metadata: dict[str, Any] = {}
+        raw: dict[str, Any] = {}
         try:
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
@@ -569,10 +579,12 @@ class WebBrowserZwerg(Dwarf):
             )
         return issues, metadata, raw
 
-    async def _test_mobile_responsive(self, page, url: str) -> tuple[list[Issue], dict]:
+    async def _test_mobile_responsive(
+        self, page: Any, url: str
+    ) -> tuple[list[Issue], dict[str, Any]]:
         """Test mobile and responsive design features."""
-        issues = []
-        metadata = {}
+        issues: list[Issue] = []
+        metadata: dict[str, Any] = {}
 
         # Test different viewport sizes
         viewports = {
@@ -697,13 +709,13 @@ class WebBrowserZwerg(Dwarf):
 
         return issues, metadata
 
-    async def _take_responsive_screenshots(self, page, url: str) -> dict:
+    async def _take_responsive_screenshots(self, page: Any, url: str) -> dict[str, Any]:
         """Take screenshots for different viewport sizes and save to output directory."""
         import os
         from datetime import datetime
 
-        metadata = {}
-        screenshots_taken = []
+        metadata: dict[str, Any] = {}
+        screenshots_taken: list[dict[str, Any]] = []
 
         # Create output directory if it doesn't exist
         output_dir = "output"
@@ -750,7 +762,7 @@ class WebBrowserZwerg(Dwarf):
 
         return metadata
 
-    async def _check_browser_accessibility(self, page, url: str) -> list[Issue]:
+    async def _check_browser_accessibility(self, page: Any, url: str) -> list[Issue]:
         """Check accessibility issues using browser automation."""
         issues = []
 
@@ -867,7 +879,7 @@ class WebBrowserZwerg(Dwarf):
         issues = []
 
         # Check for missing title
-        if not soup.title or not soup.title.string.strip():
+        if not soup.title or not soup.title.string or not soup.title.string.strip():
             issues.append(
                 self.create_issue(
                     issue_type="missing_title",
@@ -880,7 +892,8 @@ class WebBrowserZwerg(Dwarf):
 
         # Check for missing meta description
         meta_desc = soup.find("meta", attrs={"name": "description"})
-        if not meta_desc or not meta_desc.get("content", "").strip():
+        meta_content = str(meta_desc.get("content", "")) if meta_desc else ""
+        if not meta_desc or not meta_content.strip():
             issues.append(
                 self.create_issue(
                     issue_type="missing_meta_description",
