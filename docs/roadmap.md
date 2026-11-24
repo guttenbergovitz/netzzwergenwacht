@@ -30,15 +30,16 @@ Status legend:
 - [x] **Systemic issue clustering across pages (`SystemicIssue`)** (`src/discovery/mod.rs`): *Implemented, Tested*
 - [x] **Adaptive sampling & crawl tool wired into `KommandantZwerg`** (`src/investigation/tools.rs`, `CrawlAndClusterTool`): *Implemented, Tested*
 
-## Milestone D: Stakeholder Value *(Planned)*
-- Executive brief (2-minute summary), PM/PO delivery report, and technical report (`DokumentationsZwerg`)
-- Structured `RemediationTask` model with acceptance criteria and verification procedures
-- Configurable release readiness assessments (`No Blocking Findings`, `Material Concerns`, `Potential Release Blockers`, `Insufficient Evidence`)
+## Milestone D: Stakeholder Value *(In Progress)*
+- [x] **Executive brief (`ExecutiveBrief`) & backlog-ready `RemediationTask`s** (`src/investigation/mod.rs`): *Implemented, Tested*
+- [x] **Configurable release readiness assessments (`ReleaseReadinessAssessment`)** (`src/investigation/mod.rs`): *Implemented, Tested*
+- [x] **Markdown stakeholder export (`--format markdown` for `investigate` & `verify`)**: *Implemented, Tested*
+- [ ] **Role-tailored report templates (PM vs CTO portfolio)**: *Planned*
 
-## Milestone E: Continuous Quality Assurance *(Planned)*
-- Fix false historical resolutions in `diff_reports` (`Unverified` / `NotComparable`)
-- `nzw verify --investigation <id>` remediation verification workflow
-- Portfolio-level comparisons and quality baselines
+## Milestone E: Continuous Quality Assurance *(In Progress)*
+- [x] **Fix false historical resolutions in `diff_reports` (`unverified_findings`)** (`src/persistence.rs`): *Implemented, Tested*
+- [x] **`nzw verify --baseline <path> <url>` remediation verification**: *Implemented*
+- [ ] **Quality baselines, scheduled monitoring, and portfolio comparisons**: *Planned*
 
 ## Milestone F: Product Hardening & Integration *(Planned)*
 - Operational benchmarks (CPU, memory, browser cost, token cost)
