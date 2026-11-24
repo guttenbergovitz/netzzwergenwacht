@@ -44,15 +44,18 @@ function findBrowser() {
 
 (async () => {
   const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nzw-chrome-'));
-  const chrome = spawn(findBrowser(), [
+  const chromeArgs = [
     '--headless=new',
-    '--no-sandbox',
     '--disable-gpu',
     '--disable-dev-shm-usage',
     '--remote-debugging-port=0',
     `--user-data-dir=${userDataDir}`,
     'about:blank',
-  ], { stdio: ['ignore', 'ignore', 'pipe'] });
+  ];
+  if (process.env.NZW_ALLOW_UNSAFE_BROWSER_SANDBOX === '1') {
+    chromeArgs.splice(1, 0, '--no-sandbox');
+  }
+  const chrome = spawn(findBrowser(), chromeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
 
   let ws;
   try {
