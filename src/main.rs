@@ -522,6 +522,11 @@ struct AdapterOptions {
     axe: bool,
 }
 
+fn remaining_audit_budget(started: std::time::Instant, total: Duration) -> Option<Duration> {
+    let rem = total.saturating_sub(started.elapsed());
+    if rem.is_zero() { None } else { Some(rem) }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_check(
     url: &str,
@@ -565,19 +570,31 @@ async fn run_check(
         budget.max_redirects = hops;
     }
 
+    let audit_started = std::time::Instant::now();
     let mut snapshot = collection::collect_http(&target, &budget, target_pol).await;
     if adapters.lighthouse {
-        snapshot.lighthouse =
-            netzzwergenwacht::adapters::lighthouse::run_lighthouse(&target, budget.audit_timeout)
-                .await;
+        snapshot.lighthouse = match remaining_audit_budget(audit_started, budget.audit_timeout) {
+            Some(rem) => netzzwergenwacht::adapters::lighthouse::run_lighthouse(&target, rem).await,
+            None => CollectorOutcome::Skipped {
+                reason: "shared audit_timeout budget exhausted".to_owned(),
+            },
+        };
     }
     if adapters.browser {
-        snapshot.browser =
-            netzzwergenwacht::adapters::browser::run_browser(&target, budget.audit_timeout).await;
+        snapshot.browser = match remaining_audit_budget(audit_started, budget.audit_timeout) {
+            Some(rem) => netzzwergenwacht::adapters::browser::run_browser(&target, rem).await,
+            None => CollectorOutcome::Skipped {
+                reason: "shared audit_timeout budget exhausted".to_owned(),
+            },
+        };
     }
     if adapters.axe {
-        snapshot.axe =
-            netzzwergenwacht::adapters::axe::run_axe(&target, budget.audit_timeout).await;
+        snapshot.axe = match remaining_audit_budget(audit_started, budget.audit_timeout) {
+            Some(rem) => netzzwergenwacht::adapters::axe::run_axe(&target, rem).await,
+            None => CollectorOutcome::Skipped {
+                reason: "shared audit_timeout budget exhausted".to_owned(),
+            },
+        };
     }
     let report = analysis::run_all(&snapshot);
 
@@ -1071,5 +1088,12 @@ mod tests {
             exit_code_for_report(&report, &eval),
             ExitCode::from(EXIT_FINDINGS)
         );
+    }
+
+    #[test]
+    fn remaining_audit_budget_returns_none_when_exhausted() {
+        let now = std::time::Instant::now();
+        assert!(remaining_audit_budget(now, Duration::ZERO).is_none());
+        assert!(remaining_audit_budget(now, Duration::from_secs(5)).is_some());
     }
 }

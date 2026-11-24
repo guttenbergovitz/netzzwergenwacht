@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Shared Audit Budget & Browser Partial Load Semantics (2026-11-24)
+- Enforced a shared `audit_timeout` deadline across `collect_http` and Level 2 adapters (`lighthouse`, `browser`, `axe`) in `run_check` (`src/main.rs`), skipping remaining adapters when exhausted.
+- Recorded `load_timed_out` in `CDP_HARNESS_JS` and added `parse_browser_outcome` (`src/adapters/browser.rs`) to emit `CollectorOutcome::Partial` with a warning when `Page.loadEventFired` times out.
+
 ### Sitemap Crawl Integration & Verification Tools (2026-11-24)
 - Wired `/sitemap.xml` discovery and `prioritise_representative_urls` into `discovery::crawl_and_cluster`.
 - Added `InspectPreviousFindingsTool` (`inspect_previous_findings`) and `VerifyFindingTool` (`verify_finding`) as `rig-core` `PortableTool`s in `src/investigation/tools.rs`.
