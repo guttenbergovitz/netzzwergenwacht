@@ -748,8 +748,55 @@ pub struct ViewportLayoutObs {
     pub screenshot_path: Option<String>,
 }
 
-/// Level 2 browser runtime and visual layout evidence.
+/// Network resource timing and HTTP header observation from Level 2 browser execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ResourceTimingObs {
+    /// Requested resource URL.
+    pub url: String,
+    /// Initiator or CDP resource type (for example `"script"`, `"stylesheet"`, `"image"`, `"font"`).
+    pub resource_type: String,
+    /// Observed MIME type from response headers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    /// Encoded transfer size in bytes when observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transfer_size: Option<u64>,
+    /// Resource load duration in milliseconds when observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Negotiated protocol (for example `"h2"`, `"h3"`, `"http/1.1"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<String>,
+    /// Observed `Cache-Control` response header value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<String>,
+    /// Observed `Content-Encoding` response header value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_encoding: Option<String>,
+}
+
+/// Rendered image geometry and loading state captured in the browser.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RenderedImageObs {
+    /// Resolved `currentSrc` or `src` attribute.
+    pub src: String,
+    /// Intrinsic image width in pixels.
+    pub natural_width: u64,
+    /// Intrinsic image height in pixels.
+    pub natural_height: u64,
+    /// Rendered CSS layout box width in pixels.
+    pub rendered_width: u64,
+    /// Rendered CSS layout box height in pixels.
+    pub rendered_height: u64,
+    /// Whether the image intersects the initial desktop viewport.
+    pub in_initial_viewport: bool,
+    /// Explicit `loading` attribute (`"lazy"` / `"eager"`), if set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub loading: Option<String>,
+}
+
+/// Level 2 browser runtime and visual layout evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserEvidence {
     /// Final URL after client-side navigation.
     pub final_url: String,
@@ -761,6 +808,15 @@ pub struct BrowserEvidence {
     pub failed_requests: Vec<FailedNetworkRequest>,
     /// Per-viewport layout and broken-asset observations.
     pub viewports: Vec<ViewportLayoutObs>,
+    /// Captured subresource network timings, transfer sizes, and response headers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<ResourceTimingObs>,
+    /// Rendered image geometry and viewport intersection observations.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rendered_images: Vec<RenderedImageObs>,
+    /// Total element count in the rendered DOM (`document.querySelectorAll('*').length`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_dom_elements: Option<usize>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,

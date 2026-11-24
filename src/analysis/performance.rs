@@ -26,6 +26,10 @@ const RULE_DUPLICATE_SCRIPTS: &str = "perf.dom.duplicate_scripts";
 const RULE_RENDER_BLOCKING_CSS: &str = "perf.dom.render_blocking_stylesheets";
 const RULE_PRECONNECT: &str = "perf.assets.preconnect";
 const RULE_LAZY_LOADING: &str = "perf.assets.lazy_loading";
+const RULE_RUNTIME_TRANSFER_WEIGHT: &str = "perf.runtime.total_transfer_weight";
+const RULE_RUNTIME_UNCOMPRESSED: &str = "perf.runtime.uncompressed_text_assets";
+const RULE_RUNTIME_UNCACHED: &str = "perf.runtime.uncached_static_assets";
+const RULE_RENDERED_DOM_SIZE: &str = "perf.runtime.rendered_dom_size";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -127,6 +131,7 @@ fn analyse_with_thresholds_and_document(
         check_lazy_loading(doc, &mut findings, &mut checks);
     }
     check_core_web_vitals(&snapshot.lighthouse, &mut findings, &mut checks);
+    check_runtime_resources(&snapshot.browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -901,6 +906,229 @@ fn check_lazy_loading(
     }
 }
 
+fn check_runtime_resources(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) = browser
+    else {
+        return;
+    };
+
+    if !data.resources.is_empty() {
+        let total_bytes: u64 = data.resources.iter().filter_map(|r| r.transfer_size).sum();
+        if total_bytes > 2 * 1024 * 1024 {
+            let severity = if total_bytes > 5 * 1024 * 1024 {
+                Severity::Medium
+            } else {
+                Severity::Low
+            };
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_RUNTIME_TRANSFER_WEIGHT.to_owned()),
+                category: FindingCategory::Performance,
+                evidence_level: EvidenceLevel::Rendered,
+                kind: FindingKind::Deterministic,
+                severity,
+                confidence: Confidence::High,
+                title: format!(
+                    "Heavy total page transfer weight ({} KiB)",
+                    total_bytes / 1024
+                ),
+                summary: format!(
+                    "Browser transferred {total_bytes} bytes across {} network resources.",
+                    data.resources.len()
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::BrowserRuntime,
+                    format!("total_transfer_bytes={total_bytes}"),
+                )],
+                remediation: Some(
+                    "Reduce JS/image/font transfer sizes and eliminate unused third-party payloads."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_RUNTIME_TRANSFER_WEIGHT.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        } else {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_RUNTIME_TRANSFER_WEIGHT.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        }
+
+        check_runtime_uncompressed(data, findings, checks);
+        check_runtime_cache_policy(data, findings, checks);
+    }
+
+    check_rendered_dom_size(data, findings, checks);
+}
+
+fn check_runtime_uncompressed(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    {
+        let uncompressed: Vec<&str> = data
+            .resources
+            .iter()
+            .filter(|r| {
+                r.transfer_size.is_some_and(|s| s > 1024)
+                    && matches!(
+                        r.resource_type.as_str(),
+                        "script" | "stylesheet" | "document" | "xhr" | "fetch"
+                    )
+                    && r.content_encoding
+                        .as_deref()
+                        .is_none_or(|e| e.trim().is_empty())
+            })
+            .map(|r| r.url.as_str())
+            .collect();
+        if uncompressed.is_empty() {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_RUNTIME_UNCOMPRESSED.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        } else {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_RUNTIME_UNCOMPRESSED.to_owned()),
+                category: FindingCategory::Performance,
+                evidence_level: EvidenceLevel::Rendered,
+                kind: FindingKind::Deterministic,
+                severity: Severity::Low,
+                confidence: Confidence::High,
+                title: format!(
+                    "Uncompressed text/code subresources ({})",
+                    uncompressed.len()
+                ),
+                summary: format!(
+                    "{} script/CSS/document response(s) (> 1 KiB) lacked `Content-Encoding`.",
+                    uncompressed.len()
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::BrowserRuntime,
+                    format!("uncompressed_resources={}", uncompressed.len()),
+                )],
+                remediation: Some(
+                    "Enable Brotli (`br`) or gzip compression for all text/script/CSS assets."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_RUNTIME_UNCOMPRESSED.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        }
+    }
+}
+
+fn check_runtime_cache_policy(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    {
+        let uncached: Vec<&str> = data
+            .resources
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r.resource_type.as_str(),
+                    "script" | "stylesheet" | "image" | "font"
+                ) && r.cache_control.as_deref().is_none_or(|cc| {
+                    let lower = cc.to_ascii_lowercase();
+                    !lower.contains("max-age=") && !lower.contains("immutable")
+                })
+            })
+            .map(|r| r.url.as_str())
+            .collect();
+        if uncached.is_empty() {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_RUNTIME_UNCACHED.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        } else {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_RUNTIME_UNCACHED.to_owned()),
+                category: FindingCategory::Performance,
+                evidence_level: EvidenceLevel::Rendered,
+                kind: FindingKind::Deterministic,
+                severity: Severity::Low,
+                confidence: Confidence::High,
+                title: format!("Static assets missing cache policy ({})", uncached.len()),
+                summary: format!(
+                    "{} script/CSS/image/font resource(s) lacked `Cache-Control: max-age` or `immutable`.",
+                    uncached.len()
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::BrowserRuntime,
+                    format!("uncached_static_resources={}", uncached.len()),
+                )],
+                remediation: Some(
+                    "Serve fingerprinted static assets with long-lived `Cache-Control: public, max-age=31536000, immutable`."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_RUNTIME_UNCACHED.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        }
+    }
+}
+
+fn check_rendered_dom_size(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if let Some(dom_count) = data.rendered_dom_elements {
+        if dom_count > 1_500 {
+            let severity = if dom_count > 3_000 {
+                Severity::Medium
+            } else {
+                Severity::Low
+            };
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_RENDERED_DOM_SIZE.to_owned()),
+                category: FindingCategory::Performance,
+                evidence_level: EvidenceLevel::Rendered,
+                kind: FindingKind::Deterministic,
+                severity,
+                confidence: Confidence::High,
+                title: format!("Large rendered DOM ({dom_count} elements)"),
+                summary: format!(
+                    "Rendered browser DOM contains {dom_count} elements (> 1,500 threshold)."
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::BrowserRuntime,
+                    format!("rendered_dom_elements={dom_count}"),
+                )],
+                remediation: Some(
+                    "Reduce client-side rendered DOM depth and virtualise offscreen lists."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_RENDERED_DOM_SIZE.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        } else {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_RENDERED_DOM_SIZE.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1110,5 +1338,59 @@ mod tests {
         assert!(ids.contains(&RULE_RENDER_BLOCKING_CSS));
         assert!(ids.contains(&RULE_PRECONNECT));
         assert!(ids.contains(&RULE_LAZY_LOADING));
+    }
+
+    #[test]
+    fn flags_runtime_transfer_compression_cache_and_rendered_dom() {
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let snap = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: Vec::new(),
+                    elapsed_ms: Measurement::Measured {
+                        value: 50,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 256,
+                    body_truncated: false,
+                    body_text: String::new(),
+                },
+            },
+            tls: CollectorOutcome::default(),
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    resources: vec![crate::domain::ResourceTimingObs {
+                        url: "https://example.com/app.js".to_owned(),
+                        resource_type: "script".to_owned(),
+                        mime_type: Some("application/javascript".to_owned()),
+                        transfer_size: Some(3 * 1024 * 1024),
+                        duration_ms: Some(120),
+                        protocol: Some("h2".to_owned()),
+                        cache_control: None,
+                        content_encoding: None,
+                    }],
+                    rendered_dom_elements: Some(2_200),
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let result = analyse(&snap);
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_RUNTIME_TRANSFER_WEIGHT));
+        assert!(ids.contains(&RULE_RUNTIME_UNCOMPRESSED));
+        assert!(ids.contains(&RULE_RUNTIME_UNCACHED));
+        assert!(ids.contains(&RULE_RENDERED_DOM_SIZE));
     }
 }

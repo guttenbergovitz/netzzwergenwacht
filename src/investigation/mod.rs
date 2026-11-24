@@ -1591,7 +1591,7 @@ mod tests {
                     }],
                     failed_requests: Vec::new(),
                     viewports: Vec::new(),
-                    provenance: None,
+                    ..BrowserEvidence::default()
                 },
             },
             axe: CollectorOutcome::default(),
