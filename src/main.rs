@@ -132,6 +132,9 @@ enum Command {
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Target stakeholder perspective for Markdown output.
+        #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
+        audience: AudienceArg,
     },
     /// Re-audit a target and verify whether baseline findings are resolved or unverified.
     Verify {
@@ -147,6 +150,25 @@ enum Command {
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AudienceArg {
+    Pm,
+    Po,
+    Cto,
+    Technical,
+}
+
+impl From<AudienceArg> for netzzwergenwacht::investigation::RolePerspective {
+    fn from(value: AudienceArg) -> Self {
+        match value {
+            AudienceArg::Pm => Self::ProjectManager,
+            AudienceArg::Po => Self::ProductOwner,
+            AudienceArg::Cto => Self::CtoEngineeringManager,
+            AudienceArg::Technical => Self::TechnicalSpecialist,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -289,7 +311,8 @@ async fn main() -> ExitCode {
             objective,
             allow_private,
             format,
-        } => run_investigate(&url, objective, allow_private, format).await,
+            audience,
+        } => run_investigate(&url, objective, allow_private, format, audience).await,
         Command::Verify {
             baseline,
             url,
@@ -372,6 +395,7 @@ async fn run_investigate(
     objective: String,
     allow_private: bool,
     format: OutputFormat,
+    audience: AudienceArg,
 ) -> ExitCode {
     let policy = target_policy(allow_private);
     let target = match AuditTarget::parse(url, policy) {
@@ -412,7 +436,10 @@ async fn run_investigate(
             if matches!(format, OutputFormat::Markdown) {
                 println!(
                     "{}",
-                    netzzwergenwacht::investigation::render_markdown_report(&report)
+                    netzzwergenwacht::investigation::render_role_perspective_markdown(
+                        &report,
+                        audience.into()
+                    )
                 );
             } else {
                 println!(
