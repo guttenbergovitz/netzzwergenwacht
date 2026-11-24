@@ -14,7 +14,7 @@ use url::{Host, Url};
 use crate::brigade::DwarfId;
 
 /// Policy governing whether private or loopback targets are permitted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetPolicy {
     /// Reject loopback, link-local, and private network addresses (default).
@@ -25,7 +25,7 @@ pub enum TargetPolicy {
 }
 
 /// Supported target URL schemes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetScheme {
     /// Unencrypted HTTP (`http://`).
@@ -161,6 +161,64 @@ impl AuditTarget {
     #[must_use]
     pub const fn port(&self) -> u16 {
         self.port
+    }
+}
+
+/// Complete web origin `(scheme, host, effective_port)`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct Origin {
+    /// Scheme (`http` or `https`).
+    pub scheme: TargetScheme,
+    /// Normalised host.
+    pub host: String,
+    /// Effective port (e.g. `80`, `443`, `8443`).
+    pub port: u16,
+}
+
+impl Origin {
+    /// Extracts the [`Origin`] of a validated [`AuditTarget`].
+    #[must_use]
+    pub fn from_target(target: &AuditTarget) -> Self {
+        Self {
+            scheme: target.scheme(),
+            host: target.host().to_owned(),
+            port: target.port(),
+        }
+    }
+}
+
+/// Explicit investigation scope enforcing origin, additional origins, and SSRF policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InvestigationScope {
+    /// Primary authorised origin.
+    pub primary_origin: Origin,
+    /// Explicitly authorised additional origins.
+    #[serde(default)]
+    pub additional_origins: Vec<Origin>,
+    /// Network SSRF policy.
+    pub policy: TargetPolicy,
+    /// Whether third-party subresource requests are allowed during browser runs.
+    pub allow_third_party_subresources: bool,
+}
+
+impl InvestigationScope {
+    /// Builds a strict single-origin scope for `target`.
+    #[must_use]
+    pub fn for_target(target: &AuditTarget, policy: TargetPolicy) -> Self {
+        Self {
+            primary_origin: Origin::from_target(target),
+            additional_origins: Vec::new(),
+            policy,
+            allow_third_party_subresources: true,
+        }
+    }
+
+    /// Returns `true` if `candidate` matches `primary_origin` or an explicitly
+    /// authorised additional origin.
+    #[must_use]
+    pub fn permits_target(&self, candidate: &AuditTarget) -> bool {
+        let origin = Origin::from_target(candidate);
+        origin == self.primary_origin || self.additional_origins.contains(&origin)
     }
 }
 

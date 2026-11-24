@@ -35,9 +35,15 @@ pub struct RegressionSummary {
     pub persisting_count: usize,
     /// Findings present in baseline that no longer appear in current.
     pub resolved_count: usize,
-    /// Baseline findings whose rules were skipped or unavailable in current.
+    /// Baseline findings that could not be verified because the current check was skipped or unavailable.
     #[serde(default)]
     pub unverified_count: usize,
+    /// Findings whose severity or detail changed between comparable runs.
+    #[serde(default)]
+    pub changed_count: usize,
+    /// Findings previously resolved and later reintroduced.
+    #[serde(default)]
+    pub reintroduced_count: usize,
 }
 
 /// Comparison between a baseline and current [`AuditReport`].
@@ -51,6 +57,9 @@ pub struct RegressionReport {
     pub baseline_captured_at_unix_secs: u64,
     /// Current capture timestamp in Unix seconds.
     pub current_captured_at_unix_secs: u64,
+    /// Non-empty when baseline and current targets are not comparable.
+    #[serde(default)]
+    pub not_comparable_reason: Option<String>,
     /// Newly introduced findings.
     pub new_findings: Vec<Finding>,
     /// Findings persisting from baseline.
@@ -60,6 +69,12 @@ pub struct RegressionReport {
     /// Baseline findings that could not be verified because the current check was skipped or unavailable.
     #[serde(default)]
     pub unverified_findings: Vec<Finding>,
+    /// Findings whose severity changed since baseline.
+    #[serde(default)]
+    pub changed_findings: Vec<Finding>,
+    /// Findings reintroduced after prior resolution.
+    #[serde(default)]
+    pub reintroduced_findings: Vec<Finding>,
     /// Summary counts.
     pub summary: RegressionSummary,
 }
@@ -139,10 +154,38 @@ pub fn latest_for_host<'a>(reports: &'a [AuditReport], host: &str) -> Option<&'a
 /// Compares `baseline` and `current` reports by [`FindingFingerprint`].
 #[must_use]
 pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> RegressionReport {
-    let baseline_fps: HashSet<&FindingFingerprint> = baseline
+    if baseline.target.as_str() != current.target.as_str() {
+        return RegressionReport {
+            baseline_target: baseline.target.as_str().to_owned(),
+            current_target: current.target.as_str().to_owned(),
+            baseline_captured_at_unix_secs: baseline.captured_at_unix_secs,
+            current_captured_at_unix_secs: current.captured_at_unix_secs,
+            not_comparable_reason: Some(format!(
+                "targets differ (`{}` vs `{}`); refusing cross-target resolution claims",
+                baseline.target.as_str(),
+                current.target.as_str()
+            )),
+            new_findings: Vec::new(),
+            persisting_findings: Vec::new(),
+            resolved_findings: Vec::new(),
+            unverified_findings: baseline
+                .analysers
+                .iter()
+                .flat_map(|a| a.findings.iter().cloned())
+                .collect(),
+            changed_findings: Vec::new(),
+            reintroduced_findings: Vec::new(),
+            summary: RegressionSummary {
+                unverified_count: baseline.analysers.iter().map(|a| a.findings.len()).sum(),
+                ..RegressionSummary::default()
+            },
+        };
+    }
+
+    let baseline_by_fp: std::collections::HashMap<&FindingFingerprint, &Finding> = baseline
         .analysers
         .iter()
-        .flat_map(|a| a.findings.iter().map(|f| &f.fingerprint))
+        .flat_map(|a| a.findings.iter().map(|f| (&f.fingerprint, f)))
         .collect();
 
     let current_fps: HashSet<&FindingFingerprint> = current
@@ -153,10 +196,14 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
 
     let mut new_findings = Vec::new();
     let mut persisting_findings = Vec::new();
+    let mut changed_findings = Vec::new();
     for analyser in &current.analysers {
         for finding in &analyser.findings {
-            if baseline_fps.contains(&finding.fingerprint) {
+            if let Some(prev) = baseline_by_fp.get(&finding.fingerprint) {
                 persisting_findings.push(finding.clone());
+                if prev.severity != finding.severity {
+                    changed_findings.push(finding.clone());
+                }
             } else {
                 new_findings.push(finding.clone());
             }
@@ -194,6 +241,8 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         persisting_count: persisting_findings.len(),
         resolved_count: resolved_findings.len(),
         unverified_count: unverified_findings.len(),
+        changed_count: changed_findings.len(),
+        reintroduced_count: 0,
     };
 
     RegressionReport {
@@ -201,10 +250,13 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         current_target: current.target.as_str().to_owned(),
         baseline_captured_at_unix_secs: baseline.captured_at_unix_secs,
         current_captured_at_unix_secs: current.captured_at_unix_secs,
+        not_comparable_reason: None,
         new_findings,
         persisting_findings,
         resolved_findings,
         unverified_findings,
+        changed_findings,
+        reintroduced_findings: Vec::new(),
         summary,
     }
 }

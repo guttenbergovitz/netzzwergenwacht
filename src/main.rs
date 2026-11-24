@@ -452,7 +452,22 @@ async fn run_investigate(
             }
         }
     }
-    ExitCode::from(EXIT_OK)
+    match report.state {
+        netzzwergenwacht::investigation::InvestigationState::Failed
+        | netzzwergenwacht::investigation::InvestigationState::Cancelled => {
+            ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+        }
+        netzzwergenwacht::investigation::InvestigationState::PartiallyCompleted
+        | netzzwergenwacht::investigation::InvestigationState::BudgetExhausted => {
+            ExitCode::from(EXIT_FINDINGS)
+        }
+        _ => match report.release_readiness.state {
+            netzzwergenwacht::investigation::ReleaseReadinessState::NoBlockingFindingsWithinScope => {
+                ExitCode::from(EXIT_OK)
+            }
+            _ => ExitCode::from(EXIT_FINDINGS),
+        },
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

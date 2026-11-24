@@ -15,7 +15,7 @@ use crate::analysis::document::DocumentObservations;
 use crate::analysis::{self, AuditReport};
 use crate::collection;
 use crate::domain::{
-    AuditTarget, CollectorOutcome, Confidence, ExecutionBudget, RuleId, TargetPolicy,
+    AuditTarget, CollectorOutcome, Confidence, ExecutionBudget, Origin, RuleId, TargetPolicy,
 };
 
 /// Representative page category inferred from URL path and document signals.
@@ -130,6 +130,7 @@ pub fn discover_same_origin_links(
     let Ok(base_url) = Url::parse(base.as_str()) else {
         return Vec::new();
     };
+    let base_origin = Origin::from_target(base);
     let mut seen = HashSet::new();
     seen.insert(base.as_str().to_owned());
 
@@ -147,16 +148,17 @@ pub fn discover_same_origin_links(
             continue;
         };
         resolved.set_fragment(None);
-        if resolved.host_str() != Some(base.host()) {
-            continue;
-        }
         let candidate = resolved.as_str().to_owned();
-        if !seen.insert(candidate.clone()) {
+        let Ok(target) = AuditTarget::parse(&candidate, policy) else {
+            continue;
+        };
+        if Origin::from_target(&target) != base_origin {
             continue;
         }
-        if let Ok(target) = AuditTarget::parse(&candidate, policy) {
-            out.push(target);
+        if !seen.insert(target.as_str().to_owned()) {
+            continue;
         }
+        out.push(target);
     }
     out
 }
@@ -371,6 +373,22 @@ mod tests {
             strs,
             vec!["https://example.org/about", "https://example.org/contact"]
         );
+    }
+
+    #[test]
+    fn rejects_cross_scheme_and_cross_port_scope_escapes() {
+        let base = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let html = r#"
+            <html><body>
+                <a href="http://example.org/downgrade">HTTP downgrade</a>
+                <a href="https://example.org:8443/admin">Alternate port</a>
+                <a href="https://example.org/valid">Valid same origin</a>
+            </body></html>
+        "#;
+        let obs = DocumentObservations::from_html(html);
+        let links = discover_same_origin_links(&base, &obs, TargetPolicy::PublicOnly);
+        let strs: Vec<&str> = links.iter().map(AuditTarget::as_str).collect();
+        assert_eq!(strs, vec!["https://example.org/valid"]);
     }
 
     #[test]

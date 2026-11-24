@@ -21,12 +21,17 @@ pub async fn run_lighthouse(
     target: &AuditTarget,
     timeout: Duration,
 ) -> CollectorOutcome<LighthouseMetrics> {
+    let mut chrome_flags = "--headless --disable-gpu".to_owned();
+    if std::env::var("NZW_ALLOW_UNSAFE_BROWSER_SANDBOX").as_deref() == Ok("1") {
+        chrome_flags.push_str(" --no-sandbox");
+    }
+
     let mut cmd = Command::new("lighthouse");
     cmd.arg(target.as_str())
         .arg("--output=json")
         .arg("--output-path=stdout")
         .arg("--quiet")
-        .arg("--chrome-flags=--headless --no-sandbox --disable-gpu");
+        .arg(format!("--chrome-flags={chrome_flags}"));
 
     let stdout = match run_bounded_command("lighthouse", &mut cmd, timeout).await {
         Ok(out) => out,

@@ -114,7 +114,7 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
     analysers.push(browser::analyse(snapshot));
     analysers.push(visual::analyse(snapshot));
 
-    populate_fingerprints(snapshot.target.host(), &mut analysers);
+    populate_fingerprints(snapshot.target.as_str(), &mut analysers);
 
     let summary = summarise(&analysers);
 
@@ -128,14 +128,12 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
     }
 }
 
-fn populate_fingerprints(host: &str, analysers: &mut [AnalyserResult]) {
+fn populate_fingerprints(page_scope: &str, analysers: &mut [AnalyserResult]) {
     for analyser in analysers {
         for finding in &mut analyser.findings {
-            let detail = finding
-                .evidence_refs
-                .first()
-                .map_or("", |r| r.detail.as_str());
-            finding.fingerprint = FindingFingerprint::compute(host, &finding.rule_id, detail);
+            // Fingerprint uses stable page scope + rule ID rather than volatile
+            // timing or count prose so latency drift does not churn history.
+            finding.fingerprint = FindingFingerprint::compute(page_scope, &finding.rule_id, "");
         }
     }
 }

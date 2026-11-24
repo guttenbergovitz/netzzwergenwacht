@@ -16,7 +16,7 @@ use crate::analysis;
 use crate::discovery::{CrawlBudget, CrawlSummary};
 use crate::domain::{
     AnalyserResult, AuditTarget, AxeEvidence, BrowserEvidence, CollectorOutcome, ExecutionBudget,
-    TargetPolicy,
+    InvestigationScope, TargetPolicy,
 };
 use crate::investigation::DiagnosticBackend;
 
@@ -97,11 +97,11 @@ failed subresource requests, horizontal overflow, and broken rendered images."
     async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
         let parsed = AuditTarget::parse(&arguments.url, self.policy)
             .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
-        if parsed.host() != self.authorised_target.host() {
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
             return Err(DiagnosticToolError::UnauthorisedTarget(format!(
-                "host '{}' is outside authorised scope '{}'",
-                parsed.host(),
-                self.authorised_target.host()
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
             )));
         }
 
@@ -186,11 +186,11 @@ colour contrast and ARIA accessibility violations."
     async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
         let parsed = AuditTarget::parse(&arguments.url, self.policy)
             .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
-        if parsed.host() != self.authorised_target.host() {
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
             return Err(DiagnosticToolError::UnauthorisedTarget(format!(
-                "host '{}' is outside authorised scope '{}'",
-                parsed.host(),
-                self.authorised_target.host()
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
             )));
         }
 
@@ -255,11 +255,11 @@ authorised URL, classify page types, and cluster recurring systemic issues."
     async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
         let parsed = AuditTarget::parse(&arguments.url, self.policy)
             .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
-        if parsed.host() != self.authorised_target.host() {
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
             return Err(DiagnosticToolError::UnauthorisedTarget(format!(
-                "host '{}' is outside authorised scope '{}'",
-                parsed.host(),
-                self.authorised_target.host()
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
             )));
         }
 
