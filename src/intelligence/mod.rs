@@ -37,7 +37,7 @@ pub struct LlmBudget {
 impl Default for LlmBudget {
     fn default() -> Self {
         Self {
-            max_tokens: 1_024,
+            max_tokens: 4_096,
             max_requests: 1,
             timeout: Duration::from_secs(30),
         }
