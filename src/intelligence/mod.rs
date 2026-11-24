@@ -21,6 +21,7 @@ use crate::domain::{
 
 const OPEN_TAG: &str = "<untrusted_audit_evidence>";
 const CLOSE_TAG: &str = "</untrusted_audit_evidence>";
+const MAX_LLM_RESPONSE_BYTES: usize = 1024 * 1024;
 
 /// Resource bounds governing optional LLM synthesis calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -74,11 +75,21 @@ pub trait LlmProvider: Send + Sync {
 }
 
 /// OpenAI-compatible HTTP chat-completions provider backed by `reqwest`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct OpenAiCompatibleProvider {
     api_key: String,
     base_url: String,
     model: String,
+}
+
+impl std::fmt::Debug for OpenAiCompatibleProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiCompatibleProvider")
+            .field("api_key", &"[REDACTED]")
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .finish()
+    }
 }
 
 impl OpenAiCompatibleProvider {
@@ -142,7 +153,7 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 ]
             });
 
-            let resp = client
+            let mut resp = client
                 .post(&endpoint)
                 .header("authorization", format!("Bearer {}", self.api_key))
                 .header("content-type", "application/json")
@@ -155,11 +166,20 @@ impl LlmProvider for OpenAiCompatibleProvider {
                 return Err(format!("LLM endpoint returned HTTP {}", resp.status()));
             }
 
-            let raw = resp
-                .text()
+            let mut buf = Vec::new();
+            while let Some(chunk) = resp
+                .chunk()
                 .await
-                .map_err(|e| format!("failed to read LLM response body: {e}"))?;
-            let parsed: serde_json::Value = serde_json::from_str(&raw)
+                .map_err(|e| format!("failed to read LLM response body: {e}"))?
+            {
+                if buf.len().saturating_add(chunk.len()) > MAX_LLM_RESPONSE_BYTES {
+                    return Err(format!(
+                        "LLM response exceeded {MAX_LLM_RESPONSE_BYTES} bytes cap"
+                    ));
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            let parsed: serde_json::Value = serde_json::from_slice(&buf)
                 .map_err(|e| format!("invalid LLM response JSON: {e}"))?;
             let content = parsed
                 .pointer("/choices/0/message/content")
@@ -206,8 +226,9 @@ Respond strictly with JSON containing keys: `executive_summary` (string), \
         "total_findings": total_findings,
         "findings": finding_summaries,
     });
-    let escaped_payload = sanitise_untrusted_text(&payload.to_string(), 16_000);
-    let user_prompt = format!("{OPEN_TAG}\n{escaped_payload}\n{CLOSE_TAG}");
+    // Fields are already bounded and delimiter-escaped before JSON serialisation,
+    // so the serialised JSON remains structurally valid.
+    let user_prompt = format!("{OPEN_TAG}\n{payload}\n{CLOSE_TAG}");
 
     (system_prompt, user_prompt)
 }
@@ -263,15 +284,32 @@ pub async fn synthesise(
     let parsed: RawAiPayload = serde_json::from_str(&raw)
         .map_err(|e| format!("failed to parse KommandantZwerg JSON output: {e}"))?;
 
+    let known_rules: std::collections::HashSet<&str> = report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+
     let correlations = parsed
         .correlations
         .into_iter()
         .enumerate()
         .map(|(idx, corr)| {
-            let related = if corr.related_rules.is_empty() {
+            let validated_rules: Vec<String> = corr
+                .related_rules
+                .into_iter()
+                .map(|r| {
+                    if known_rules.contains(r.as_str()) {
+                        r
+                    } else {
+                        format!("{r} (unverified)")
+                    }
+                })
+                .collect();
+            let related = if validated_rules.is_empty() {
                 "overall audit summary".to_owned()
             } else {
-                corr.related_rules.join(", ")
+                validated_rules.join(", ")
             };
             Finding {
                 fingerprint: FindingFingerprint::default(),

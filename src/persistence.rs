@@ -35,6 +35,9 @@ pub struct RegressionSummary {
     pub persisting_count: usize,
     /// Findings present in baseline that no longer appear in current.
     pub resolved_count: usize,
+    /// Baseline findings whose rules were skipped or unavailable in current.
+    #[serde(default)]
+    pub unverified_count: usize,
 }
 
 /// Comparison between a baseline and current [`AuditReport`].
@@ -52,8 +55,11 @@ pub struct RegressionReport {
     pub new_findings: Vec<Finding>,
     /// Findings persisting from baseline.
     pub persisting_findings: Vec<Finding>,
-    /// Findings resolved since baseline.
+    /// Findings resolved since baseline (verified against non-skipped checks).
     pub resolved_findings: Vec<Finding>,
+    /// Baseline findings that could not be verified because the current check was skipped or unavailable.
+    #[serde(default)]
+    pub unverified_findings: Vec<Finding>,
     /// Summary counts.
     pub summary: RegressionSummary,
 }
@@ -157,11 +163,28 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         }
     }
 
+    let unverified_rules: HashSet<&str> = current
+        .analysers
+        .iter()
+        .flat_map(|a| a.checks.iter())
+        .filter_map(|check| match check {
+            crate::domain::CheckStatus::Skipped { rule_id, .. }
+            | crate::domain::CheckStatus::Unavailable { rule_id, .. } => Some(rule_id.0.as_str()),
+            crate::domain::CheckStatus::Passed { .. }
+            | crate::domain::CheckStatus::Failed { .. } => None,
+        })
+        .collect();
+
     let mut resolved_findings = Vec::new();
+    let mut unverified_findings = Vec::new();
     for analyser in &baseline.analysers {
         for finding in &analyser.findings {
             if !current_fps.contains(&finding.fingerprint) {
-                resolved_findings.push(finding.clone());
+                if unverified_rules.contains(finding.rule_id.0.as_str()) {
+                    unverified_findings.push(finding.clone());
+                } else {
+                    resolved_findings.push(finding.clone());
+                }
             }
         }
     }
@@ -170,6 +193,7 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         new_count: new_findings.len(),
         persisting_count: persisting_findings.len(),
         resolved_count: resolved_findings.len(),
+        unverified_count: unverified_findings.len(),
     };
 
     RegressionReport {
@@ -180,6 +204,7 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         new_findings,
         persisting_findings,
         resolved_findings,
+        unverified_findings,
         summary,
     }
 }
@@ -280,5 +305,36 @@ mod tests {
                 .any(|f| f.rule_id.0 == "str.doc.duplicate_ids")
         );
         assert!(diff.summary.persisting_count > 0);
+    }
+
+    #[test]
+    fn skipped_check_marks_baseline_finding_unverified_not_resolved() {
+        let baseline = make_report(
+            "<html><body><h1>Title</h1><img src='/a.png'></body></html>",
+            Vec::new(),
+            100,
+        );
+        // Simulate a failed HTTP collection in current so all checks are skipped.
+        let target = AuditTarget::parse("http://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let failed_snap = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 200,
+            http: CollectorOutcome::Failed {
+                error: "timeout".to_owned(),
+            },
+            tls: CollectorOutcome::default(),
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let current = analysis::run_all(&failed_snap);
+        let diff = diff_reports(&baseline, &current);
+
+        assert_eq!(diff.resolved_findings.len(), 0);
+        assert!(
+            diff.unverified_findings
+                .iter()
+                .any(|f| f.rule_id.0 == "a11y.images.alt")
+        );
     }
 }
