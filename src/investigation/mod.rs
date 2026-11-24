@@ -1326,7 +1326,8 @@ async fn run_crawl_tool(
             });
             ctx.discovered_pages = summary.pages;
             ctx.systemic_issues = summary.systemic_issues;
-            (succeeded, Vec::new())
+            ctx.follow_up_results.extend(summary.graph_results.clone());
+            (succeeded, summary.graph_results)
         }
         Err(err) => {
             ctx.tool_trace.push(ToolInvocationRecord {
@@ -1545,6 +1546,7 @@ mod tests {
                     }],
                     systemic_issues: Vec::new(),
                     budget_exhausted: false,
+                    graph_results: Vec::new(),
                 }
             })
         }

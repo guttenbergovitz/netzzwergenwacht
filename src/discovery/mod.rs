@@ -12,10 +12,12 @@ use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::analysis::document::DocumentObservations;
-use crate::analysis::{self, AuditReport};
+use crate::analysis::graph::{ApplicationGraph, GraphPageInput};
+use crate::analysis::{self, AuditReport, header_value};
 use crate::collection;
 use crate::domain::{
-    AuditTarget, CollectorOutcome, Confidence, ExecutionBudget, Origin, RuleId, TargetPolicy,
+    AnalyserResult, AuditTarget, CollectorOutcome, Confidence, ExecutionBudget, Origin, RuleId,
+    TargetPolicy,
 };
 
 /// Representative page category inferred from URL path and document signals.
@@ -136,6 +138,9 @@ pub struct CrawlSummary {
     pub systemic_issues: Vec<SystemicIssue>,
     /// Whether the crawl terminated early due to [`CrawlBudget`].
     pub budget_exhausted: bool,
+    /// Cross-page Application Graph findings grouped by dwarf.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graph_results: Vec<AnalyserResult>,
 }
 
 /// Extracts normalised, deduplicated, same-origin [`AuditTarget`] links from `obs`.
@@ -485,8 +490,10 @@ pub async fn crawl_and_cluster(
     queued_urls.insert(seed.as_str().to_owned());
     queue.push_back((seed.clone(), 0));
 
+    let mut sitemap_urls = HashSet::new();
     if crawl_budget.max_depth > 0 && crawl_budget.max_pages > 1 {
         for u in seed_sitemap_urls(&seed, exec_budget, policy).await {
+            sitemap_urls.insert(u.as_str().to_owned());
             if queued_urls.insert(u.as_str().to_owned()) {
                 queue.push_back((u, 1));
             }
@@ -495,6 +502,7 @@ pub async fn crawl_and_cluster(
 
     let mut pages = Vec::new();
     let mut page_reports = Vec::new();
+    let mut graph_inputs = Vec::new();
     let mut investigated_count = 0usize;
     let mut budget_exhausted = false;
 
@@ -518,11 +526,15 @@ pub async fn crawl_and_cluster(
         };
         let snap = collection::collect_http(&target, &per_page_budget, policy).await;
         investigated_count += 1;
+        let in_sitemap = sitemap_urls.contains(target.as_str());
 
         let (status, page_type, discovered) = match &snap.http {
             CollectorOutcome::Captured { data } => {
                 let obs = DocumentObservations::from_html(&data.body_text);
                 let pt = classify_page(&target, &obs);
+                graph_inputs.push(build_captured_graph_input(
+                    &target, data, &obs, depth, in_sitemap, policy,
+                ));
                 let links = if depth < crawl_budget.max_depth {
                     prioritise_representative_urls(discover_same_origin_links(
                         &target, &obs, policy,
@@ -541,6 +553,7 @@ pub async fn crawl_and_cluster(
                 )
             }
             CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => {
+                graph_inputs.push(unreachable_graph_input(&target, depth, in_sitemap));
                 (PageCrawlStatus::Unreachable, PageType::Unknown, Vec::new())
             }
         };
@@ -568,11 +581,78 @@ pub async fn crawl_and_cluster(
     }
 
     let systemic_issues = cluster_systemic_issues(&page_reports);
+    let graph = ApplicationGraph::from_pages(&graph_inputs, !budget_exhausted);
+    let graph_results = analysis::graph::analyse(&graph);
     CrawlSummary {
         seed,
         pages,
         systemic_issues,
         budget_exhausted,
+        graph_results,
+    }
+}
+
+fn build_captured_graph_input(
+    target: &AuditTarget,
+    data: &crate::domain::HttpEvidence,
+    obs: &DocumentObservations,
+    depth: usize,
+    in_sitemap: bool,
+    policy: TargetPolicy,
+) -> GraphPageInput {
+    let internal_links = discover_same_origin_links(target, obs, policy)
+        .into_iter()
+        .map(|t| t.as_str().to_owned())
+        .collect();
+    let same_page_fragments = obs
+        .link_hrefs
+        .iter()
+        .filter_map(|h| h.strip_prefix('#').map(str::to_owned))
+        .collect();
+    let meta_noindex = obs
+        .meta_robots
+        .as_deref()
+        .is_some_and(|v| v.to_ascii_lowercase().contains("noindex"));
+    let header_noindex = header_value(data, "x-robots-tag")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("noindex"));
+    GraphPageInput {
+        url: data.final_url.clone(),
+        requested_url: target.as_str().to_owned(),
+        status_code: Some(data.status_code),
+        redirect_targets: data
+            .redirect_chain
+            .iter()
+            .map(|h| h.from_url.clone())
+            .collect(),
+        depth,
+        in_sitemap,
+        indexable: data.status_code == 200 && !meta_noindex && !header_noindex,
+        canonical_url: obs.canonical_url.clone(),
+        title: obs.title.clone(),
+        meta_description: obs.meta_description.clone(),
+        internal_links,
+        hreflangs: obs.hreflangs.clone(),
+        same_page_fragments,
+        all_ids: obs.all_ids.clone(),
+    }
+}
+
+fn unreachable_graph_input(target: &AuditTarget, depth: usize, in_sitemap: bool) -> GraphPageInput {
+    GraphPageInput {
+        url: target.as_str().to_owned(),
+        requested_url: target.as_str().to_owned(),
+        status_code: None,
+        redirect_targets: Vec::new(),
+        depth,
+        in_sitemap,
+        indexable: false,
+        canonical_url: None,
+        title: None,
+        meta_description: None,
+        internal_links: Vec::new(),
+        hreflangs: Vec::new(),
+        same_page_fragments: Vec::new(),
+        all_ids: HashSet::new(),
     }
 }
 
