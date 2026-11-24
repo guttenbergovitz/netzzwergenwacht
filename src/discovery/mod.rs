@@ -90,6 +90,20 @@ impl Default for CrawlBudget {
     }
 }
 
+/// Epistemic classification of a cross-page systemic cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemicClassification {
+    /// Same rule fired on multiple pages without proven shared origin.
+    RepeatedRuleOccurrence,
+    /// Pattern across multiple page types suggests a shared template/component.
+    SuspectedSharedTemplate,
+    /// Server-level header/transport rule suggests shared configuration.
+    SuspectedCommonConfiguration,
+    /// Confirmed common cause backed by explicit shared-asset/config evidence.
+    VerifiedCommonCause,
+}
+
 /// Cross-page systemic issue clustering repeated occurrences of a rule.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SystemicIssue {
@@ -101,10 +115,14 @@ pub struct SystemicIssue {
     pub affected_urls: Vec<String>,
     /// Distinct page types affected.
     pub affected_page_types: Vec<PageType>,
+    /// Classification distinguishing recurrence from confirmed root cause.
+    pub classification: SystemicClassification,
     /// Concise summary explaining the cross-page pattern.
     pub summary: String,
-    /// Confidence in the systemic relationship.
-    pub confidence: Confidence,
+    /// Confidence that the finding recurs across the observed pages.
+    pub recurrence_confidence: Confidence,
+    /// Confidence that the occurrences share a single underlying cause.
+    pub shared_cause_confidence: Confidence,
 }
 
 /// Output of a bounded multi-page crawl and systemic clustering run.
@@ -236,18 +254,33 @@ pub fn cluster_systemic_issues(
         affected_page_types.dedup();
 
         let count = affected_urls.len();
+        let is_config_rule = rule_id.starts_with("sec.") || rule_id.starts_with("netz.");
+        let classification = if is_config_rule {
+            SystemicClassification::SuspectedCommonConfiguration
+        } else if affected_page_types.len() >= 2 {
+            SystemicClassification::SuspectedSharedTemplate
+        } else {
+            SystemicClassification::RepeatedRuleOccurrence
+        };
         clusters.push(SystemicIssue {
             id: format!("SYS-{}", clusters.len() + 1),
             rule_id: RuleId(rule_id.clone()),
             affected_urls,
             affected_page_types,
+            classification,
             summary: format!(
-                "Rule `{rule_id}` recurred across {count} distinct pages, indicating a likely shared template or configuration issue."
+                "Rule `{rule_id}` recurred across {count} distinct pages ({classification:?})."
             ),
-            confidence: if count >= 3 {
+            recurrence_confidence: if count >= 3 {
                 Confidence::High
             } else {
                 Confidence::Medium
+            },
+            // Recurrence across pages does not prove a single internal root cause.
+            shared_cause_confidence: if is_config_rule {
+                Confidence::Medium
+            } else {
+                Confidence::Low
             },
         });
     }
@@ -450,6 +483,7 @@ mod tests {
             .find(|c| c.rule_id.0 == "a11y.images.alt")
             .unwrap();
         assert_eq!(alt_cluster.affected_urls.len(), 3);
-        assert_eq!(alt_cluster.confidence, Confidence::High);
+        assert_eq!(alt_cluster.recurrence_confidence, Confidence::High);
+        assert_eq!(alt_cluster.shared_cause_confidence, Confidence::Low);
     }
 }
