@@ -23,8 +23,14 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 x509-parser = "0.17"
+
+[profile.release]
+lto = "thin"
+strip = "symbols"
 
 [lints.rust]
 unsafe_code = "forbid"

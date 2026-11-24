@@ -22,6 +22,11 @@ pub(crate) async fn run_bounded_command(
     cmd: &mut Command,
     timeout: Duration,
 ) -> Result<String, String> {
+    tracing::debug!(
+        adapter = label,
+        timeout_ms = timeout.as_millis(),
+        "spawning bounded adapter"
+    );
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

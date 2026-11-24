@@ -34,6 +34,10 @@ pub async fn collect_http(
     budget: &ExecutionBudget,
     policy: TargetPolicy,
 ) -> EvidenceSnapshot {
+    tracing::debug!(
+        target = target.as_str(),
+        "starting HTTP evidence collection"
+    );
     let captured_at_unix_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -56,23 +60,33 @@ pub async fn collect_http(
             tls,
         ),
         Ok(Ok((evidence, tls))) => (CollectorOutcome::Captured { data: evidence }, tls),
-        Ok(Err(error)) => (
-            CollectorOutcome::Failed { error },
-            CollectorOutcome::Skipped {
-                reason: "TLS outcome unavailable because HTTP collection failed".to_owned(),
-            },
-        ),
-        Err(_) => (
-            CollectorOutcome::Failed {
-                error: format!(
-                    "audit collection exceeded {} ms deadline",
-                    budget.audit_timeout.as_millis()
-                ),
-            },
-            CollectorOutcome::Skipped {
-                reason: "TLS outcome unavailable because audit collection timed out".to_owned(),
-            },
-        ),
+        Ok(Err(error)) => {
+            tracing::warn!(target = target.as_str(), %error, "HTTP collection failed");
+            (
+                CollectorOutcome::Failed { error },
+                CollectorOutcome::Skipped {
+                    reason: "TLS outcome unavailable because HTTP collection failed".to_owned(),
+                },
+            )
+        }
+        Err(_) => {
+            tracing::warn!(
+                target = target.as_str(),
+                timeout_ms = budget.audit_timeout.as_millis(),
+                "HTTP collection exceeded audit_timeout"
+            );
+            (
+                CollectorOutcome::Failed {
+                    error: format!(
+                        "audit collection exceeded {} ms deadline",
+                        budget.audit_timeout.as_millis()
+                    ),
+                },
+                CollectorOutcome::Skipped {
+                    reason: "TLS outcome unavailable because audit collection timed out".to_owned(),
+                },
+            )
+        }
     };
 
     EvidenceSnapshot {
