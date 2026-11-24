@@ -1,6 +1,7 @@
 """Leistungs-Zwerg for performance analysis."""
 
 import time
+from typing import Any
 
 import httpx
 import psutil
@@ -11,7 +12,9 @@ from .base import (
     AnalysisResult,
     CodeLocation,
     DetailedAnalysisResult,
+    DetailedIssue,
     Dwarf,
+    Issue,
     PerformanceMetrics,
     Severity,
 )
@@ -20,7 +23,7 @@ from .base import (
 class LeistungsZwerg(Dwarf):
     """Leistungs-Zwerg - Analyzes websites for performance metrics and optimization opportunities."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(
             name="Leistungs-Zwerg",
             description="Performance analysis for load times, resource optimization and Core Web Vitals",
@@ -29,8 +32,8 @@ class LeistungsZwerg(Dwarf):
     async def analyze(self, url: str) -> AnalysisResult:
         """Analyze a URL for performance issues."""
         try:
-            issues = []
-            metadata = {}
+            issues: list[Issue] = []
+            metadata: dict[str, Any] = {}
 
             # Basic URL validation
             if not url.startswith(("http://", "https://")):
@@ -75,10 +78,10 @@ class LeistungsZwerg(Dwarf):
                 error_message=str(e),
             )
 
-    async def _analyze_performance(self, url: str) -> dict:
+    async def _analyze_performance(self, url: str) -> dict[str, Any]:
         """Analyze page load performance metrics."""
-        issues = []
-        metadata = {}
+        issues: list[Issue] = []
+        metadata: dict[str, Any] = {}
 
         try:
             # Measure page load time
@@ -282,8 +285,8 @@ class LeistungsZwerg(Dwarf):
             large_images = []
 
             for img in images:
-                src = img.get("src", "")
-                alt = img.get("alt", "")
+                src = str(img.get("src", ""))
+                alt = str(img.get("alt", ""))
 
                 if src:
                     # Check for external images
@@ -301,7 +304,7 @@ class LeistungsZwerg(Dwarf):
                     height = img.get("height")
                     if width and height:
                         try:
-                            w, h = int(width), int(height)
+                            w, h = int(str(width)), int(str(height))
                             # Flag images larger than 1920x1080 or with high pixel count
                             if w > 1920 or h > 1080 or (w * h > 2073600):  # 1920*1080
                                 large_images.append({
@@ -318,7 +321,7 @@ class LeistungsZwerg(Dwarf):
             inline_css = soup.find_all("style")
 
             for link in css_links:
-                href = link.get("href", "")
+                href = str(link.get("href", ""))
                 if (
                     href
                     and href.startswith(("http://", "https://"))
@@ -332,7 +335,7 @@ class LeistungsZwerg(Dwarf):
             inline_js = []
 
             for script in scripts:
-                src = script.get("src", "")
+                src = str(script.get("src", ""))
                 if src:
                     if src.startswith(("http://", "https://")) and not src.startswith(
                         url
@@ -739,9 +742,9 @@ class LeistungsZwerg(Dwarf):
     async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
         """Analyze a URL for performance issues with detailed context and optimization suggestions."""
         try:
-            detailed_issues = []
+            detailed_issues: list[DetailedIssue] = []
             perf_metrics = PerformanceMetrics()
-            raw_data = {}
+            raw_data: dict[str, Any] = {}
 
             # Basic URL validation
             if not url.startswith(("http://", "https://")):
@@ -1029,8 +1032,8 @@ class LeistungsZwerg(Dwarf):
             large_images = []
 
             for img in images:
-                src = img.get("src", "")
-                alt = img.get("alt", "")
+                src = str(img.get("src", ""))
+                alt = str(img.get("alt", ""))
 
                 if src:
                     if src.startswith(("http://", "https://")) and not src.startswith(
@@ -1045,7 +1048,7 @@ class LeistungsZwerg(Dwarf):
                     height = img.get("height")
                     if width and height:
                         try:
-                            w, h = int(width), int(height)
+                            w, h = int(str(width)), int(str(height))
                             if w > 1920 or h > 1080 or (w * h > 2073600):
                                 large_images.append({
                                     "src": src,
@@ -1139,7 +1142,7 @@ class LeistungsZwerg(Dwarf):
             css_links = soup.find_all("link", rel="stylesheet")
             external_css = []
             for link in css_links:
-                href = link.get("href", "")
+                href = str(link.get("href", ""))
                 if (
                     href
                     and href.startswith(("http://", "https://"))
@@ -1150,7 +1153,7 @@ class LeistungsZwerg(Dwarf):
             scripts = soup.find_all("script")
             external_js = []
             for script in scripts:
-                src = script.get("src", "")
+                src = str(script.get("src", ""))
                 if (
                     src
                     and src.startswith(("http://", "https://"))

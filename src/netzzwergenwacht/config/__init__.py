@@ -4,7 +4,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import DirectoryPath, Field, field_validator
+from pydantic import DirectoryPath, Field, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -81,21 +81,23 @@ class AppConfig(BaseSettings):
         bool, Field(False, description="Enable LLM-powered analysis")
     ] = False
 
-    @field_validator("log_dir")
+    @field_validator("log_dir", mode="before")
     @classmethod
-    def ensure_log_dir_exists(cls, v: Path) -> Path:
+    def ensure_log_dir_exists(cls, v: Path | str) -> Path:
         """Ensure log directory exists."""
-        v.mkdir(exist_ok=True, parents=True)
-        return v
+        path = Path(v)
+        path.mkdir(exist_ok=True, parents=True)
+        return path
 
     @field_validator("log_file")
     @classmethod
-    def resolve_log_path(cls, v: Path | None, values: dict) -> Path | None:
+    def resolve_log_path(cls, v: Path | None, info: ValidationInfo) -> Path | None:
         """Resolve log file path relative to log_dir if not absolute."""
         if v is None:
             return None
-        if not v.is_absolute() and "log_dir" in values:
-            return values["log_dir"] / v
+        log_dir = info.data.get("log_dir")
+        if not v.is_absolute() and isinstance(log_dir, Path):
+            return log_dir / v
         return v
 
 

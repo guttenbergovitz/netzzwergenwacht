@@ -11,7 +11,9 @@ from .base import (
     AnalysisResult,
     CodeLocation,
     DetailedAnalysisResult,
+    DetailedIssue,
     Dwarf,
+    Issue,
     Severity,
 )
 
@@ -25,30 +27,53 @@ class ZugaenglichkeitsZwerg(Dwarf):
             description="EU Accessibility Act compliance analysis for WCAG 2.1 AA requirements",
         )
 
+    @staticmethod
+    def _collect_detailed_check(
+        result: dict[str, Any],
+        issues: list[Issue],
+        metadata: dict[str, Any],
+    ) -> None:
+        """Convert a *_detailed check result into basic Issue objects and metadata."""
+        for detailed in result.get("issues", []):
+            if isinstance(detailed, Issue):
+                issues.append(detailed)
+            else:
+                issues.append(
+                    Issue(
+                        issue_type=detailed.issue_type,
+                        severity=detailed.severity,
+                        message=detailed.message,
+                        location=detailed.location,
+                        evidence=detailed.technical_details,
+                        timestamp=detailed.timestamp,
+                    )
+                )
+        metadata.update(result.get("metrics", {}))
+
     async def analyze(self, url: str) -> AnalysisResult:
         """Analyze a URL for accessibility compliance."""
         try:
+            issues: list[Issue] = []
+            metadata: dict[str, Any] = {}
+
+            # Basic URL validation before making network requests
+            if not url.startswith(("http://", "https://")):
+                issues.append(
+                    self.create_issue(
+                        issue_type="invalid_url_scheme",
+                        severity=Severity.HIGH,
+                        message="URL must start with http:// or https://",
+                        location=url,
+                        evidence={"provided_url": url},
+                    )
+                )
+                return AnalysisResult(
+                    url=url, dwarf_name=self.name, issues=issues, metadata=metadata
+                )
+
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.get(url)
                 soup = BeautifulSoup(response.content, "html.parser")
-
-                issues = []
-                metadata: dict[str, Any] = {}
-
-                # Basic URL validation
-                if not url.startswith(("http://", "https://")):
-                    issues.append(
-                        self.create_issue(
-                            issue_type="invalid_url_scheme",
-                            severity=Severity.HIGH,
-                            message="URL must start with http:// or https://",
-                            location=url,
-                            evidence={"provided_url": url},
-                        )
-                    )
-                    return AnalysisResult(
-                        url=url, dwarf_name=self.name, issues=issues, metadata=metadata
-                    )
 
                 # Perform accessibility analysis
                 # WCAG 2.1 AA Compliance Checks
@@ -58,38 +83,47 @@ class ZugaenglichkeitsZwerg(Dwarf):
                 issues.extend(text_alternatives["issues"])
                 metadata.update(text_alternatives["metadata"])
 
-                color_contrast = await self._check_color_contrast(soup, url)
-                issues.extend(color_contrast["issues"])
-                metadata.update(color_contrast["metadata"])
+                self._collect_detailed_check(
+                    await self._check_color_contrast_detailed(soup, url),
+                    issues,
+                    metadata,
+                )
 
                 # 2. Operable
-                keyboard_access = await self._check_keyboard_accessibility(soup, url)
-                issues.extend(keyboard_access["issues"])
-                metadata.update(keyboard_access["metadata"])
-
-                focus_management = await self._check_focus_management(soup, url)
-                issues.extend(focus_management["issues"])
-                metadata.update(focus_management["metadata"])
+                self._collect_detailed_check(
+                    await self._check_keyboard_accessibility_detailed(soup, url),
+                    issues,
+                    metadata,
+                )
+                self._collect_detailed_check(
+                    await self._check_focus_management_detailed(soup, url),
+                    issues,
+                    metadata,
+                )
 
                 # 3. Understandable
-                language_identification = await self._check_language_identification(
-                    soup, url
+                self._collect_detailed_check(
+                    await self._check_language_identification_detailed(soup, url),
+                    issues,
+                    metadata,
                 )
-                issues.extend(language_identification["issues"])
-                metadata.update(language_identification["metadata"])
-
-                forms_labels = await self._check_forms_and_labels(soup, url)
-                issues.extend(forms_labels["issues"])
-                metadata.update(forms_labels["metadata"])
+                self._collect_detailed_check(
+                    await self._check_forms_and_labels_detailed(soup, url),
+                    issues,
+                    metadata,
+                )
 
                 # 4. Robust
-                semantic_structure = await self._check_semantic_structure(soup, url)
-                issues.extend(semantic_structure["issues"])
-                metadata.update(semantic_structure["metadata"])
-
-                aria_compliance = await self._check_aria_compliance(soup, url)
-                issues.extend(aria_compliance["issues"])
-                metadata.update(aria_compliance["metadata"])
+                self._collect_detailed_check(
+                    await self._check_semantic_structure_detailed(soup, url),
+                    issues,
+                    metadata,
+                )
+                self._collect_detailed_check(
+                    await self._check_aria_compliance_detailed(soup, url),
+                    issues,
+                    metadata,
+                )
 
                 # EAA-specific requirements
                 eaa_compliance = await self._check_eaa_specific_requirements(soup, url)
@@ -119,6 +153,21 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     url=url, dwarf_name=self.name, issues=issues, metadata=metadata
                 )
 
+        except httpx.RequestError as e:
+            return AnalysisResult(
+                url=url,
+                dwarf_name=self.name,
+                issues=[
+                    self.create_issue(
+                        issue_type="connection_failed",
+                        severity=Severity.CRITICAL,
+                        message=f"Failed to connect to {url}: {e}",
+                        location=url,
+                        evidence={"error": str(e)},
+                    )
+                ],
+                metadata={},
+            )
         except Exception as e:
             return AnalysisResult(
                 url=url,
@@ -131,46 +180,46 @@ class ZugaenglichkeitsZwerg(Dwarf):
     async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
         """Analyze a URL for accessibility compliance with detailed context and improvement suggestions."""
         try:
+            detailed_issues: list[DetailedIssue] = []
+            accessibility_metrics = AccessibilityMetrics()
+            raw_data: dict[str, Any] = {}
+
+            # Basic URL validation before making network requests
+            if not url.startswith(("http://", "https://")):
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="invalid_url_scheme",
+                        severity=Severity.HIGH,
+                        message="URL must start with http:// or https://",
+                        location=url,
+                        category="accessibility",
+                        subcategory="url_structure",
+                        description="The provided URL does not use a valid HTTP scheme",
+                        impact="Cannot perform accessibility analysis without valid scheme.",
+                        technical_details={"provided_url": url},
+                        recommendations=[
+                            "Use HTTPS URLs for better security and accessibility."
+                        ],
+                        fix_suggestions=[
+                            f"Change URL to 'https://{url.replace('http://', '').replace('https://', '')}'"
+                        ],
+                        priority_score=0.9,
+                        code_location=CodeLocation(
+                            resource_type="url", attribute_value=url
+                        ),
+                    )
+                )
+                return DetailedAnalysisResult(
+                    url=url,
+                    dwarf_name=self.name,
+                    detailed_issues=detailed_issues,
+                    accessibility_metrics=accessibility_metrics,
+                    raw_data=raw_data,
+                )
+
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.get(url)
                 soup = BeautifulSoup(response.content, "html.parser")
-
-                detailed_issues = []
-                accessibility_metrics = AccessibilityMetrics()
-                raw_data: dict[str, Any] = {}
-
-                # Basic URL validation
-                if not url.startswith(("http://", "https://")):
-                    detailed_issues.append(
-                        self.create_detailed_issue(
-                            issue_type="invalid_url_scheme",
-                            severity=Severity.HIGH,
-                            message="URL must start with http:// or https://",
-                            location=url,
-                            category="accessibility",
-                            subcategory="url_structure",
-                            description="The provided URL does not use a valid HTTP scheme",
-                            impact="Cannot perform accessibility analysis without valid scheme.",
-                            technical_details={"provided_url": url},
-                            recommendations=[
-                                "Use HTTPS URLs for better security and accessibility."
-                            ],
-                            fix_suggestions=[
-                                f"Change URL to 'https://{url.replace('http://', '').replace('https://', '')}'"
-                            ],
-                            priority_score=0.9,
-                            code_location=CodeLocation(
-                                resource_type="url", attribute_value=url
-                            ),
-                        )
-                    )
-                    return DetailedAnalysisResult(
-                        url=url,
-                        dwarf_name=self.name,
-                        detailed_issues=detailed_issues,
-                        accessibility_metrics=accessibility_metrics,
-                        raw_data=raw_data,
-                    )
 
                 # Perform detailed accessibility analysis
                 raw_data["html_structure"] = {
@@ -1542,24 +1591,32 @@ class ZugaenglichkeitsZwerg(Dwarf):
         raw_data["live_regions"] = live_region_issues["raw"]
 
         # 3. Interactive Elements (WCAG 2.1.1 - Keyboard)
-        interactive_aria_issues = await self._check_interactive_aria_elements_detailed(
-            soup, url
-        )
+        interactive_aria_issues = await self._check_interactive_aria_elements(soup, url)
         detailed_issues.extend(interactive_aria_issues["issues"])
-        metrics.update(interactive_aria_issues["metrics"])
-        raw_data["interactive_aria_elements"] = interactive_aria_issues["raw"]
+        metrics.update(
+            interactive_aria_issues.get(
+                "metrics", interactive_aria_issues.get("metadata", {})
+            )
+        )
+        raw_data["interactive_aria_elements"] = interactive_aria_issues.get("raw", {})
 
         # 4. Navigation and Landmarks (WCAG 2.4.1 - Bypass Blocks)
-        navigation_aria_issues = await self._check_navigation_aria_detailed(soup, url)
+        navigation_aria_issues = await self._check_navigation_aria(soup, url)
         detailed_issues.extend(navigation_aria_issues["issues"])
-        metrics.update(navigation_aria_issues["metrics"])
-        raw_data["navigation_aria"] = navigation_aria_issues["raw"]
+        metrics.update(
+            navigation_aria_issues.get(
+                "metrics", navigation_aria_issues.get("metadata", {})
+            )
+        )
+        raw_data["navigation_aria"] = navigation_aria_issues.get("raw", {})
 
         # 5. Error Handling (WCAG 3.3.1 - Error Identification)
-        error_aria_issues = await self._check_error_aria_handling_detailed(soup, url)
+        error_aria_issues = await self._check_error_aria_handling(soup, url)
         detailed_issues.extend(error_aria_issues["issues"])
-        metrics.update(error_aria_issues["metrics"])
-        raw_data["error_aria_handling"] = error_aria_issues["raw"]
+        metrics.update(
+            error_aria_issues.get("metrics", error_aria_issues.get("metadata", {}))
+        )
+        raw_data["error_aria_handling"] = error_aria_issues.get("raw", {})
 
         metrics["invalid_roles_count"] = len(invalid_roles)
         metrics["broken_labelledby_count"] = len(labelledby_issues)

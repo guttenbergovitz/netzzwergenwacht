@@ -592,7 +592,7 @@ class DwarfOrchestrator:
 
         processed_results: list[AnalysisResult] = []
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 # Create error result for failed analysis
                 error_result = AnalysisResult(
                     url=url,
@@ -620,7 +620,7 @@ class DwarfOrchestrator:
 
         processed_results: list[DetailedAnalysisResult] = []
         for i, result in enumerate(results):
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 # Create error result for failed analysis
                 error_result = DetailedAnalysisResult(
                     url=url,
