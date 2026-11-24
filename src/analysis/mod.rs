@@ -93,20 +93,22 @@ pub struct AuditReport {
 /// false absence findings.
 #[must_use]
 pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
-    let mut analysers = vec![
-        network::analyse(snapshot),
-        security::analyse(snapshot),
-        performance::analyse(snapshot),
-    ];
+    let mut analysers = Vec::new();
 
     match extract_complete_html(snapshot) {
         Ok((http, obs)) => {
+            analysers.push(network::analyse_with_document(snapshot, Some(&obs)));
+            analysers.push(security::analyse_with_document(snapshot, Some(&obs)));
+            analysers.push(performance::analyse(snapshot));
             analysers.push(semantics::analyse(&obs));
             analysers.push(accessibility::analyse_with_axe(&obs, &snapshot.axe));
             analysers.push(seo::analyse(http, &obs));
             analysers.push(content::analyse(http, &obs));
         }
         Err(reason) => {
+            analysers.push(network::analyse(snapshot));
+            analysers.push(security::analyse(snapshot));
+            analysers.push(performance::analyse(snapshot));
             analysers.push(skip_all(
                 DwarfId::Struktur,
                 semantics::ALL_RULES,

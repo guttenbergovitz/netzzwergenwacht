@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 44,
+  "total_rules": 51,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -135,7 +135,7 @@
       "dwarf": "NetzZwerg",
       "module": "analysis::network",
       "source_path": "src/analysis/network.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -144,7 +144,34 @@
       "dwarf": "NetzZwerg",
       "module": "analysis::network",
       "source_path": "src/analysis/network.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.redirect_loop",
+      "constant": "RULE_REDIRECT_LOOP",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.soft_error",
+      "constant": "RULE_SOFT_ERROR",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.links.hygiene",
+      "constant": "RULE_LINK_HYGIENE",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -198,7 +225,7 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -207,7 +234,7 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -216,7 +243,7 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -225,7 +252,7 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -234,7 +261,7 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -243,7 +270,7 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -252,7 +279,43 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.cookies",
+      "constant": "RULE_COOKIES",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 4,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.cors",
+      "constant": "RULE_CORS",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 4,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.dom.mixed_content",
+      "constant": "RULE_MIXED_CONTENT",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 4,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.dom.subresource_integrity",
+      "constant": "RULE_SRI",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
