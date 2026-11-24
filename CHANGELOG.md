@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `rewrite/rust`
 
+### Phase 5: Production Hardening (2026-11-24)
+- Added structured `tracing` and `tracing-subscriber` (`RUST_LOG` on `stderr`) across CLI, HTTP collection, and bounded adapters.
+- Added chaos and cancellation integration tests (`tests/chaos_and_cancellation.rs`) covering stalled servers, mid-stream drops, and future cancellation.
+- Added `cargo-audit` CI job (`.github/workflows/ci.yml`), `task audit` (`Taskfile.yml`), `[profile.release]` (`lto = "thin"`, `strip = "symbols"`), and tag-triggered release packaging (`.github/workflows/release.yml`).
+
 ### Phase 4: Optional Intelligence (`KommandantZwerg`) (2026-11-24)
 - Added ADR 0004 (`docs/adr/0004-optional-intelligence-kommandant.md`) for provider-independent optional AI synthesis.
 - Added `src/intelligence/mod.rs` (`LlmProvider`, `OpenAiCompatibleProvider`, `LlmBudget`, `build_sanitised_prompt`, `synthesise`) with prompt-injection delimiters and `FindingKind::AiInterpretation` tagging.

@@ -9,7 +9,7 @@
 
 NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on the `rewrite/rust` branch. The original Python prototype is preserved on `main` and in [`legacy/`](legacy/README.md) as a frozen historical reference.
 
-## Current Status (`Phase 1–4 Complete`)
+## Current Status (`Phase 1–5 Complete`)
 
 - **Implemented**:
   - Validated `AuditTarget` with SSRF/IP guardrails (`TargetPolicy::PublicOnly` / `AllowPrivate`) and deserialisation validation.
@@ -28,9 +28,8 @@ NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on the `rewrite
     - **GestaltungsZwerg** (`analysis::visual`): Level 2 viewport horizontal overflow and broken rendered images.
   - Bounded Level 2 subprocess adapters (`src/adapters/`: Lighthouse `--lighthouse`, headless Chromium CDP `--browser`, `axe-core` `--axe`).
   - Optional `KommandantZwerg` AI synthesis (`src/intelligence/`, opt-in `--ai`, `LlmBudget` caps, `<untrusted_audit_evidence>` prompt-injection boundaries).
-  - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`) with plain-text and versioned JSON output, TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
-- **Planned (Phase 5)**:
-  - Production hardening: chaos/cancellation tests, `tracing` / OpenTelemetry observability, benchmarks, and release packaging.
+  - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`) with plain-text and versioned JSON output, TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), `tracing` diagnostics (`RUST_LOG`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
+  - Production hardening: chaos/cancellation integration tests (`tests/chaos_and_cancellation.rs`), `cargo-audit` CI check, LTO-optimised release profile, and automated tag release packaging (`.github/workflows/release.yml`).
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 

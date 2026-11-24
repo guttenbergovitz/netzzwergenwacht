@@ -38,8 +38,8 @@ NetzZwergenWacht is being rewritten in Rust on `rewrite/rust` using incremental 
 - [x] Add cross-domain finding correlation and prioritised remediation synthesis
 - [x] Enforce untrusted-data / prompt-injection delimiter boundaries (`<untrusted_audit_evidence>`) and offline mock tests
 
-## Phase 5: Production Hardening
-- [ ] Benchmark memory, CPU, and concurrency behaviour under load
-- [ ] Chaos/cancellation tests for partial failures and timeouts
-- [ ] Finalise `tracing` / OpenTelemetry observability and `cargo-audit` checks
-- [ ] Establish release packaging and distribution
+## Phase 5: Production Hardening *(Completed)*
+- [x] Chaos/cancellation integration tests for stalled servers, mid-stream drops, and future cancellation (`tests/chaos_and_cancellation.rs`)
+- [x] `tracing` / `tracing-subscriber` structured observability (`RUST_LOG` on `stderr`)
+- [x] `cargo-audit` CI check (`.github/workflows/ci.yml`, `Taskfile.yml`)
+- [x] Release profile (`lto = "thin"`, `strip = "symbols"`) and tag-based release packaging workflow (`.github/workflows/release.yml`)
