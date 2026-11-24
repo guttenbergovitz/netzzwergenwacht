@@ -74,17 +74,20 @@ pub trait LlmProvider: Send + Sync {
     ) -> LlmFuture<'a>;
 }
 
-/// OpenAI-compatible HTTP chat-completions provider backed by `reqwest`.
+/// Rig-native provider backed by `rig-core` [`CompletionClient`](rig_core::client::CompletionClient)
+/// supporting `OpenAI` / OpenAI-compatible, Anthropic, and Ollama models.
 #[derive(Clone)]
-pub struct OpenAiCompatibleProvider {
-    api_key: String,
-    base_url: String,
+pub struct RigCompletionProvider {
+    provider: crate::config::ProviderKind,
+    api_key: Option<String>,
+    base_url: Option<String>,
     model: String,
 }
 
-impl std::fmt::Debug for OpenAiCompatibleProvider {
+impl std::fmt::Debug for RigCompletionProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenAiCompatibleProvider")
+        f.debug_struct("RigCompletionProvider")
+            .field("provider", &self.provider)
             .field("api_key", &"[REDACTED]")
             .field("base_url", &self.base_url)
             .field("model", &self.model)
@@ -92,38 +95,100 @@ impl std::fmt::Debug for OpenAiCompatibleProvider {
     }
 }
 
-impl OpenAiCompatibleProvider {
-    /// Builds a provider from environment variables:
-    /// `NZW_LLM_API_KEY` (required), `NZW_LLM_BASE_URL` (optional), and
-    /// `NZW_LLM_MODEL` (optional).
+impl RigCompletionProvider {
+    /// Builds a [`RigCompletionProvider`] from a configured [`ModelSpec`](crate::config::ModelSpec).
     ///
     /// # Errors
     ///
-    /// Returns an error if `NZW_LLM_API_KEY` is missing or empty.
+    /// Returns an error if a required API key for OpenAI/Anthropic is missing or empty.
+    pub fn from_model_spec(spec: &crate::config::ModelSpec) -> Result<Self, String> {
+        let env_var = spec.api_key_env.as_deref().unwrap_or(match spec.provider {
+            crate::config::ProviderKind::OpenAi => "NZW_LLM_API_KEY",
+            crate::config::ProviderKind::Anthropic => "ANTHROPIC_API_KEY",
+            crate::config::ProviderKind::Ollama => "OLLAMA_API_KEY",
+        });
+        let api_key = match spec.provider {
+            crate::config::ProviderKind::Ollama => std::env::var(env_var).ok(),
+            crate::config::ProviderKind::OpenAi | crate::config::ProviderKind::Anthropic => {
+                let key = std::env::var(env_var)
+                    .or_else(|_| std::env::var("OPENAI_API_KEY"))
+                    .map_err(|_| format!("{env_var} is not set"))?;
+                if key.trim().is_empty() {
+                    return Err(format!("{env_var} is empty"));
+                }
+                Some(key)
+            }
+        };
+        let base_url = spec.base_url.clone().or_else(|| {
+            std::env::var("NZW_LLM_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        });
+        Ok(Self {
+            provider: spec.provider,
+            api_key,
+            base_url: base_url.map(|u| u.trim_end_matches('/').to_owned()),
+            model: spec.model.clone(),
+        })
+    }
+
+    /// Builds a provider from environment variables (`NZW_LLM_API_KEY`, `NZW_LLM_BASE_URL`, `NZW_LLM_MODEL`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `NZW_LLM_API_KEY` (or `OPENAI_API_KEY`) is missing or empty.
     pub fn from_env() -> Result<Self, String> {
-        let api_key = std::env::var("NZW_LLM_API_KEY")
-            .map_err(|_| "NZW_LLM_API_KEY is not set".to_owned())?;
-        if api_key.trim().is_empty() {
-            return Err("NZW_LLM_API_KEY is empty".to_owned());
-        }
-        let base_url = std::env::var("NZW_LLM_BASE_URL")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "https://api.openai.com/v1".to_owned());
         let model = std::env::var("NZW_LLM_MODEL")
             .ok()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "gpt-4o-mini".to_owned());
-
-        Ok(Self {
-            api_key,
-            base_url: base_url.trim_end_matches('/').to_owned(),
+        Self::from_model_spec(&crate::config::ModelSpec {
             model,
+            ..crate::config::ModelSpec::default()
         })
     }
 }
 
-impl LlmProvider for OpenAiCompatibleProvider {
+async fn execute_rig_completion<M: rig_core::completion::CompletionModel + Clone>(
+    model: &M,
+    system_prompt: &str,
+    user_prompt: &str,
+    budget: LlmBudget,
+) -> Result<String, String> {
+    let req = model
+        .completion_request(user_prompt)
+        .preamble(system_prompt.to_owned())
+        .max_tokens(u64::from(budget.max_tokens))
+        .temperature(0.1)
+        .build();
+    let resp = tokio::time::timeout(budget.timeout, model.completion(req))
+        .await
+        .map_err(|_| {
+            format!(
+                "Rig LLM request timed out after {} ms",
+                budget.timeout.as_millis()
+            )
+        })?
+        .map_err(|e| format!("Rig LLM request failed: {e}"))?;
+
+    let mut text = String::new();
+    for item in resp.choice {
+        if let rig_core::completion::AssistantContent::Text(t) = item {
+            text.push_str(&t.text);
+        }
+    }
+    if text.len() > MAX_LLM_RESPONSE_BYTES {
+        return Err(format!(
+            "LLM response exceeded {MAX_LLM_RESPONSE_BYTES} bytes cap"
+        ));
+    }
+    if text.trim().is_empty() {
+        return Err("Rig LLM response contained no text content".to_owned());
+    }
+    Ok(text)
+}
+
+impl LlmProvider for RigCompletionProvider {
     fn model_name(&self) -> &str {
         &self.model
     }
@@ -135,59 +200,78 @@ impl LlmProvider for OpenAiCompatibleProvider {
         budget: LlmBudget,
     ) -> LlmFuture<'a> {
         Box::pin(async move {
-            let client = reqwest::Client::builder()
-                .no_proxy()
-                .timeout(budget.timeout)
-                .build()
-                .map_err(|e| format!("failed to build LLM HTTP client: {e}"))?;
-
-            let endpoint = format!("{}/chat/completions", self.base_url);
-            let body = json!({
-                "model": self.model,
-                "max_tokens": budget.max_tokens,
-                "temperature": 0.1,
-                "response_format": { "type": "json_object" },
-                "messages": [
-                    { "role": "system", "content": system_prompt },
-                    { "role": "user", "content": user_prompt }
-                ]
-            });
-
-            let mut resp = client
-                .post(&endpoint)
-                .header("authorization", format!("Bearer {}", self.api_key))
-                .header("content-type", "application/json")
-                .body(body.to_string())
-                .send()
-                .await
-                .map_err(|e| format!("LLM request failed: {e}"))?;
-
-            if !resp.status().is_success() {
-                return Err(format!("LLM endpoint returned HTTP {}", resp.status()));
-            }
-
-            let mut buf = Vec::new();
-            while let Some(chunk) = resp
-                .chunk()
-                .await
-                .map_err(|e| format!("failed to read LLM response body: {e}"))?
-            {
-                if buf.len().saturating_add(chunk.len()) > MAX_LLM_RESPONSE_BYTES {
-                    return Err(format!(
-                        "LLM response exceeded {MAX_LLM_RESPONSE_BYTES} bytes cap"
-                    ));
+            use rig_core::client::CompletionClient as _;
+            match self.provider {
+                crate::config::ProviderKind::OpenAi => {
+                    let key = self.api_key.as_deref().unwrap_or_default();
+                    let mut builder =
+                        rig_core::providers::openai::CompletionsClient::builder().api_key(key);
+                    if let Some(url) = &self.base_url {
+                        builder = builder.base_url(url);
+                    }
+                    let client = builder
+                        .build()
+                        .map_err(|e| format!("failed to build Rig OpenAI client: {e}"))?;
+                    let model = client.completion_model(&self.model);
+                    execute_rig_completion(&model, system_prompt, user_prompt, budget).await
                 }
-                buf.extend_from_slice(&chunk);
+                crate::config::ProviderKind::Anthropic => {
+                    let key = self.api_key.as_deref().unwrap_or_default();
+                    let mut builder =
+                        rig_core::providers::anthropic::Client::builder().api_key(key);
+                    if let Some(url) = &self.base_url {
+                        builder = builder.base_url(url);
+                    }
+                    let client = builder
+                        .build()
+                        .map_err(|e| format!("failed to build Rig Anthropic client: {e}"))?;
+                    let model = client.completion_model(&self.model);
+                    execute_rig_completion(&model, system_prompt, user_prompt, budget).await
+                }
+                crate::config::ProviderKind::Ollama => {
+                    let mut builder = rig_core::providers::ollama::Client::builder()
+                        .api_key(rig_core::client::Nothing);
+                    if let Some(url) = &self.base_url {
+                        builder = builder.base_url(url);
+                    }
+                    let client = builder
+                        .build()
+                        .map_err(|e| format!("failed to build Rig Ollama client: {e}"))?;
+                    let model = client.completion_model(&self.model);
+                    execute_rig_completion(&model, system_prompt, user_prompt, budget).await
+                }
             }
-            let parsed: serde_json::Value = serde_json::from_slice(&buf)
-                .map_err(|e| format!("invalid LLM response JSON: {e}"))?;
-            let content = parsed
-                .pointer("/choices/0/message/content")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| "LLM response missing choices[0].message.content".to_owned())?;
-
-            Ok(content.to_owned())
         })
+    }
+}
+
+/// Backwards-compatible alias for [`RigCompletionProvider`].
+pub type OpenAiCompatibleProvider = RigCompletionProvider;
+
+/// Resolves per-role and per-dwarf [`RigCompletionProvider`] instances from [`ModelRoutingConfig`](crate::config::ModelRoutingConfig).
+#[derive(Debug, Clone, Default)]
+pub struct RigProviderRouter {
+    routing: crate::config::ModelRoutingConfig,
+}
+
+impl RigProviderRouter {
+    /// Creates a router from `routing`.
+    #[must_use]
+    pub const fn new(routing: crate::config::ModelRoutingConfig) -> Self {
+        Self { routing }
+    }
+
+    /// Resolves and constructs the provider for `dwarf_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if credentials for the resolved provider are missing.
+    pub fn provider_for(
+        &self,
+        dwarf_id: crate::brigade::DwarfId,
+    ) -> Result<RigCompletionProvider, String> {
+        let spec = self.routing.resolve_for_dwarf(dwarf_id);
+        RigCompletionProvider::from_model_spec(spec)
     }
 }
 

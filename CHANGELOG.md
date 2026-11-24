@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Rig-Native Providers & Per-Dwarf Model Routing (2026-11-24)
+- Replaced the custom raw `reqwest` OpenAI HTTP client in `src/intelligence/mod.rs` with `RigCompletionProvider` backed by `rig-core` (`openai::CompletionsClient`, `anthropic::Client`, `ollama::Client`).
+- Added `ProviderKind`, `ModelSpec`, and `ModelRoutingConfig` (`[models.default]`, `kommandant`, `specialist`, `dokumentation`, `dwarfs.<id>`) in `src/config.rs`, plus `RigProviderRouter` in `src/intelligence/mod.rs`.
+
 ### P0/P1 Patrol Integrity, Conditional Re-Inspection & Atomic Memory (2026-11-24)
 - Re-inspect changed `reused_urls` candidates immediately during the same patrol when conditional HTTP returns `ChangedOrUnverifiable` (`src/patrol/mod.rs`).
 - Prevented `is_quiet_patrol` from being `true` when unverified reused candidates, budget exhaustion, or memory load errors exist; preserved full sitemap `discovered_urls` in `ApplicationMap`; enforced shared `exec_budget.audit_timeout` deadline across patrol loops.
