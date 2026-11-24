@@ -31,17 +31,16 @@ Status legend:
 - [x] **Adaptive sampling & crawl tool wired into `KommandantZwerg`** (`src/investigation/tools.rs`, `CrawlAndClusterTool`): *Implemented, Tested*
 
 ## Milestone D: Stakeholder Value *(In Progress)*
-- [x] **Executive brief (`ExecutiveBrief`) & backlog-ready `RemediationTask`s** (`src/investigation/mod.rs`): *Implemented, Tested*
-- [x] **Configurable release readiness assessments (`ReleaseReadinessAssessment`)** (`src/investigation/mod.rs`): *Implemented, Tested*
-- [x] **Markdown stakeholder export (`--format markdown` for `investigate` & `verify`)**: *Implemented, Tested*
-- [ ] **Role-tailored report templates (PM vs CTO portfolio)**: *Planned*
+- [x] **Executive brief (`ExecutiveBrief`) & backlog-ready `RemediationTask`s** (`src/investigation/reporting.rs`): *Implemented, Tested*
+- [x] **Configurable release readiness assessments (`ReleaseReadinessAssessment`)** (`src/investigation/reporting.rs`): *Implemented, Tested*
+- [x] **Role-tailored report perspectives & Markdown export (`--audience pm|po|cto|technical`, `--format markdown`)**: *Implemented, Tested*
 
 ## Milestone E: Continuous Quality Assurance *(In Progress)*
-- [x] **Fix false historical resolutions in `diff_reports` (`unverified_findings`)** (`src/persistence.rs`): *Implemented, Tested*
-- [x] **`nzw verify --baseline <path> <url>` remediation verification**: *Implemented*
-- [ ] **Quality baselines, scheduled monitoring, and portfolio comparisons**: *Planned*
+- [x] **Comparable regression semantics (`unverified_findings`, `changed_findings`, `not_comparable_reason`)** (`src/persistence.rs`): *Implemented, Tested*
+- [x] **`nzw verify --baseline <path> <url>` remediation verification**: *Implemented, Tested via Zwergenprüfstand*
+- [ ] **Multi-run `reintroduced` tracking, quality baselines, and portfolio comparisons**: *Planned*
 
-## Milestone F: Product Hardening & Integration *(Planned)*
-- Operational benchmarks (CPU, memory, browser cost, token cost)
-- Agentic vs deterministic evaluation against controlled defect applications
-- Optional MCP interface and external issue-tracker exports (GitHub Issues, Jira, Linear)
+## Milestone F: Product Hardening & Integration *(In Progress)*
+- [x] **`Zwergenprüfstand` benchmark fixtures & Mode A vs Mode C evaluation** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): *Implemented, Experimentally demonstrated (local HTTP server + scripted LLM)*
+- [ ] **Live external LLM & real-browser operational benchmarks**: *Planned / Blocked on external API keys in CI*
+- [ ] **Optional MCP interface & external issue-tracker integrations**: *Planned*

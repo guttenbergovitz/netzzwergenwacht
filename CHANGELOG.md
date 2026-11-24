@@ -4,6 +4,12 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Prove the Brigade — Slices A–E (2026-11-24)
+- **Slice A (`fix/slice-a-trustworthy-execution`)**: Removed unconditional `--no-sandbox` from Lighthouse and Chromium adapters (ADR 0006), introduced `Origin` & `InvestigationScope` enforcing complete `(scheme, host, port)` boundaries, stabilised page-level fingerprints (`host + path + rule_id`), added `not_comparable_reason` and `changed_findings` to `persistence::diff_reports`, and aligned `nzw investigate` exit codes (`0`/`1`/`2`).
+- **Slice B (`feat/slice-b-collaborative-diagnosis`)**: Refactored `src/investigation/` into `events.rs`, `reporting.rs`, `tools.rs`, and `mod.rs`; added `inspect_page_performance` (`LeistungsZwerg`), `inspect_document_structure` (`StrukturZwerg`), and `inspect_security_posture` (`SicherheitsZwerg`) `rig-core` `PortableTool`s; added `SpecialistContribution` and `InvestigationEvent` tracing.
+- **Slice C (`feat/slice-c-stakeholder-reporting`)**: Separated `recurrence_confidence` vs `shared_cause_confidence` and `SystemicClassification` in `src/discovery/mod.rs`; added `RolePerspective` and `--audience pm|po|cto|technical` to `nzw investigate`.
+- **Slice D (`feat/slice-d-zwergenpruefstand`)**: Added `fixtures/zwergenpruefstand/` ground-truth benchmark fixtures (including remediation variant) and `tests/zwergenpruefstand_eval.rs` comparing Mode A (single-URL deterministic) vs Mode C (multi-turn agentic with real HTTP crawl).
+
 ### Release Readiness Assessment & Markdown Stakeholder Reports (Milestone D) (2026-11-24)
 - Added `ReleaseReadinessState` and `ReleaseReadinessAssessment` to `InvestigationReport` (`src/investigation/mod.rs`).
 - Added `render_markdown_report` and `--format markdown` CLI support for `nzw investigate` and `nzw verify`.
