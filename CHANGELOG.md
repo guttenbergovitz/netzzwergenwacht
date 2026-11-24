@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Crawl Tool Integration & Remediation Verification (`nzw verify`) (2026-11-24)
+- Added `CrawlAndClusterTool` (`crawl_and_cluster_site`) as a `rig-core` `PortableTool` in `src/investigation/tools.rs`, surfacing `discovered_pages` and `systemic_issues` in `InvestigationReport` and `ExecutiveBrief`.
+- Added `nzw verify --baseline <path> <url>` CLI subcommand in `src/main.rs` distinguishing `resolved`, `persisting`, `unverified`, and `new` findings.
+
 ### Adaptive Crawling & Systemic Issue Clustering (Milestone C) (2026-11-24)
 - Added `src/discovery/mod.rs` (`CrawlBudget`, `DiscoveredPage`, `PageType`, `PageCrawlStatus`, `SystemicIssue`, `discover_same_origin_links`, `classify_page`, `cluster_systemic_issues`, `crawl_and_cluster`).
 - Extended `DocumentObservations` (`src/analysis/document.rs`) to capture `link_hrefs` in the single HTML5 pass.

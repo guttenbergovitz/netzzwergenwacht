@@ -13,8 +13,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::analysis;
+use crate::discovery::{CrawlBudget, CrawlSummary};
 use crate::domain::{
-    AnalyserResult, AuditTarget, AxeEvidence, BrowserEvidence, CollectorOutcome, TargetPolicy,
+    AnalyserResult, AuditTarget, AxeEvidence, BrowserEvidence, CollectorOutcome, ExecutionBudget,
+    TargetPolicy,
 };
 use crate::investigation::DiagnosticBackend;
 
@@ -201,6 +203,83 @@ colour contrast and ARIA accessibility violations."
     }
 }
 
+/// `rig-core` [`PortableTool`] wrapping bounded same-origin crawling and
+/// systemic issue clustering.
+pub struct CrawlAndClusterTool {
+    authorised_target: AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+}
+
+impl CrawlAndClusterTool {
+    /// Constructs a new scoped crawl-and-cluster diagnostic tool.
+    #[must_use]
+    pub fn new(
+        authorised_target: AuditTarget,
+        policy: TargetPolicy,
+        timeout: Duration,
+        backend: Arc<dyn DiagnosticBackend>,
+    ) -> Self {
+        Self {
+            authorised_target,
+            policy,
+            timeout,
+            backend,
+        }
+    }
+}
+
+impl PortableTool for CrawlAndClusterTool {
+    const NAME: &'static str = "crawl_and_cluster_site";
+    type Args = TargetToolArgs;
+    type Output = CrawlSummary;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Perform a bounded same-origin crawl (up to 5 pages, depth 1) from the \
+authorised URL, classify page types, and cluster recurring systemic issues."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Authorised seed URL" }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
+        let parsed = AuditTarget::parse(&arguments.url, self.policy)
+            .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
+        if parsed.host() != self.authorised_target.host() {
+            return Err(DiagnosticToolError::UnauthorisedTarget(format!(
+                "host '{}' is outside authorised scope '{}'",
+                parsed.host(),
+                self.authorised_target.host()
+            )));
+        }
+
+        let crawl_budget = CrawlBudget {
+            max_pages: 5,
+            max_depth: 1,
+            max_duration: self.timeout,
+        };
+        let exec_budget = ExecutionBudget {
+            audit_timeout: self.timeout,
+            http_timeout: self.timeout.min(Duration::from_secs(15)),
+            ..ExecutionBudget::default()
+        };
+        Ok(self
+            .backend
+            .collect_crawl(&parsed, crawl_budget, exec_budget, self.policy)
+            .await)
+    }
+}
+
 /// Returns `rig-core` [`ToolDefinition`] schemas for all registered follow-up tools.
 #[must_use]
 pub fn registered_tool_definitions(
@@ -211,9 +290,16 @@ pub fn registered_tool_definitions(
 ) -> Vec<ToolDefinition> {
     let browser =
         InspectBrowserRuntimeTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
-    let axe = InspectRenderedAccessibilityTool::new(target.clone(), policy, timeout, backend);
+    let axe = InspectRenderedAccessibilityTool::new(
+        target.clone(),
+        policy,
+        timeout,
+        Arc::clone(&backend),
+    );
+    let crawl = CrawlAndClusterTool::new(target.clone(), policy, timeout, backend);
     vec![
         portable_tool_definition(&browser),
         portable_tool_definition(&axe),
+        portable_tool_definition(&crawl),
     ]
 }
