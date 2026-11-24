@@ -1,0 +1,20 @@
+# Verified Defect and Risk Register
+
+Every entry below was verified directly against the current `rewrite/rust` codebase before being logged.
+
+| # | Defect / Risk | Verified Location | Severity | Validation / Remediation Criteria |
+|---|---|---|---|---|
+| 1 | **Chromium runs with `--no-sandbox`** | `src/adapters/lighthouse.rs:29`, `src/adapters/browser.rs:42` | **Blocking** | Evaluate OS-appropriate Chromium sandboxing / isolated container profile; remove unconditional `--no-sandbox` or gate behind an explicit unsafe flag with clear warning. |
+| 2 | **Browser/external tools bypass `TargetPolicy` network rules** | `src/adapters/{lighthouse,browser,axe}.rs` | **Blocking** | Enforce SSRF/private-IP/origin boundaries on browser navigation and subresource requests (e.g., proxy/CDP request interception), matching `collection.rs`. |
+| 3 | **False historical resolutions when checks are skipped/failed** | `src/persistence.rs:160-167` (`diff_reports`) | **Blocking** | `diff_reports` currently classifies any baseline fingerprint missing from `current` as `Resolved`. Must cross-check `current` `CheckStatus` and emit `Unverified` / `NotComparable` when skipped/failed. |
+| 4 | **Volatile fingerprints & missing page-level scope** | `src/analysis/mod.rs:131`, `src/domain.rs` | **High Priority** | Fingerprints must hash stable rule + target/page identity without volatile latency/count prose, so latency drift does not create fake `New` + `Resolved` churn. |
+| 5 | **Unbounded subprocess stdout/stderr & incomplete tree kill** | `src/adapters/mod.rs:28` (`cmd.output()`) | **High Priority** | Cap stdout/stderr byte streams and terminate the full subprocess group (`killpg` / process group) on timeout/cancellation. |
+| 6 | **Independent per-collector timeouts instead of shared budget** | `src/main.rs:297-311` | **High Priority** | Replace independent `budget.audit_timeout` calls per adapter with a shared `BudgetLedger` tracking remaining wall-clock time and request caps. |
+| 7 | **Quality gates ignore failed/skipped required collectors** | `src/config.rs:134-190` (`evaluate_policy`) | **High Priority** | `evaluate_policy` checks `CollectorOutcome::Partial` on HTTP but ignores `CollectorOutcome::Failed` or skipped Level 2 collectors when required by profile. |
+| 8 | **Secret-bearing `Debug` on LLM provider** | `src/intelligence/mod.rs:68` (`#[derive(Debug)]` on `OpenAiCompatibleProvider`) | **High Priority** | Implement custom `fmt::Debug` redacting `api_key` so secrets never leak in logs or panic output. |
+| 9 | **Unbounded LLM response body & unvalidated AI rule refs** | `src/intelligence/mod.rs:143,270-296` | **High Priority** | Stream-cap LLM HTTP response size, validate `related_rules` against actual `AuditReport` rule IDs, and reject/flag hallucinated references. |
+| 10 | **Prompt truncation can produce malformed JSON** | `src/intelligence/mod.rs:208` (`sanitise_untrusted_text(&payload.to_string(), 16_000)`) | **High Priority** | Bound finding count/field lengths *before* JSON serialisation rather than truncating the serialised JSON string mid-object. |
+| 11 | **AI synthesis absent from structured JSON output** | `src/main.rs:330-350` | **Planned** | Include optional `AiSynthesis` / `InvestigationReport` in versioned JSON output when `--ai` or `investigate` is used. |
+| 12 | **Browser partial load & fallback semantics** | `src/adapters/browser.rs` (CDP `setTimeout(resolve, 15000)` on load) | **Planned** | Mark timed-out `Page.loadEventFired` explicitly as `CollectorOutcome::Partial` with warning rather than `Captured`. |
+| 13 | **Incomplete measurement provenance** | `src/domain.rs` (`LighthouseMetrics`, `BrowserEvidence`) | **Planned** | Record viewport, throttling profile, lab/field origin, and capture timestamp alongside metrics. |
+| 14 | **Batch concurrency & backpressure** | `src/collection.rs:88` (`collect_batch`) | **Accepted Limitation** | `collect_batch` bounds HTTP concurrency via `Semaphore`, but has not yet been stress-tested with Level 2 browser sessions or large target lists. |

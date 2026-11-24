@@ -3,13 +3,13 @@
 [![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Evidence-driven external web quality and reliability auditing engine with optional AI-assisted analysis.**
+> **Open-source, agentic web quality investigation system.** A brigade of specialised diagnostic agents collaboratively investigates, measures and explains the reliability, security, accessibility, performance and overall quality of web applications.
 >
 > **Die Zwergenbrigade** — *Kleine Zwerge. Große Sorgfalt.* (*Small dwarfs. Great diligence.*)
 
-NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on the `rewrite/rust` branch. The original Python prototype is preserved on `main` and in [`legacy/`](legacy/README.md) as a frozen historical reference.
+NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on `develop` / `rewrite/rust`. The original Python prototype is preserved on `main` and in [`legacy/`](legacy/README.md) as a frozen historical reference.
 
-## Current Status (`Phase 1–5 Complete`)
+## Current Status (`Milestone A & B In Progress`)
 
 - **Implemented**:
   - Validated `AuditTarget` with SSRF/IP guardrails (`TargetPolicy::PublicOnly` / `AllowPrivate`) and deserialisation validation.

@@ -2,7 +2,14 @@
 
 All notable changes to NetzZwergenWacht are documented in this file.
 
-## [Unreleased] - `rewrite/rust`
+## [Unreleased] - `develop`
+
+### Strategic Reorientation & Defect Reconciliation (2026-11-24)
+- Added [docs/migration/original-agentic-vision.md](docs/migration/original-agentic-vision.md) recovering `./legacy` product intent and agentic lessons.
+- Added [docs/product/vision-and-strategy.md](docs/product/vision-and-strategy.md) and [docs/product/competitive-landscape.md](docs/product/competitive-landscape.md).
+- Added [docs/evaluation/defect-register.md](docs/evaluation/defect-register.md) verifying 14 concrete defects/risks against the current Rust codebase.
+- Added [ADR 0005](docs/adr/0005-agentic-investigation-architecture.md) (amending ADR 0004) with `rig-core` evaluation and the hierarchical hypothesis-driven investigation architecture.
+- Replaced phase-complete roadmap with capability-driven Milestones A–F in [docs/roadmap.md](docs/roadmap.md).
 
 ### Phase 5: Production Hardening (2026-11-24)
 - Added structured `tracing` and `tracing-subscriber` (`RUST_LOG` on `stderr`) across CLI, HTTP collection, and bounded adapters.
