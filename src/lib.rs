@@ -14,4 +14,5 @@ pub mod discovery;
 pub mod domain;
 pub mod intelligence;
 pub mod investigation;
+pub mod patrol;
 pub mod persistence;

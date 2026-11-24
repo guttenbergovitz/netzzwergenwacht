@@ -153,6 +153,23 @@ enum Command {
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+    /// Run an autonomous recurring web quality patrol requiring only a target URL.
+    Patrol {
+        /// Target HTTP or HTTPS URL to patrol.
+        url: String,
+        /// Directory for persistent application memory (defaults to `.nzw/memory`).
+        #[arg(long, default_value = ".nzw/memory")]
+        memory_dir: PathBuf,
+        /// Maximum pages actively inspected per patrol.
+        #[arg(long, default_value_t = 10)]
+        max_pages: usize,
+        /// Allow loopback and private network targets (for local testing only).
+        #[arg(long)]
+        allow_private: bool,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -224,6 +241,7 @@ struct BatchReport {
 }
 
 #[tokio::main]
+#[allow(clippy::too_many_lines)]
 async fn main() -> ExitCode {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -323,6 +341,82 @@ async fn main() -> ExitCode {
             allow_private,
             format,
         } => run_verify(&baseline, &url, allow_private, format).await,
+        Command::Patrol {
+            url,
+            memory_dir,
+            max_pages,
+            allow_private,
+            format,
+        } => run_patrol_cmd(&url, &memory_dir, max_pages, allow_private, format).await,
+    }
+}
+
+async fn run_patrol_cmd(
+    url: &str,
+    memory_dir: &Path,
+    max_pages: usize,
+    allow_private: bool,
+    format: OutputFormat,
+) -> ExitCode {
+    let policy = target_policy(allow_private);
+    let target = match AuditTarget::parse(url, policy) {
+        Ok(t) => t,
+        Err(err) => {
+            eprintln!("invalid target: {err}");
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+    let llm_provider = netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env().ok();
+    let llm_ref: Option<&dyn netzzwergenwacht::intelligence::LlmProvider> = llm_provider
+        .as_ref()
+        .map(|p| p as &dyn netzzwergenwacht::intelligence::LlmProvider);
+    let backend = std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
+    let patrol_budget = netzzwergenwacht::patrol::PatrolBudget {
+        max_pages: max_pages.max(1),
+        ..netzzwergenwacht::patrol::PatrolBudget::default()
+    };
+    let report = netzzwergenwacht::patrol::run_patrol(
+        target,
+        policy,
+        netzzwergenwacht::domain::ExecutionBudget::default(),
+        patrol_budget,
+        Some(memory_dir),
+        llm_ref,
+        backend,
+    )
+    .await;
+
+    match format {
+        OutputFormat::Json => match serde_json::to_string_pretty(&report) {
+            Ok(json) => println!("{json}"),
+            Err(err) => {
+                eprintln!("failed to serialise patrol report: {err}");
+                return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+            }
+        },
+        OutputFormat::Text | OutputFormat::Markdown => {
+            println!(
+                "NETZZWERGENWACHT — Autonomous Patrol #{} ({MOTTO})",
+                report.patrol_number
+            );
+            println!("Target: {}", report.target.as_str());
+            println!("Summary: {}", report.executive_summary);
+            println!("Coverage: {}", report.coverage_summary);
+            if !report.anomalies.is_empty() {
+                println!("\nAnomalies ({}):", report.anomalies.len());
+                for a in &report.anomalies {
+                    println!("  - [{}] ({:?}) {}", a.id, a.severity, a.summary);
+                }
+            }
+        }
+    }
+
+    if !report.execution_succeeded {
+        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+    } else if report.is_quiet_patrol {
+        ExitCode::from(EXIT_OK)
+    } else {
+        ExitCode::from(EXIT_FINDINGS)
     }
 }
 

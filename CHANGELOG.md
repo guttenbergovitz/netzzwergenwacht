@@ -4,6 +4,12 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Autonomous Web Quality Patrol Foundation (2026-11-24)
+- Added ADRs [0007](docs/adr/0007-autonomous-patrol-architecture.md) and [0008](docs/adr/0008-rig-and-nzw-responsibility-boundary.md) and updated `docs/product/vision-and-strategy.md` for `nzw patrol`.
+- Extended `src/discovery/mod.rs` with `<sitemapindex>` child sitemap traversal, `LocaleVariant` / `detect_locale` (language + market), and `template_fingerprint`.
+- Added `src/patrol/` (`memory.rs`, `sampling.rs`, `mod.rs`) with `ApplicationMemory`, `SamplingPlan` (`SelectionReason`, `DiagnosticDepth`, healthy page reuse + rotating exploration), `PatrolAnomaly` detection, selective `KommandantZwerg` escalation, and change-oriented `PatrolReport`.
+- Added `nzw patrol <url>` CLI command (`src/main.rs`) and `tests/patrol_eval.rs` verifying two consecutive patrols.
+
 ### Adapter TargetPolicy Propagation (2026-11-24)
 - Added `run_browser_with_policy` (`src/adapters/browser.rs`) and `run_lighthouse_with_policy` / `build_lighthouse_chrome_flags` (`src/adapters/lighthouse.rs`), propagating `TargetPolicy` from `run_check` (`src/main.rs`) instead of hardcoding `public_only`.
 
