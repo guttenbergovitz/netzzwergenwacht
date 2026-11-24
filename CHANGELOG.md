@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### `robots.txt` Sitemap Discovery & Quiet-Patrol Evaluation (2026-11-24)
+- Added `parse_robots_sitemaps` and `/robots.txt` `Sitemap:` fallback in `seed_sitemap_urls` (`src/discovery/mod.rs`).
+- Added `quiet_patrol_spends_zero_llm_calls_when_unchanged` evaluation test (`tests/patrol_eval.rs`).
+
 ### Versioned Prompt Contracts, Coverage Matrix & Markdown Patrol Reports (2026-11-24)
 - Added `src/investigation/prompts.rs` (`kommandant-v1`, `specialist-v1`, `dokumentation-v1`) and wired versioned prompt contracts into `KommandantZwerg` (`src/investigation/mod.rs`).
 - Added `CoverageMatrix` and `render_patrol_markdown` (`src/patrol/mod.rs`) plus `--audience` on `nzw patrol --format markdown` (`src/main.rs`).
