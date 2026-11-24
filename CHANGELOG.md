@@ -4,6 +4,9 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Filter History-Only Tools in `nzw investigate` (2026-11-24)
+- Excluded `inspect_previous_findings` and `verify_finding` from `propose_hypothesis` tool advertisement in `run_investigation_with_specialists` (`src/investigation/mod.rs`) when no baseline history is attached, preventing wasted `KommandantZwerg` turns.
+
 ### OpenCode Go `x-opencode-session` Header (2026-11-24)
 - Attached `x-opencode-session` (from `OPENCODE_SESSION_ID` or `nzw-<pid>`) via `rig-core` `.http_client(...)` when `base_url` targets `opencode.ai` (`src/intelligence/mod.rs`).
 
