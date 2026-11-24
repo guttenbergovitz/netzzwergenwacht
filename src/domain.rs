@@ -6,6 +6,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use url::{Host, Url};
@@ -24,7 +25,7 @@ pub enum TargetPolicy {
 }
 
 /// Supported target URL schemes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetScheme {
     /// Unencrypted HTTP (`http://`).
@@ -57,7 +58,7 @@ pub enum TargetError {
 }
 
 /// Validated external audit target.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct AuditTarget {
     url: String,
     scheme: TargetScheme,
@@ -229,11 +230,11 @@ impl Default for ExecutionBudget {
 }
 
 /// Strongly typed rule identifier.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct RuleId(pub String);
 
 /// Evidence capability level required or used by an observation or rule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceLevel {
     /// Level 1: HTTP responses and original HTML without JavaScript execution.
@@ -245,7 +246,7 @@ pub enum EvidenceLevel {
 }
 
 /// Epistemic classification of a finding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingKind {
     /// Verified by an exact deterministic rule over captured evidence.
@@ -259,7 +260,7 @@ pub enum FindingKind {
 }
 
 /// Logical audit domain.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingCategory {
     /// HTTP status, redirects, and endpoint reliability.
@@ -283,7 +284,9 @@ pub enum FindingCategory {
 }
 
 /// Finding severity levels.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     /// Informational observation with no immediate risk.
@@ -299,7 +302,9 @@ pub enum Severity {
 }
 
 /// Confidence in a finding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Confidence {
     /// Indirect or heuristic signal.
@@ -311,7 +316,7 @@ pub enum Confidence {
 }
 
 /// Typed measurement unit preventing stringly-typed unit drift.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MeasurementUnit {
     /// Duration in milliseconds.
@@ -323,7 +328,7 @@ pub enum MeasurementUnit {
 }
 
 /// Explicit representation of a measurement that never conflates failure with zero.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum Measurement<T> {
     /// Successfully captured measurement with explicit unit.
@@ -351,7 +356,7 @@ pub enum Measurement<T> {
 }
 
 /// Typed source location within an [`EvidenceSnapshot`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceSource {
     /// Final HTTP status code.
@@ -366,10 +371,12 @@ pub enum EvidenceSource {
     HttpTiming,
     /// Raw or parsed HTTP response body / HTML document.
     HttpBody,
+    /// TLS peer certificate metadata.
+    TlsCertificate,
 }
 
 /// Reference linking a finding back to an artefact inside an [`EvidenceSnapshot`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceRef {
     /// Typed source within the snapshot.
     pub source: EvidenceSource,
@@ -389,7 +396,7 @@ impl EvidenceRef {
 }
 
 /// Normalised audit finding emitted by a deterministic or heuristic analyser.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Finding {
     /// Stable rule identifier (for example `netz.http.status_error`).
     pub rule_id: RuleId,
@@ -414,7 +421,7 @@ pub struct Finding {
 }
 
 /// Execution status of an individual rule or check.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CheckStatus {
     /// Check ran against valid evidence and passed.
@@ -452,7 +459,7 @@ pub enum CheckStatus {
 }
 
 /// Output produced by a single Zwerg analyser.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnalyserResult {
     /// Stable dwarf identifier.
     pub dwarf_id: DwarfId,
@@ -463,7 +470,7 @@ pub struct AnalyserResult {
 }
 
 /// Single HTTP header observed in a response (name lowercased).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HttpHeader {
     /// Lowercased header name.
     pub name: String,
@@ -472,7 +479,7 @@ pub struct HttpHeader {
 }
 
 /// Single redirect hop followed during HTTP collection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RedirectHop {
     /// URL requested in this hop.
     pub from_url: String,
@@ -483,7 +490,7 @@ pub struct RedirectHop {
 }
 
 /// Evidence captured from a single bounded HTTP collection pass.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HttpEvidence {
     /// Final URL after following allowed redirects.
     pub final_url: String,
@@ -503,8 +510,21 @@ pub struct HttpEvidence {
     pub body_text: String,
 }
 
+/// TLS peer certificate evidence extracted from the `rustls` handshake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TlsEvidence {
+    /// Subject distinguished name of the leaf certificate.
+    pub subject: String,
+    /// Issuer distinguished name of the leaf certificate.
+    pub issuer: String,
+    /// Certificate `notAfter` timestamp in seconds since the Unix epoch.
+    pub not_after_unix_secs: i64,
+    /// Signed days remaining until expiry (negative when already expired).
+    pub days_until_expiry: i64,
+}
+
 /// Outcome of an individual collector stage.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum CollectorOutcome<T> {
     /// Collection completed within budget.
@@ -532,7 +552,7 @@ pub enum CollectorOutcome<T> {
 }
 
 /// Immutable snapshot of all collected evidence for a single target audit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceSnapshot {
     /// Validated audit target.
     pub target: AuditTarget,
@@ -540,6 +560,8 @@ pub struct EvidenceSnapshot {
     pub captured_at_unix_secs: u64,
     /// HTTP collection outcome.
     pub http: CollectorOutcome<HttpEvidence>,
+    /// TLS certificate collection outcome.
+    pub tls: CollectorOutcome<TlsEvidence>,
 }
 
 #[cfg(test)]

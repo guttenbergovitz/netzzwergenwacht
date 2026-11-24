@@ -116,6 +116,10 @@ pub struct DocumentObservations {
     pub span_count: usize,
     /// Total element count in the parsed tree.
     pub total_elements: usize,
+    /// Visible word count extracted from `<body>` (excluding script/style/noscript).
+    pub visible_word_count: usize,
+    /// Visible character count extracted from `<body>` (excluding script/style/noscript).
+    pub visible_char_count: usize,
 }
 
 impl DocumentObservations {
@@ -139,6 +143,7 @@ impl DocumentObservations {
         extract_landmarks(&doc, &mut obs);
         extract_images_and_forms(&doc, &mut obs);
         extract_interactive_and_aria(&doc, &mut obs);
+        extract_visible_text_stats(&doc, &mut obs);
 
         obs
     }
@@ -317,6 +322,37 @@ fn extract_interactive_and_aria(doc: &Html, obs: &mut DocumentObservations) {
             }
         }
     }
+}
+
+fn extract_visible_text_stats(doc: &Html, obs: &mut DocumentObservations) {
+    let Ok(body_sel) = Selector::parse("body") else {
+        return;
+    };
+    let Some(body) = doc.select(&body_sel).next() else {
+        return;
+    };
+
+    let mut words = 0usize;
+    let mut chars = 0usize;
+
+    for node in body.descendants() {
+        if let Some(text) = node.value().as_text() {
+            let inside_ignored = node.ancestors().any(|anc| {
+                anc.value()
+                    .as_element()
+                    .is_some_and(|el| matches!(el.name(), "script" | "style" | "noscript"))
+            });
+            if !inside_ignored {
+                for word in text.split_whitespace() {
+                    words += 1;
+                    chars += word.chars().count();
+                }
+            }
+        }
+    }
+
+    obs.visible_word_count = words;
+    obs.visible_char_count = chars;
 }
 
 fn non_empty_attr(el: &ElementRef<'_>, attr: &str) -> Option<String> {

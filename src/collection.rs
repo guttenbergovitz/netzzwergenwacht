@@ -8,12 +8,15 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::StatusCode;
 use reqwest::redirect::Policy;
+use reqwest::tls::TlsInfo;
 use tokio::net::lookup_host;
 use url::Url;
+use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::domain::{
     AuditTarget, CollectorOutcome, EvidenceSnapshot, ExecutionBudget, HttpEvidence, HttpHeader,
-    Measurement, MeasurementUnit, RedirectHop, TargetPolicy, is_forbidden_ip,
+    Measurement, MeasurementUnit, RedirectHop, TargetPolicy, TargetScheme, TlsEvidence,
+    is_forbidden_ip,
 };
 
 const USER_AGENT: &str = concat!("NetzZwergenWacht/", env!("CARGO_PKG_VERSION"));
@@ -38,28 +41,42 @@ pub async fn collect_http(
     )
     .await;
 
-    let http = match outcome {
-        Ok(Ok(evidence)) if evidence.body_truncated => CollectorOutcome::Partial {
-            warnings: vec![format!(
-                "response body truncated at {} bytes budget",
-                budget.max_response_bytes
-            )],
-            data: evidence,
-        },
-        Ok(Ok(evidence)) => CollectorOutcome::Captured { data: evidence },
-        Ok(Err(error)) => CollectorOutcome::Failed { error },
-        Err(_) => CollectorOutcome::Failed {
-            error: format!(
-                "audit collection exceeded {} ms deadline",
-                budget.audit_timeout.as_millis()
-            ),
-        },
+    let (http, tls) = match outcome {
+        Ok(Ok((evidence, tls))) if evidence.body_truncated => (
+            CollectorOutcome::Partial {
+                warnings: vec![format!(
+                    "response body truncated at {} bytes budget",
+                    budget.max_response_bytes
+                )],
+                data: evidence,
+            },
+            tls,
+        ),
+        Ok(Ok((evidence, tls))) => (CollectorOutcome::Captured { data: evidence }, tls),
+        Ok(Err(error)) => (
+            CollectorOutcome::Failed { error },
+            CollectorOutcome::Skipped {
+                reason: "TLS outcome unavailable because HTTP collection failed".to_owned(),
+            },
+        ),
+        Err(_) => (
+            CollectorOutcome::Failed {
+                error: format!(
+                    "audit collection exceeded {} ms deadline",
+                    budget.audit_timeout.as_millis()
+                ),
+            },
+            CollectorOutcome::Skipped {
+                reason: "TLS outcome unavailable because audit collection timed out".to_owned(),
+            },
+        ),
     };
 
     EvidenceSnapshot {
         target: target.clone(),
         captured_at_unix_secs,
         http,
+        tls,
     }
 }
 
@@ -67,7 +84,7 @@ async fn execute_bounded_get(
     initial_target: &AuditTarget,
     budget: &ExecutionBudget,
     policy: TargetPolicy,
-) -> Result<HttpEvidence, String> {
+) -> Result<(HttpEvidence, CollectorOutcome<TlsEvidence>), String> {
     let started = Instant::now();
     let mut current_target = initial_target.clone();
     let mut redirect_chain = Vec::new();
@@ -78,6 +95,7 @@ async fn execute_bounded_get(
 
         let client = reqwest::Client::builder()
             .no_proxy()
+            .tls_info(true)
             .redirect(Policy::none())
             .timeout(budget.http_timeout)
             .user_agent(USER_AGENT)
@@ -129,23 +147,76 @@ async fn execute_bounded_get(
             })
             .collect();
 
+        let tls = extract_tls_evidence(&current_target, &response, captured_now_i64());
+
         let (body, body_truncated) =
             read_bounded_body(&mut response, budget.max_response_bytes).await?;
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
-        return Ok(HttpEvidence {
-            final_url: current_target.as_str().to_owned(),
-            status_code: status.as_u16(),
-            redirect_chain,
-            headers,
-            elapsed_ms: Measurement::Measured {
-                value: elapsed_ms,
-                unit: MeasurementUnit::Milliseconds,
+        return Ok((
+            HttpEvidence {
+                final_url: current_target.as_str().to_owned(),
+                status_code: status.as_u16(),
+                redirect_chain,
+                headers,
+                elapsed_ms: Measurement::Measured {
+                    value: elapsed_ms,
+                    unit: MeasurementUnit::Milliseconds,
+                },
+                body_bytes: body.len(),
+                body_truncated,
+                body_text: String::from_utf8_lossy(&body).into_owned(),
             },
-            body_bytes: body.len(),
-            body_truncated,
-            body_text: String::from_utf8_lossy(&body).into_owned(),
-        });
+            tls,
+        ));
+    }
+}
+
+fn captured_now_i64() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+fn extract_tls_evidence(
+    target: &AuditTarget,
+    response: &reqwest::Response,
+    now_unix_secs: i64,
+) -> CollectorOutcome<TlsEvidence> {
+    if target.scheme() != TargetScheme::Https {
+        return CollectorOutcome::Skipped {
+            reason: "target did not use HTTPS".to_owned(),
+        };
+    }
+
+    let Some(tls_info) = response.extensions().get::<TlsInfo>() else {
+        return CollectorOutcome::Failed {
+            error: "TLS handshake info unavailable from HTTP client".to_owned(),
+        };
+    };
+
+    let Some(der) = tls_info.peer_certificate() else {
+        return CollectorOutcome::Failed {
+            error: "no peer certificate presented during TLS handshake".to_owned(),
+        };
+    };
+
+    match X509Certificate::from_der(der) {
+        Ok((_, cert)) => {
+            let not_after = cert.validity().not_after.timestamp();
+            let days_until_expiry = (not_after - now_unix_secs) / 86_400;
+            CollectorOutcome::Captured {
+                data: TlsEvidence {
+                    subject: cert.subject().to_string(),
+                    issuer: cert.issuer().to_string(),
+                    not_after_unix_secs: not_after,
+                    days_until_expiry,
+                },
+            }
+        }
+        Err(err) => CollectorOutcome::Failed {
+            error: format!("failed to parse X.509 peer certificate: {err}"),
+        },
     }
 }
 

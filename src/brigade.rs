@@ -3,6 +3,7 @@
 //! Keeps presentation metadata (German display names, character descriptions,
 //! and motto) cleanly separated from analytical logic.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::EvidenceLevel;
@@ -11,7 +12,7 @@ use crate::domain::EvidenceLevel;
 pub const MOTTO: &str = "Kleine Zwerge. Große Sorgfalt.";
 
 /// Stable ASCII machine-readable identifier for each dwarf.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DwarfId {
     /// `NetzZwerg` — HTTP, DNS, connectivity, redirects, and endpoint reliability.
@@ -144,7 +145,7 @@ pub const ZWERGENBRIGADE: &[DwarfProfile] = &[
         role: DwarfRole::DeterministicAnalyser,
         character: "The grumpy editor",
         required_evidence: EvidenceLevel::Source,
-        status: ImplementationStatus::Planned,
+        status: ImplementationStatus::Implemented,
     },
     DwarfProfile {
         id: DwarfId::Gestaltungs,

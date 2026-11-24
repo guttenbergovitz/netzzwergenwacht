@@ -5,6 +5,7 @@
 //! never perform network or browser I/O.
 
 pub mod accessibility;
+pub mod content;
 pub mod document;
 pub mod network;
 pub mod performance;
@@ -12,6 +13,7 @@ pub mod security;
 pub mod semantics;
 pub mod seo;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::analysis::document::DocumentObservations;
@@ -25,7 +27,7 @@ use crate::domain::{
 pub const REPORT_SCHEMA_VERSION: &str = "0.2.0";
 
 /// Aggregated counts across an audit run (never a synthetic quality score).
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct AuditSummary {
     /// Critical-severity findings count.
     pub critical_findings: usize,
@@ -48,7 +50,7 @@ pub struct AuditSummary {
 }
 
 /// Complete deterministic audit report ready for CLI or JSON rendering.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuditReport {
     /// Version of this JSON contract.
     pub schema_version: String,
@@ -82,6 +84,7 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
             analysers.push(semantics::analyse(&obs));
             analysers.push(accessibility::analyse(&obs));
             analysers.push(seo::analyse(http, &obs));
+            analysers.push(content::analyse(http, &obs));
         }
         Err(reason) => {
             analysers.push(skip_all(
@@ -94,6 +97,12 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
             analysers.push(skip_all(
                 DwarfId::Such,
                 seo::ALL_RULES,
+                EvidenceLevel::Source,
+                &reason,
+            ));
+            analysers.push(skip_all(
+                DwarfId::Inhalts,
+                content::ALL_RULES,
                 EvidenceLevel::Source,
                 &reason,
             ));
@@ -234,6 +243,9 @@ mod tests {
                 },
                 warnings: vec!["truncated".to_owned()],
             },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
         };
 
         let report = run_all(&snap);
@@ -266,6 +278,9 @@ mod tests {
                     body_truncated: false,
                     body_text: "<html><body><img src='/a.png'></body></html>".to_owned(),
                 },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
             },
         };
 

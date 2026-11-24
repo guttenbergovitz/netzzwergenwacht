@@ -5,11 +5,13 @@
 use crate::analysis::{header_value, require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
-    AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot,
-    EvidenceSource, Finding, FindingCategory, FindingKind, HttpEvidence, RuleId, Severity,
+    AnalyserResult, CheckStatus, CollectorOutcome, Confidence, EvidenceLevel, EvidenceRef,
+    EvidenceSnapshot, EvidenceSource, Finding, FindingCategory, FindingKind, HttpEvidence, RuleId,
+    Severity,
 };
 
 const RULE_HTTPS: &str = "sec.transport.https";
+const RULE_TLS_EXPIRY: &str = "sec.tls.certificate_expiry";
 const RULE_HSTS: &str = "sec.headers.hsts";
 const RULE_CSP: &str = "sec.headers.csp";
 const RULE_XCTO: &str = "sec.headers.x_content_type_options";
@@ -18,6 +20,7 @@ const RULE_REFERRER: &str = "sec.headers.referrer_policy";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
+    RULE_TLS_EXPIRY,
     RULE_HSTS,
     RULE_CSP,
     RULE_XCTO,
@@ -56,6 +59,7 @@ pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
 
     let uses_https = http.final_url.starts_with("https://");
     check_https(http, uses_https, &mut findings, &mut checks);
+    check_tls_expiry(snapshot, &mut findings, &mut checks);
     check_hsts(http, uses_https, &mut findings, &mut checks);
     check_csp(http, &mut findings, &mut checks);
     check_xcto(http, &mut findings, &mut checks);
@@ -66,6 +70,103 @@ pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
         dwarf_id: DwarfId::Sicherheits,
         findings,
         checks,
+    }
+}
+
+fn check_tls_expiry(
+    snapshot: &EvidenceSnapshot,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let tls = match &snapshot.tls {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
+        CollectorOutcome::Skipped { reason } => {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: reason.clone(),
+            });
+            return;
+        }
+        CollectorOutcome::Failed { error } => {
+            checks.push(CheckStatus::Unavailable {
+                rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: format!("TLS certificate unavailable: {error}"),
+            });
+            return;
+        }
+    };
+
+    if tls.days_until_expiry < 0 {
+        findings.push(Finding {
+            rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Critical,
+            confidence: Confidence::High,
+            title: "TLS certificate has expired".to_owned(),
+            summary: format!(
+                "Leaf certificate `{}` expired {} days ago.",
+                tls.subject,
+                tls.days_until_expiry.abs()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::TlsCertificate,
+                format!("days_until_expiry={}", tls.days_until_expiry),
+            )],
+            remediation: Some("Renew and deploy a valid TLS certificate immediately.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else if tls.days_until_expiry < 14 {
+        findings.push(Finding {
+            rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!("TLS certificate expires in {} days", tls.days_until_expiry),
+            summary: format!("Leaf certificate `{}` expires within 14 days.", tls.subject),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::TlsCertificate,
+                format!("days_until_expiry={}", tls.days_until_expiry),
+            )],
+            remediation: Some("Renew the TLS certificate and verify automated renewal.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else if tls.days_until_expiry < 30 {
+        findings.push(Finding {
+            rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("TLS certificate expires in {} days", tls.days_until_expiry),
+            summary: format!("Leaf certificate `{}` expires within 30 days.", tls.subject),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::TlsCertificate,
+                format!("days_until_expiry={}", tls.days_until_expiry),
+            )],
+            remediation: Some("Schedule TLS certificate renewal.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
     }
 }
 
@@ -409,10 +510,25 @@ mod tests {
     use super::*;
     use crate::domain::{
         AuditTarget, CollectorOutcome, HttpHeader, Measurement, MeasurementUnit, TargetPolicy,
+        TlsEvidence,
     };
 
     fn snapshot_with_headers(final_url: &str, headers: Vec<(&str, &str)>) -> EvidenceSnapshot {
         let target = AuditTarget::parse(final_url, TargetPolicy::PublicOnly).unwrap();
+        let tls = if final_url.starts_with("https://") {
+            CollectorOutcome::Captured {
+                data: TlsEvidence {
+                    subject: "CN=example.com".to_owned(),
+                    issuer: "CN=Example CA".to_owned(),
+                    not_after_unix_secs: 2_000_000_000,
+                    days_until_expiry: 90,
+                },
+            }
+        } else {
+            CollectorOutcome::Skipped {
+                reason: "target did not use HTTPS".to_owned(),
+            }
+        };
         EvidenceSnapshot {
             target,
             captured_at_unix_secs: 0,
@@ -437,6 +553,7 @@ mod tests {
                     body_text: String::new(),
                 },
             },
+            tls,
         }
     }
 

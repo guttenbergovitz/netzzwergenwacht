@@ -364,6 +364,9 @@ mod tests {
                     body_text: String::new(),
                 },
             },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
         };
 
         let result = analyse(&snap);

@@ -279,6 +279,9 @@ mod tests {
             http: CollectorOutcome::Failed {
                 error: "dns error".to_owned(),
             },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
         };
         let report = analysis::run_all(&snap);
         assert_eq!(
@@ -307,6 +310,9 @@ mod tests {
                     body_truncated: false,
                     body_text: String::new(),
                 },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
             },
         };
         let report = analysis::run_all(&snap);

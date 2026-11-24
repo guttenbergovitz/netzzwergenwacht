@@ -177,6 +177,9 @@ mod tests {
                     body_text: String::new(),
                 },
             },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
         }
     }
 
@@ -196,6 +199,9 @@ mod tests {
             captured_at_unix_secs: 0,
             http: CollectorOutcome::Failed {
                 error: "timeout".to_owned(),
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
             },
         };
         let result = analyse(&snapshot);
