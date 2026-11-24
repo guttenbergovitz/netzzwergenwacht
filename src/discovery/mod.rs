@@ -592,7 +592,7 @@ pub async fn crawl_and_cluster(
     }
 }
 
-fn build_captured_graph_input(
+pub(crate) fn build_captured_graph_input(
     target: &AuditTarget,
     data: &crate::domain::HttpEvidence,
     obs: &DocumentObservations,
@@ -634,11 +634,16 @@ fn build_captured_graph_input(
         hreflangs: obs.hreflangs.clone(),
         same_page_fragments,
         all_ids: obs.all_ids.clone(),
+        lang: obs.html_lang.clone(),
         entities: crate::analysis::schema::extract_entities(&obs.json_ld_blocks).entities,
     }
 }
 
-fn unreachable_graph_input(target: &AuditTarget, depth: usize, in_sitemap: bool) -> GraphPageInput {
+pub(crate) fn unreachable_graph_input(
+    target: &AuditTarget,
+    depth: usize,
+    in_sitemap: bool,
+) -> GraphPageInput {
     GraphPageInput {
         url: target.as_str().to_owned(),
         requested_url: target.as_str().to_owned(),
@@ -654,6 +659,7 @@ fn unreachable_graph_input(target: &AuditTarget, depth: usize, in_sitemap: bool)
         hreflangs: Vec::new(),
         same_page_fragments: Vec::new(),
         all_ids: HashSet::new(),
+        lang: None,
         entities: Vec::new(),
     }
 }

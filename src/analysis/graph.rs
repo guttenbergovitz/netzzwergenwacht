@@ -72,6 +72,8 @@ pub struct GraphPageInput {
     pub same_page_fragments: Vec<String>,
     /// All element `id`s present on this page.
     pub all_ids: HashSet<String>,
+    /// Primary document language (`<html lang="...">`), if declared.
+    pub lang: Option<String>,
     /// Structured data entities extracted from JSON-LD blocks on this page.
     pub entities: Vec<SchemaEntitySummary>,
 }
@@ -328,10 +330,19 @@ fn check_orphan_candidates(
         .collect();
 
     if orphans.is_empty() {
-        checks.push(CheckStatus::Passed {
-            rule_id: RuleId(RULE_ORPHAN_CANDIDATES.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-        });
+        if graph.coverage_complete {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_ORPHAN_CANDIDATES.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        } else {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId(RULE_ORPHAN_CANDIDATES.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "incomplete crawl coverage; absence of orphans cannot be verified"
+                    .to_owned(),
+            });
+        }
     } else {
         let confidence = if graph.coverage_complete {
             Confidence::Medium
@@ -717,14 +728,19 @@ fn check_entity_graph(
         return;
     }
 
-    let mut by_id: BTreeMap<&str, Vec<(&str, &SchemaEntitySummary)>> = BTreeMap::new();
+    let mut by_id: BTreeMap<&str, Vec<(Option<&str>, &SchemaEntitySummary)>> = BTreeMap::new();
     let mut defined_ids: HashSet<&str> = HashSet::new();
 
     for page in graph.pages.values() {
+        let primary_lang = page
+            .lang
+            .as_deref()
+            .and_then(|l| l.split(['-', '_']).next())
+            .map(str::trim);
         for entity in &page.entities {
             if let Some(id) = entity.id.as_deref() {
                 defined_ids.insert(id);
-                by_id.entry(id).or_default().push((&page.url, entity));
+                by_id.entry(id).or_default().push((primary_lang, entity));
             }
         }
     }
@@ -735,11 +751,16 @@ fn check_entity_graph(
             continue;
         }
         let first_types = &entries[0].1.entity_types;
+        let type_conflict = entries
+            .iter()
+            .skip(1)
+            .any(|(_, e)| &e.entity_types != first_types);
+        let first_lang = entries[0].0;
         let first_name = &entries[0].1.name;
-        if entries.iter().skip(1).any(|(_, e)| {
-            &e.entity_types != first_types
-                || (first_name.is_some() && e.name.is_some() && &e.name != first_name)
-        }) {
+        let same_lang_name_conflict = entries.iter().skip(1).any(|(lang, e)| {
+            *lang == first_lang && first_name.is_some() && e.name.is_some() && &e.name != first_name
+        });
+        if type_conflict || same_lang_name_conflict {
             conflicts.push((*id).to_owned());
         }
     }
@@ -821,10 +842,19 @@ fn check_dangling_entities(
     }
 
     if dangling.is_empty() {
-        checks.push(CheckStatus::Passed {
-            rule_id: RuleId(RULE_DANGLING_ENTITIES.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-        });
+        if graph.coverage_complete {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_DANGLING_ENTITIES.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        } else {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId(RULE_DANGLING_ENTITIES.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "incomplete crawl coverage; entity resolution cannot be verified"
+                    .to_owned(),
+            });
+        }
     } else {
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
@@ -880,6 +910,7 @@ mod tests {
             hreflangs: Vec::new(),
             same_page_fragments: Vec::new(),
             all_ids: HashSet::new(),
+            lang: Some("en".to_owned()),
             entities: Vec::new(),
         }
     }
