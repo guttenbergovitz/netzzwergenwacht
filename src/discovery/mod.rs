@@ -353,6 +353,14 @@ pub async fn crawl_and_cluster(
     queued_urls.insert(seed.as_str().to_owned());
     queue.push_back((seed.clone(), 0));
 
+    if crawl_budget.max_depth > 0 && crawl_budget.max_pages > 1 {
+        for u in seed_sitemap_urls(&seed, exec_budget, policy).await {
+            if queued_urls.insert(u.as_str().to_owned()) {
+                queue.push_back((u, 1));
+            }
+        }
+    }
+
     let mut pages = Vec::new();
     let mut page_reports = Vec::new();
     let mut investigated_count = 0usize;
@@ -384,7 +392,9 @@ pub async fn crawl_and_cluster(
                 let obs = DocumentObservations::from_html(&data.body_text);
                 let pt = classify_page(&target, &obs);
                 let links = if depth < crawl_budget.max_depth {
-                    discover_same_origin_links(&target, &obs, policy)
+                    prioritise_representative_urls(discover_same_origin_links(
+                        &target, &obs, policy,
+                    ))
                 } else {
                     Vec::new()
                 };
@@ -432,6 +442,37 @@ pub async fn crawl_and_cluster(
         systemic_issues,
         budget_exhausted,
     }
+}
+
+async fn seed_sitemap_urls(
+    seed: &AuditTarget,
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+) -> Vec<AuditTarget> {
+    let Ok(seed_url) = Url::parse(seed.as_str()) else {
+        return Vec::new();
+    };
+    let Ok(sm_url) = seed_url.join("/sitemap.xml") else {
+        return Vec::new();
+    };
+    let Ok(sm_target) = AuditTarget::parse(sm_url.as_str(), policy) else {
+        return Vec::new();
+    };
+    if Origin::from_target(&sm_target) != Origin::from_target(seed) {
+        return Vec::new();
+    }
+    let sm_budget = ExecutionBudget {
+        audit_timeout: exec_budget.audit_timeout.min(Duration::from_secs(5)),
+        http_timeout: exec_budget.http_timeout.min(Duration::from_secs(5)),
+        ..exec_budget
+    };
+    let sm_snap = collection::collect_http(&sm_target, &sm_budget, policy).await;
+    if let CollectorOutcome::Captured { data } = sm_snap.http
+        && data.status_code == 200
+    {
+        return prioritise_representative_urls(parse_sitemap_urls(&data.body_text, seed, policy));
+    }
+    Vec::new()
 }
 
 #[cfg(test)]
