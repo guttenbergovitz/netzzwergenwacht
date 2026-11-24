@@ -83,6 +83,11 @@ def analyze(
         "--llm",
         help="Enable LLM processing of results (requires OPENAI_API_KEY)",
     ),
+    agents: bool = typer.Option(
+        False,
+        "--agents",
+        help="Enable CrewAI multi-agent analysis (requires OPENAI_API_KEY)",
+    ),
     pdf_type: str = typer.Option(
         "comprehensive",
         "--pdf-type",
@@ -102,65 +107,113 @@ def analyze(
     # Store LLM results for PDF integration
     llm_results = {}
 
-    # Process with LLM if enabled OR if PDF format is requested (auto-enable LLM for PDF)
-    if llm or output_format.lower() == "pdf":
-        from ..llm import LLMProcessor
-
-        console.print("\n[bold blue]🤖 Initializing LLM Analysis...[/bold blue]")
-
+    # Process with AI if enabled OR if PDF format is requested (auto-enable for PDF)
+    if agents or llm or output_format.lower() == "pdf":
         try:
-            processor = LLMProcessor()
-            console.print(f"[dim]Model: {processor.model}[/dim]")
+            if agents:
+                # Use Working Autonomous CrewAI multi-agent analysis
+                from ..agents.working_autonomous_crew import (
+                    WorkingAutonomousCrew,
+                )
 
-            llm_results = asyncio.run(processor.analyze_report(report))
+                console.print(
+                    "\n[bold blue]🎖️ Initializing Working Autonomous Multi-Agent Brigade...[/bold blue]"
+                )
+                crew = WorkingAutonomousCrew()
+                console.print(
+                    "[dim]Autonomous Agents: KommanderZwerg, SicherheitsZwerg, LeistungsZwerg, ZugaenglichkeitsZwerg, DokumentalistZwerg[/dim]"
+                )
+
+                llm_results = crew.analyze(report)
+            else:
+                # Use single LLM analysis
+                from ..llm import LLMProcessor
+
+                console.print(
+                    "\n[bold blue]🤖 Initializing LLM Analysis...[/bold blue]"
+                )
+                processor = LLMProcessor()
+                console.print(f"[dim]Model: {processor.model}[/dim]")
+
+                llm_results = asyncio.run(processor.analyze(report))
 
             if llm_results.get("success", False):
-                console.print("\n[bold green]✅ LLM Analysis Complete![/bold green]")
+                if agents:
+                    console.print(
+                        "\n[bold green]✅ Multi-Agent Analysis Complete![/bold green]"
+                    )
+                    agents_used = llm_results.get("agents_used", [])
+                    console.print(f"[dim]Agents used: {', '.join(agents_used)}[/dim]")
+                else:
+                    console.print(
+                        "\n[bold green]✅ LLM Analysis Complete![/bold green]"
+                    )
 
-                # Show usage and cost info
+                # Show usage and cost info (for single LLM only)
                 if "usage" in llm_results:
                     usage = llm_results["usage"]
                     console.print(
                         f"[dim]Tokens used: {usage['total_tokens']} (${usage['cost']:.4f})[/dim]"
                     )
 
-                # Display the full LLM analysis only if explicitly requested (not for auto-PDF)
-                if llm:
-                    console.print("\n[bold cyan]📋 Detailed LLM Analysis:[/bold cyan]")
+                # Display the full analysis only if explicitly requested (not for auto-PDF)
+                if agents or llm:
+                    console.print("\n[bold cyan]📋 Detailed AI Analysis:[/bold cyan]")
                     console.print(llm_results["analysis"])
 
-                    # Show extracted recommendations if any
-                    if llm_results["recommendations"]:
+                    # Show extracted recommendations if any (single LLM only)
+                    if not agents and llm_results.get("recommendations"):
                         console.print(
                             "\n[bold yellow]💡 Key Recommendations:[/bold yellow]"
                         )
                         for i, rec in enumerate(llm_results["recommendations"], 1):
                             console.print(f"  {i}. {rec}")
 
-                    # Show priority actions
-                    if llm_results["priority_actions"]:
+                    # Show priority actions (single LLM only)
+                    if not agents and llm_results.get("priority_actions"):
                         console.print("\n[bold red]🚨 Priority Actions:[/bold red]")
                         for i, action in enumerate(llm_results["priority_actions"], 1):
                             console.print(f"  {i}. {action}")
                 elif output_format.lower() == "pdf":
+                    analysis_type = "Multi-agent" if agents else "LLM"
                     console.print(
-                        "\n[dim]🤖 LLM analysis will be integrated into PDF report[/dim]"
+                        f"\n[dim]🤖 {analysis_type} analysis will be integrated into PDF report[/dim]"
                     )
             else:
+                analysis_type = "Multi-agent" if agents else "LLM"
                 console.print(
-                    "\n[yellow]⚠️ LLM analysis failed, using fallback analysis[/yellow]"
+                    f"\n[yellow]⚠️ {analysis_type} analysis failed, using fallback analysis[/yellow]"
                 )
                 console.print(llm_results["summary"])
 
-            # Save LLM results if explicitly requested
-            if output and llm:
-                llm_path = output.with_suffix(".llm.json")
-                processor.save_for_llm(report, llm_path)
-                console.print(f"\n[green]💾 LLM results saved to:[/green] {llm_path}")
+            # Save LLM/Agent results if explicitly requested
+            if output and (llm or agents):
+                results_path = output.with_suffix(".ai.json")
+                if agents:
+                    # Save agent results directly
+                    import json
+
+                    with open(results_path, "w", encoding="utf-8") as f:
+                        json.dump(
+                            llm_results, f, indent=2, ensure_ascii=False, default=str
+                        )
+                else:
+                    # Save LLM results using processor
+                    processor.save_for_llm(report, results_path)
+                console.print(
+                    f"\n[green]💾 AI results saved to:[/green] {results_path}"
+                )
 
         except ValueError as e:
             # This is likely the API key missing error
             console.print(f"\n[yellow]⚠️ {str(e)}[/yellow]")
+            # Set fallback llm_results
+            llm_results = {
+                "model": "fallback",
+                "analysis": f"LLM analysis failed: {str(e)}",
+                "summary": f"Analysis of {report.url} completed. Found {report.total_issues} total issues.",
+                "success": False,
+            }
             if output_format.lower() == "pdf":
                 console.print("[dim]PDF will be generated without LLM content[/dim]")
             else:
@@ -169,6 +222,13 @@ def analyze(
                 )
         except Exception as e:
             console.print(f"\n[red]❌ Unexpected LLM error:[/red] {str(e)}")
+            # Set fallback llm_results
+            llm_results = {
+                "model": "fallback",
+                "analysis": f"LLM analysis failed: {str(e)}",
+                "summary": f"Analysis of {report.url} completed. Found {report.total_issues} total issues.",
+                "success": False,
+            }
             if output_format.lower() == "pdf":
                 console.print("[dim]PDF will be generated without LLM content[/dim]")
             else:
@@ -188,7 +248,8 @@ def analyze(
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         url_safe = (
-            url.replace("://", "_")
+            url
+            .replace("://", "_")
             .replace("/", "_")
             .replace(".", "_")
             .replace(":", "_")

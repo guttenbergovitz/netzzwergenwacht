@@ -369,9 +369,9 @@ class WebBrowserZwerg(Dwarf):
                 console_errors = []
                 page.on(
                     "console",
-                    lambda msg: console_errors.append(msg.text)
-                    if msg.type == "error"
-                    else None,
+                    lambda msg: (
+                        console_errors.append(msg.text) if msg.type == "error" else None
+                    ),
                 )
 
                 # Wait a bit for any delayed JavaScript errors
@@ -484,9 +484,9 @@ class WebBrowserZwerg(Dwarf):
                 console_errors = []
                 page.on(
                     "console",
-                    lambda msg: console_errors.append(msg.text)
-                    if msg.type == "error"
-                    else None,
+                    lambda msg: (
+                        console_errors.append(msg.text) if msg.type == "error" else None
+                    ),
                 )
                 await page.wait_for_timeout(2000)
                 if console_errors:

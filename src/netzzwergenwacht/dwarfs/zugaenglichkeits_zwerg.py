@@ -1,6 +1,7 @@
 """Zugaenglichkeits-Zwerg for EU Accessibility Act (EAA) compliance analysis."""
 
 import re
+from typing import Any
 
 import httpx
 from bs4 import BeautifulSoup
@@ -27,131 +28,96 @@ class ZugaenglichkeitsZwerg(Dwarf):
     async def analyze(self, url: str) -> AnalysisResult:
         """Analyze a URL for accessibility compliance."""
         try:
-            issues = []
-            metadata = {}
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(url)
+                soup = BeautifulSoup(response.content, "html.parser")
 
-            # Basic URL validation
-            if not url.startswith(("http://", "https://")):
-                issues.append(
-                    self.create_issue(
-                        issue_type="invalid_url_scheme",
-                        severity=Severity.HIGH,
-                        message="URL must start with http:// or https://",
-                        location=url,
-                        evidence={"provided_url": url},
+                issues = []
+                metadata: dict[str, Any] = {}
+
+                # Basic URL validation
+                if not url.startswith(("http://", "https://")):
+                    issues.append(
+                        self.create_issue(
+                            issue_type="invalid_url_scheme",
+                            severity=Severity.HIGH,
+                            message="URL must start with http:// or https://",
+                            location=url,
+                            evidence={"provided_url": url},
+                        )
                     )
+                    return AnalysisResult(
+                        url=url, dwarf_name=self.name, issues=issues, metadata=metadata
+                    )
+
+                # Perform accessibility analysis
+                # WCAG 2.1 AA Compliance Checks
+
+                # 1. Perceivable
+                text_alternatives = await self._check_text_alternatives(soup, url)
+                issues.extend(text_alternatives["issues"])
+                metadata.update(text_alternatives["metadata"])
+
+                color_contrast = await self._check_color_contrast(soup, url)
+                issues.extend(color_contrast["issues"])
+                metadata.update(color_contrast["metadata"])
+
+                # 2. Operable
+                keyboard_access = await self._check_keyboard_accessibility(soup, url)
+                issues.extend(keyboard_access["issues"])
+                metadata.update(keyboard_access["metadata"])
+
+                focus_management = await self._check_focus_management(soup, url)
+                issues.extend(focus_management["issues"])
+                metadata.update(focus_management["metadata"])
+
+                # 3. Understandable
+                language_identification = await self._check_language_identification(
+                    soup, url
                 )
+                issues.extend(language_identification["issues"])
+                metadata.update(language_identification["metadata"])
+
+                forms_labels = await self._check_forms_and_labels(soup, url)
+                issues.extend(forms_labels["issues"])
+                metadata.update(forms_labels["metadata"])
+
+                # 4. Robust
+                semantic_structure = await self._check_semantic_structure(soup, url)
+                issues.extend(semantic_structure["issues"])
+                metadata.update(semantic_structure["metadata"])
+
+                aria_compliance = await self._check_aria_compliance(soup, url)
+                issues.extend(aria_compliance["issues"])
+                metadata.update(aria_compliance["metadata"])
+
+                # EAA-specific requirements
+                eaa_compliance = await self._check_eaa_specific_requirements(soup, url)
+                issues.extend(eaa_compliance["issues"])
+                metadata.update(eaa_compliance["metadata"])
+
+                # Mobile and responsive accessibility testing
+                mobile_responsive = await self._check_mobile_responsive_accessibility(
+                    soup, url
+                )
+                issues.extend(mobile_responsive["issues"])
+                metadata.update(mobile_responsive["metadata"])
+
+                responsive_breakpoints = await self._check_responsive_breakpoints(
+                    soup, url
+                )
+                issues.extend(responsive_breakpoints["issues"])
+                metadata.update(responsive_breakpoints["metadata"])
+
+                mobile_performance = await self._check_mobile_performance_accessibility(
+                    soup, url
+                )
+                issues.extend(mobile_performance["issues"])
+                metadata.update(mobile_performance["metadata"])
+
                 return AnalysisResult(
                     url=url, dwarf_name=self.name, issues=issues, metadata=metadata
                 )
-
-            # Perform accessibility analysis
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                try:
-                    response = await client.get(url)
-
-                    if response.status_code != 200:
-                        issues.append(
-                            self.create_issue(
-                                issue_type="page_not_accessible",
-                                severity=Severity.HIGH,
-                                message=f"Page returned status code {response.status_code}",
-                                location=url,
-                                evidence={"status_code": response.status_code},
-                            )
-                        )
-                        return AnalysisResult(
-                            url=url,
-                            dwarf_name=self.name,
-                            issues=issues,
-                            metadata=metadata,
-                        )
-
-                    # Parse HTML content
-                    soup = BeautifulSoup(response.content, "html.parser")
-
-                    # WCAG 2.1 AA Compliance Checks
-
-                    # 1. Perceivable
-                    text_alternatives = await self._check_text_alternatives(soup, url)
-                    issues.extend(text_alternatives["issues"])
-                    metadata.update(text_alternatives["metadata"])
-
-                    color_contrast = await self._check_color_contrast(soup, url)
-                    issues.extend(color_contrast["issues"])
-                    metadata.update(color_contrast["metadata"])
-
-                    # 2. Operable
-                    keyboard_access = await self._check_keyboard_accessibility(
-                        soup, url
-                    )
-                    issues.extend(keyboard_access["issues"])
-                    metadata.update(keyboard_access["metadata"])
-
-                    focus_management = await self._check_focus_management(soup, url)
-                    issues.extend(focus_management["issues"])
-                    metadata.update(focus_management["metadata"])
-
-                    # 3. Understandable
-                    language_identification = await self._check_language_identification(
-                        soup, url
-                    )
-                    issues.extend(language_identification["issues"])
-                    metadata.update(language_identification["metadata"])
-
-                    forms_labels = await self._check_forms_and_labels(soup, url)
-                    issues.extend(forms_labels["issues"])
-                    metadata.update(forms_labels["metadata"])
-
-                    # 4. Robust
-                    semantic_structure = await self._check_semantic_structure(soup, url)
-                    issues.extend(semantic_structure["issues"])
-                    metadata.update(semantic_structure["metadata"])
-
-                    aria_compliance = await self._check_aria_compliance(soup, url)
-                    issues.extend(aria_compliance["issues"])
-                    metadata.update(aria_compliance["metadata"])
-
-                    # EAA-specific requirements
-                    eaa_compliance = await self._check_eaa_specific_requirements(
-                        soup, url
-                    )
-                    issues.extend(eaa_compliance["issues"])
-                    metadata.update(eaa_compliance["metadata"])
-
-                    # Mobile and responsive accessibility testing
-                    mobile_responsive = (
-                        await self._check_mobile_responsive_accessibility(soup, url)
-                    )
-                    issues.extend(mobile_responsive["issues"])
-                    metadata.update(mobile_responsive["metadata"])
-
-                    responsive_breakpoints = await self._check_responsive_breakpoints(
-                        soup, url
-                    )
-                    issues.extend(responsive_breakpoints["issues"])
-                    metadata.update(responsive_breakpoints["metadata"])
-
-                    mobile_performance = (
-                        await self._check_mobile_performance_accessibility(soup, url)
-                    )
-                    issues.extend(mobile_performance["issues"])
-                    metadata.update(mobile_performance["metadata"])
-
-                except httpx.RequestError as e:
-                    issues.append(
-                        self.create_issue(
-                            issue_type="accessibility_analysis_failed",
-                            severity=Severity.HIGH,
-                            message=f"Failed to analyze accessibility: {str(e)}",
-                            location=url,
-                            evidence={"error": str(e)},
-                        )
-                    )
-
-            return AnalysisResult(
-                url=url, dwarf_name=self.name, issues=issues, metadata=metadata
-            )
 
         except Exception as e:
             return AnalysisResult(
@@ -165,35 +131,156 @@ class ZugaenglichkeitsZwerg(Dwarf):
     async def analyze_detailed(self, url: str) -> DetailedAnalysisResult:
         """Analyze a URL for accessibility compliance with detailed context and improvement suggestions."""
         try:
-            detailed_issues = []
-            accessibility_metrics = AccessibilityMetrics()
-            raw_data = {}
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                response = await client.get(url)
+                soup = BeautifulSoup(response.content, "html.parser")
 
-            # Basic URL validation
-            if not url.startswith(("http://", "https://")):
-                detailed_issues.append(
-                    self.create_detailed_issue(
-                        issue_type="invalid_url_scheme",
-                        severity=Severity.HIGH,
-                        message="URL must start with http:// or https://",
-                        location=url,
-                        category="accessibility",
-                        subcategory="url_structure",
-                        description="The provided URL does not use a valid HTTP scheme",
-                        impact="Cannot perform accessibility analysis without valid scheme.",
-                        technical_details={"provided_url": url},
-                        recommendations=[
-                            "Use HTTPS URLs for better security and accessibility."
-                        ],
-                        fix_suggestions=[
-                            f"Change URL to 'https://{url.replace('http://', '').replace('https://', '')}'"
-                        ],
-                        priority_score=0.9,
-                        code_location=CodeLocation(
-                            resource_type="url", attribute_value=url
-                        ),
+                detailed_issues = []
+                accessibility_metrics = AccessibilityMetrics()
+                raw_data: dict[str, Any] = {}
+
+                # Basic URL validation
+                if not url.startswith(("http://", "https://")):
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="invalid_url_scheme",
+                            severity=Severity.HIGH,
+                            message="URL must start with http:// or https://",
+                            location=url,
+                            category="accessibility",
+                            subcategory="url_structure",
+                            description="The provided URL does not use a valid HTTP scheme",
+                            impact="Cannot perform accessibility analysis without valid scheme.",
+                            technical_details={"provided_url": url},
+                            recommendations=[
+                                "Use HTTPS URLs for better security and accessibility."
+                            ],
+                            fix_suggestions=[
+                                f"Change URL to 'https://{url.replace('http://', '').replace('https://', '')}'"
+                            ],
+                            priority_score=0.9,
+                            code_location=CodeLocation(
+                                resource_type="url", attribute_value=url
+                            ),
+                        )
+                    )
+                    return DetailedAnalysisResult(
+                        url=url,
+                        dwarf_name=self.name,
+                        detailed_issues=detailed_issues,
+                        accessibility_metrics=accessibility_metrics,
+                        raw_data=raw_data,
+                    )
+
+                # Perform detailed accessibility analysis
+                raw_data["html_structure"] = {
+                    "title": soup.title.string if soup.title else None,
+                    "headings": [
+                        h.get_text()
+                        for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                    ],
+                    "forms_count": len(soup.find_all("form")),
+                    "images_count": len(soup.find_all("img")),
+                    "links_count": len(soup.find_all("a")),
+                }
+
+                # WCAG 2.1 AA Compliance Checks with detailed context
+
+                # 1. Perceivable
+                text_alternatives = await self._check_text_alternatives_detailed(
+                    soup, url
+                )
+                detailed_issues.extend(text_alternatives["issues"])
+                accessibility_metrics.images_without_alt = text_alternatives[
+                    "metrics"
+                ].get("images_without_alt", 0)
+                accessibility_metrics.total_images = text_alternatives["metrics"].get(
+                    "total_images", 0
+                )
+                raw_data["text_alternatives"] = text_alternatives["raw"]
+
+                color_contrast = await self._check_color_contrast_detailed(soup, url)
+                detailed_issues.extend(color_contrast["issues"])
+                accessibility_metrics.low_contrast_elements = color_contrast[
+                    "metrics"
+                ].get("low_contrast_elements", 0)
+                raw_data["color_contrast"] = color_contrast["raw"]
+
+                # 2. Operable
+                keyboard_access = await self._check_keyboard_accessibility_detailed(
+                    soup, url
+                )
+                detailed_issues.extend(keyboard_access["issues"])
+                accessibility_metrics.keyboard_inaccessible = keyboard_access[
+                    "metrics"
+                ].get("keyboard_inaccessible", 0)
+                raw_data["keyboard_accessibility"] = keyboard_access["raw"]
+
+                focus_management = await self._check_focus_management_detailed(
+                    soup, url
+                )
+                detailed_issues.extend(focus_management["issues"])
+                accessibility_metrics.focus_issues = focus_management["metrics"].get(
+                    "focus_issues", 0
+                )
+                raw_data["focus_management"] = focus_management["raw"]
+
+                # 3. Understandable
+                language_identification = (
+                    await self._check_language_identification_detailed(soup, url)
+                )
+                detailed_issues.extend(language_identification["issues"])
+                accessibility_metrics.language_issues = language_identification[
+                    "metrics"
+                ].get("language_issues", 0)
+                raw_data["language_identification"] = language_identification["raw"]
+
+                forms_labels = await self._check_forms_and_labels_detailed(soup, url)
+                detailed_issues.extend(forms_labels["issues"])
+                accessibility_metrics.form_issues = forms_labels["metrics"].get(
+                    "form_issues", 0
+                )
+                raw_data["forms_and_labels"] = forms_labels["raw"]
+
+                # 4. Robust
+                semantic_structure = await self._check_semantic_structure_detailed(
+                    soup, url
+                )
+                detailed_issues.extend(semantic_structure["issues"])
+                accessibility_metrics.semantic_issues = semantic_structure[
+                    "metrics"
+                ].get("semantic_issues", 0)
+                raw_data["semantic_structure"] = semantic_structure["raw"]
+
+                aria_compliance = await self._check_aria_compliance_detailed(soup, url)
+                detailed_issues.extend(aria_compliance["issues"])
+                accessibility_metrics.aria_issues = aria_compliance["metrics"].get(
+                    "aria_issues", 0
+                )
+                raw_data["aria_compliance"] = aria_compliance["raw"]
+
+                # EAA-specific requirements
+                eaa_compliance = await self._check_eaa_specific_requirements_detailed(
+                    soup, url
+                )
+                detailed_issues.extend(eaa_compliance["issues"])
+                accessibility_metrics.eaa_issues = eaa_compliance["metrics"].get(
+                    "eaa_issues", 0
+                )
+                raw_data["eaa_compliance"] = eaa_compliance["raw"]
+
+                # Mobile and responsive accessibility testing
+                mobile_responsive = (
+                    await self._check_mobile_responsive_accessibility_detailed(
+                        soup, url
                     )
                 )
+                detailed_issues.extend(mobile_responsive["issues"])
+                accessibility_metrics.mobile_issues = mobile_responsive["metrics"].get(
+                    "mobile_issues", 0
+                )
+                raw_data["mobile_responsive"] = mobile_responsive["raw"]
+
                 return DetailedAnalysisResult(
                     url=url,
                     dwarf_name=self.name,
@@ -201,191 +288,6 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     accessibility_metrics=accessibility_metrics,
                     raw_data=raw_data,
                 )
-
-            # Perform detailed accessibility analysis
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                try:
-                    response = await client.get(url)
-
-                    if response.status_code != 200:
-                        detailed_issues.append(
-                            self.create_detailed_issue(
-                                issue_type="page_not_accessible",
-                                severity=Severity.HIGH,
-                                message=f"Page returned status code {response.status_code}",
-                                location=url,
-                                category="accessibility",
-                                subcategory="page_accessibility",
-                                description="Page is not accessible due to HTTP error",
-                                impact="Users cannot access the page content",
-                                technical_details={"status_code": response.status_code},
-                                recommendations=[
-                                    "Fix server configuration to return 200 status"
-                                ],
-                                fix_suggestions=[
-                                    "Check server configuration",
-                                    "Verify URL is correct",
-                                    "Ensure server is running",
-                                ],
-                                code_location=CodeLocation(
-                                    resource_type="http", attribute_value=url
-                                ),
-                                priority_score=0.9,
-                            )
-                        )
-                        return DetailedAnalysisResult(
-                            url=url,
-                            dwarf_name=self.name,
-                            detailed_issues=detailed_issues,
-                            accessibility_metrics=accessibility_metrics,
-                            raw_data=raw_data,
-                        )
-
-                    # Parse HTML content
-                    soup = BeautifulSoup(response.content, "html.parser")
-                    raw_data["html_structure"] = {
-                        "title": soup.title.string if soup.title else None,
-                        "headings": [
-                            h.get_text()
-                            for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
-                        ],
-                        "forms_count": len(soup.find_all("form")),
-                        "images_count": len(soup.find_all("img")),
-                        "links_count": len(soup.find_all("a")),
-                    }
-
-                    # WCAG 2.1 AA Compliance Checks with detailed context
-
-                    # 1. Perceivable
-                    text_alternatives = await self._check_text_alternatives_detailed(
-                        soup, url
-                    )
-                    detailed_issues.extend(text_alternatives["issues"])
-                    accessibility_metrics.images_without_alt = text_alternatives[
-                        "metrics"
-                    ].get("images_without_alt", 0)
-                    accessibility_metrics.total_images = text_alternatives[
-                        "metrics"
-                    ].get("total_images", 0)
-                    raw_data["text_alternatives"] = text_alternatives["raw"]
-
-                    color_contrast = await self._check_color_contrast_detailed(
-                        soup, url
-                    )
-                    detailed_issues.extend(color_contrast["issues"])
-                    accessibility_metrics.low_contrast_elements = color_contrast[
-                        "metrics"
-                    ].get("low_contrast_elements", 0)
-                    raw_data["color_contrast"] = color_contrast["raw"]
-
-                    # 2. Operable
-                    keyboard_access = await self._check_keyboard_accessibility_detailed(
-                        soup, url
-                    )
-                    detailed_issues.extend(keyboard_access["issues"])
-                    accessibility_metrics.keyboard_inaccessible = keyboard_access[
-                        "metrics"
-                    ].get("keyboard_inaccessible", 0)
-                    raw_data["keyboard_accessibility"] = keyboard_access["raw"]
-
-                    focus_management = await self._check_focus_management_detailed(
-                        soup, url
-                    )
-                    detailed_issues.extend(focus_management["issues"])
-                    accessibility_metrics.focus_issues = focus_management[
-                        "metrics"
-                    ].get("focus_issues", 0)
-                    raw_data["focus_management"] = focus_management["raw"]
-
-                    # 3. Understandable
-                    language_identification = (
-                        await self._check_language_identification_detailed(soup, url)
-                    )
-                    detailed_issues.extend(language_identification["issues"])
-                    accessibility_metrics.language_issues = language_identification[
-                        "metrics"
-                    ].get("language_issues", 0)
-                    raw_data["language_identification"] = language_identification["raw"]
-
-                    forms_labels = await self._check_forms_and_labels_detailed(
-                        soup, url
-                    )
-                    detailed_issues.extend(forms_labels["issues"])
-                    accessibility_metrics.form_issues = forms_labels["metrics"].get(
-                        "form_issues", 0
-                    )
-                    raw_data["forms_and_labels"] = forms_labels["raw"]
-
-                    # 4. Robust
-                    semantic_structure = await self._check_semantic_structure_detailed(
-                        soup, url
-                    )
-                    detailed_issues.extend(semantic_structure["issues"])
-                    accessibility_metrics.semantic_issues = semantic_structure[
-                        "metrics"
-                    ].get("semantic_issues", 0)
-                    raw_data["semantic_structure"] = semantic_structure["raw"]
-
-                    aria_compliance = await self._check_aria_compliance_detailed(
-                        soup, url
-                    )
-                    detailed_issues.extend(aria_compliance["issues"])
-                    accessibility_metrics.aria_issues = aria_compliance["metrics"].get(
-                        "aria_issues", 0
-                    )
-                    raw_data["aria_compliance"] = aria_compliance["raw"]
-
-                    # EAA-specific requirements
-                    eaa_compliance = (
-                        await self._check_eaa_specific_requirements_detailed(soup, url)
-                    )
-                    detailed_issues.extend(eaa_compliance["issues"])
-                    accessibility_metrics.eaa_issues = eaa_compliance["metrics"].get(
-                        "eaa_issues", 0
-                    )
-                    raw_data["eaa_compliance"] = eaa_compliance["raw"]
-
-                    # Mobile and responsive accessibility testing
-                    mobile_responsive = (
-                        await self._check_mobile_responsive_accessibility_detailed(
-                            soup, url
-                        )
-                    )
-                    detailed_issues.extend(mobile_responsive["issues"])
-                    accessibility_metrics.mobile_issues = mobile_responsive[
-                        "metrics"
-                    ].get("mobile_issues", 0)
-                    raw_data["mobile_responsive"] = mobile_responsive["raw"]
-
-                except httpx.RequestError as e:
-                    detailed_issues.append(
-                        self.create_detailed_issue(
-                            issue_type="accessibility_analysis_failed",
-                            severity=Severity.HIGH,
-                            message=f"Failed to analyze accessibility: {str(e)}",
-                            location=url,
-                            category="accessibility",
-                            subcategory="analysis_error",
-                            description="Accessibility analysis failed due to connection error",
-                            impact="Cannot determine accessibility compliance",
-                            technical_details={"error": str(e)},
-                            recommendations=[
-                                "Check network connectivity and try again"
-                            ],
-                            code_location=CodeLocation(
-                                resource_type="http", attribute_value=url
-                            ),
-                            priority_score=0.5,
-                        )
-                    )
-
-            return DetailedAnalysisResult(
-                url=url,
-                dwarf_name=self.name,
-                detailed_issues=detailed_issues,
-                accessibility_metrics=accessibility_metrics,
-                raw_data=raw_data,
-            )
 
         except Exception as e:
             return DetailedAnalysisResult(
@@ -395,10 +297,12 @@ class ZugaenglichkeitsZwerg(Dwarf):
                 error_message=str(e),
             )
 
-    async def _check_text_alternatives(self, soup: BeautifulSoup, url: str) -> dict:
+    async def _check_text_alternatives(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
         """Check WCAG 1.1.1 - Text Alternatives for non-text content."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check images for alt text
         images = soup.find_all("img")
@@ -463,7 +367,11 @@ class ZugaenglichkeitsZwerg(Dwarf):
         for media in media_elements:
             # Check for captions, transcripts, or audio descriptions
             has_track = media.find("track")
-            has_captions = has_track and "captions" in str(has_track)
+            has_captions = (
+                has_track and "captions" in str(has_track.get("kind"))
+                if has_track
+                else False
+            )
             has_transcript = "transcript" in media.get("aria-describedby", "").lower()
 
             if not (has_captions or has_transcript):
@@ -488,10 +396,199 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
         return {"issues": issues, "metadata": metadata}
 
-    async def _check_color_contrast(self, soup: BeautifulSoup, url: str) -> dict:
-        """Check WCAG 1.4.3 & 1.4.6 - Color Contrast requirements."""
-        issues = []
-        metadata = {}
+    async def _check_text_alternatives_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
+        """Check WCAG 1.1.1 - Text Alternatives for non-text content with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
+
+        # Check images for alt text
+        images = soup.find_all("img")
+        images_without_alt = []
+        decorative_images = []
+        complex_images = []
+
+        for img in images:
+            src = img.get("src", "")
+            alt = img.get("alt")
+
+            if src:
+                if alt is None:
+                    images_without_alt.append(src)
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_1_1_1_missing_alt_text",
+                            severity=Severity.HIGH,
+                            message=f"Image missing alt text: {src}",
+                            location=url,
+                            category="perceivable",
+                            subcategory="text_alternatives",
+                            description="Non-text content (images) must have text alternatives.",
+                            impact="Screen reader users will not know the content/function of the image.",
+                            technical_details={
+                                "image_src": src,
+                                "alt_attribute": "missing",
+                            },
+                            recommendations=[
+                                "Provide a concise and accurate alt text for the image."
+                            ],
+                            fix_suggestions=[
+                                f"Add alt='description of image' to <img src='{src}'>"
+                            ],
+                            priority_score=0.8,
+                            code_location=CodeLocation(
+                                element_selector=f"img[src='{src}']",
+                                element_tag="img",
+                                attribute_name="alt",
+                                attribute_value="missing",
+                                full_element=str(img),
+                            ),
+                        )
+                    )
+                elif alt == "":
+                    decorative_images.append(src)
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_1_1_1_decorative_image_alt_empty",
+                            severity=Severity.LOW,
+                            message=f"Decorative image has empty alt text: {src}",
+                            location=url,
+                            category="perceivable",
+                            subcategory="text_alternatives",
+                            description="Decorative images should have empty alt text (alt='') to be ignored by screen readers.",
+                            impact="Generally good, but ensure it is truly decorative.",
+                            technical_details={
+                                "image_src": src,
+                                "alt_attribute": "empty",
+                            },
+                            recommendations=[
+                                "Verify the image is purely decorative; otherwise, provide descriptive alt text."
+                            ],
+                            fix_suggestions=[
+                                f"Ensure <img src='{src}' alt=''> is decorative or add alt text."
+                            ],
+                            priority_score=0.2,
+                            code_location=CodeLocation(
+                                element_selector=f"img[src='{src}']",
+                                element_tag="img",
+                                attribute_name="alt",
+                                attribute_value="",
+                                full_element=str(img),
+                            ),
+                        )
+                    )
+                elif len(alt) > 150:
+                    complex_images.append({"src": src, "alt_length": len(alt)})
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_1_1_1_complex_image_long_alt",
+                            severity=Severity.MEDIUM,
+                            message=f"Image alt text is very long ({len(alt)} chars): {src}",
+                            location=url,
+                            category="perceivable",
+                            subcategory="text_alternatives",
+                            description="Very long alt text can be cumbersome for screen reader users. Consider providing a short alt text and a longer description elsewhere.",
+                            impact="May hinder comprehension for screen reader users.",
+                            technical_details={
+                                "image_src": src,
+                                "alt_length": len(alt),
+                                "alt_text_sample": alt[:50],
+                            },
+                            recommendations=[
+                                "Provide a concise alt text and a more detailed description using aria-describedby or a separate text block."
+                            ],
+                            fix_suggestions=[
+                                f"Shorten alt text for <img src='{src}'> or use aria-describedby."
+                            ],
+                            priority_score=0.5,
+                            code_location=CodeLocation(
+                                element_selector=f"img[src='{src}']",
+                                element_tag="img",
+                                attribute_name="alt",
+                                attribute_value=alt,
+                                full_element=str(img),
+                            ),
+                        )
+                    )
+
+        metrics.update({
+            "total_images": len(images),
+            "images_without_alt": len(images_without_alt),
+            "decorative_images": len(decorative_images),
+            "complex_images": len(complex_images),
+        })
+        raw_data["images"] = {
+            "images_without_alt_list": images_without_alt,
+            "decorative_images_list": decorative_images,
+            "complex_images_list": complex_images,
+        }
+
+        # Check audio/video elements
+        media_elements = soup.find_all(["audio", "video"])
+        media_missing_alternatives = []
+
+        for media in media_elements:
+            # Check for captions, transcripts, or audio descriptions
+            has_track = media.find("track")
+            has_captions = (
+                has_track and "captions" in str(has_track.get("kind"))
+                if has_track
+                else False
+            )
+            has_transcript = "transcript" in media.get("aria-describedby", "").lower()
+
+            if not (has_captions or has_transcript):
+                media_missing_alternatives.append({
+                    "tag": media.name,
+                    "src": media.get("src", "embedded"),
+                })
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="wcag_1_2_media_missing_alternatives",
+                        severity=Severity.HIGH,
+                        message=f"Media element missing captions/transcripts: {media.name} {media.get('src', '')}",
+                        location=url,
+                        category="perceivable",
+                        subcategory="time_based_media",
+                        description="Time-based media (audio/video) must have alternatives like captions or transcripts.",
+                        impact="Users with hearing impairments will not be able to access the content.",
+                        technical_details={
+                            "media_tag": media.name,
+                            "media_src": media.get("src", ""),
+                        },
+                        recommendations=[
+                            "Provide captions for all audio content and transcripts for all video content."
+                        ],
+                        fix_suggestions=[
+                            f"Add <track kind='captions'> for {media.name} or link to a transcript."
+                        ],
+                        priority_score=0.9,
+                        code_location=CodeLocation(
+                            element_selector=media.name,
+                            element_tag=media.name,
+                            attribute_name="src",
+                            attribute_value=media.get("src", ""),
+                            full_element=str(media),
+                        ),
+                    )
+                )
+
+        metrics["media_missing_alternatives"] = len(media_missing_alternatives)
+        raw_data["media"] = {
+            "media_missing_alternatives_list": media_missing_alternatives
+        }
+
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
+
+    async def _check_color_contrast_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
+        """Check WCAG 1.4.3 & 1.4.6 - Color Contrast requirements with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Extract CSS and inline styles for contrast analysis
         style_elements = soup.find_all("style")
@@ -514,27 +611,47 @@ class ZugaenglichkeitsZwerg(Dwarf):
                         "element": element.name,
                         "style": style[:100],  # Truncate for evidence
                     })
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_1_4_3_potential_contrast_issues",
+                            severity=Severity.MEDIUM,
+                            message=f"Potential low contrast element: {element.name} with style {style[:50]}",
+                            location=url,
+                            category="perceivable",
+                            subcategory="contrast",
+                            description="Text and images of text should have a contrast ratio of at least 4.5:1.",
+                            impact="Users with low vision may struggle to read content.",
+                            technical_details={
+                                "element_name": element.name,
+                                "style_snippet": style[:100],
+                            },
+                            recommendations=[
+                                "Increase the contrast ratio between text/image and background."
+                            ],
+                            fix_suggestions=[
+                                "Adjust CSS color and background-color properties."
+                            ],
+                            priority_score=0.6,
+                            code_location=CodeLocation(
+                                element_selector=element.name,
+                                element_tag=element.name,
+                                attribute_name="style",
+                                attribute_value=style,
+                                full_element=str(element),
+                            ),
+                        )
+                    )
 
-        metadata.update({
+        metrics.update({
             "elements_with_inline_styles": len(inline_styles),
             "potential_contrast_issues": potential_issues,
             "style_elements_count": len(style_elements),
+            "low_contrast_elements": len(contrast_issues),
         })
-
-        if contrast_issues:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_1_4_3_potential_contrast_issues",
-                    severity=Severity.MEDIUM,
-                    message=f"WCAG 1.4.3: {len(contrast_issues)} elements with potential contrast issues detected",
-                    location=url,
-                    evidence={
-                        "contrast_issues": contrast_issues[:5],
-                        "wcag_guideline": "1.4.3 Contrast (Minimum) (Level AA)",
-                        "recommendation": "Ensure 4.5:1 contrast ratio for normal text, 3:1 for large text",
-                    },
-                )
-            )
+        raw_data["contrast_analysis"] = {
+            "inline_styles_count": len(inline_styles),
+            "contrast_issues_list": contrast_issues,
+        }
 
         # Check for color-only information
         elements_with_color_info = soup.find_all(
@@ -556,30 +673,48 @@ class ZugaenglichkeitsZwerg(Dwarf):
                         "text": text[:50],
                         "element": element.name,
                     })
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_1_4_1_color_only_information",
+                            severity=Severity.MEDIUM,
+                            message=f"Information conveyed by color alone: {text[:50]}",
+                            location=url,
+                            category="perceivable",
+                            subcategory="use_of_color",
+                            description="Color should not be the only visual means of conveying information.",
+                            impact="Users with color blindness or low vision may miss information.",
+                            technical_details={
+                                "element_name": element.name,
+                                "text_content": text[:50],
+                            },
+                            recommendations=[
+                                "Provide additional visual cues (e.g., text labels, icons, patterns) to convey information."
+                            ],
+                            fix_suggestions=[
+                                "Add text labels or icons next to color-coded information."
+                            ],
+                            priority_score=0.5,
+                            code_location=CodeLocation(
+                                element_selector=element.name,
+                                element_tag=element.name,
+                                full_element=str(element),
+                            ),
+                        )
+                    )
 
-        if color_only_indicators:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_1_4_1_color_only_information",
-                    severity=Severity.MEDIUM,
-                    message=f"WCAG 1.4.1: {len(color_only_indicators)} elements may rely on color alone for information",
-                    location=url,
-                    evidence={
-                        "color_only_indicators": color_only_indicators[:3],
-                        "wcag_guideline": "1.4.1 Use of Color (Level A)",
-                        "recommendation": "Ensure information is not conveyed by color alone",
-                    },
-                )
-            )
+        raw_data["color_only_information"] = {
+            "color_only_indicators_list": color_only_indicators
+        }
 
-        return {"issues": issues, "metadata": metadata}
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
 
-    async def _check_keyboard_accessibility(
+    async def _check_keyboard_accessibility_detailed(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
-        """Check WCAG 2.1.1 & 2.1.2 - Keyboard accessibility."""
-        issues = []
-        metadata = {}
+    ) -> dict[str, Any]:
+        """Check WCAG 2.1.1 & 2.1.2 - Keyboard accessibility with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check for interactive elements that may not be keyboard accessible
         interactive_elements = soup.find_all([
@@ -599,6 +734,36 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     "text": element.get_text(strip=True)[:50],
                     "id": element.get("id", "no-id"),
                 })
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="wcag_2_1_1_non_focusable_interactive",
+                        severity=Severity.HIGH,
+                        message=f"Interactive element not keyboard focusable: {element.name}",
+                        location=url,
+                        category="operable",
+                        subcategory="keyboard_accessibility",
+                        description="All interactive elements must be operable via keyboard.",
+                        impact="Keyboard-only users will not be able to interact with this element.",
+                        technical_details={
+                            "element_name": element.name,
+                            "tabindex": tabindex,
+                        },
+                        recommendations=[
+                            "Ensure all interactive elements are keyboard accessible."
+                        ],
+                        fix_suggestions=[
+                            "Remove tabindex='-1' or ensure element is naturally focusable."
+                        ],
+                        priority_score=0.8,
+                        code_location=CodeLocation(
+                            element_selector=element.name,
+                            element_tag=element.name,
+                            attribute_name="tabindex",
+                            attribute_value=tabindex,
+                            full_element=str(element),
+                        ),
+                    )
+                )
 
         # Check for custom interactive elements (divs, spans with click handlers)
         potential_interactive = soup.find_all(attrs={"onclick": True})
@@ -617,49 +782,55 @@ class ZugaenglichkeitsZwerg(Dwarf):
                         "text": element.get_text(strip=True)[:50],
                         "role": element.get("role", "none"),
                     })
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_2_1_1_custom_controls_not_keyboard_accessible",
+                            severity=Severity.HIGH,
+                            message=f"Custom control not keyboard accessible: {element.name}",
+                            location=url,
+                            category="operable",
+                            subcategory="keyboard_accessibility",
+                            description="Custom interactive elements must be keyboard operable.",
+                            impact="Keyboard-only users will not be able to interact with this custom control.",
+                            technical_details={
+                                "element_name": element.name,
+                                "role": element.get("role"),
+                            },
+                            recommendations=[
+                                "Add tabindex='0' and appropriate keyboard event handlers (e.g., for Space/Enter keys)."
+                            ],
+                            fix_suggestions=["Add tabindex='0' to the element."],
+                            priority_score=0.9,
+                            code_location=CodeLocation(
+                                element_selector=element.name,
+                                element_tag=element.name,
+                                attribute_name="tabindex",
+                                attribute_value=element.get("tabindex"),
+                                full_element=str(element),
+                            ),
+                        )
+                    )
 
-        metadata.update({
+        metrics.update({
             "interactive_elements_count": len(interactive_elements),
             "non_focusable_interactive": len(non_focusable_interactive),
             "custom_interactive_elements": len(potential_interactive),
             "inaccessible_custom_controls": len(inaccessible_custom_controls),
         })
+        raw_data["keyboard_accessibility"] = {
+            "non_focusable_interactive_list": non_focusable_interactive,
+            "inaccessible_custom_controls_list": inaccessible_custom_controls,
+        }
 
-        if non_focusable_interactive:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_2_1_1_non_focusable_interactive",
-                    severity=Severity.HIGH,
-                    message=f"WCAG 2.1.1: {len(non_focusable_interactive)} interactive elements not keyboard focusable",
-                    location=url,
-                    evidence={
-                        "non_focusable_elements": non_focusable_interactive[:5],
-                        "wcag_guideline": "2.1.1 Keyboard (Level A)",
-                    },
-                )
-            )
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
 
-        if inaccessible_custom_controls:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_2_1_1_custom_controls_not_keyboard_accessible",
-                    severity=Severity.HIGH,
-                    message=f"WCAG 2.1.1: {len(inaccessible_custom_controls)} custom controls not keyboard accessible",
-                    location=url,
-                    evidence={
-                        "inaccessible_controls": inaccessible_custom_controls[:5],
-                        "wcag_guideline": "2.1.1 Keyboard (Level A)",
-                        "recommendation": "Add tabindex='0' and keyboard event handlers",
-                    },
-                )
-            )
-
-        return {"issues": issues, "metadata": metadata}
-
-    async def _check_focus_management(self, soup: BeautifulSoup, url: str) -> dict:
-        """Check WCAG 2.4.3 & 2.4.7 - Focus Order and Focus Visible."""
-        issues = []
-        metadata = {}
+    async def _check_focus_management_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
+        """Check WCAG 2.4.3 & 2.4.7 - Focus Order and Focus Visible with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check for skip links
         skip_links = soup.find_all("a", href=re.compile(r"^#"))
@@ -670,16 +841,25 @@ class ZugaenglichkeitsZwerg(Dwarf):
         ]
 
         if not skip_to_content:
-            issues.append(
-                self.create_issue(
+            detailed_issues.append(
+                self.create_detailed_issue(
                     issue_type="wcag_2_4_1_missing_skip_links",
                     severity=Severity.MEDIUM,
-                    message="WCAG 2.4.1: No skip links found for bypassing repetitive content",
+                    message="No skip links found for bypassing repetitive content",
                     location=url,
-                    evidence={
-                        "wcag_guideline": "2.4.1 Bypass Blocks (Level A)",
-                        "recommendation": "Add skip links to main content and navigation",
-                    },
+                    category="operable",
+                    subcategory="navigation",
+                    description="A mechanism to bypass blocks of content that are repeated on multiple Web pages should be available.",
+                    impact="Keyboard and screen reader users may have difficulty navigating past repetitive content.",
+                    technical_details={"skip_links_found": False},
+                    recommendations=[
+                        "Add a 'Skip to main content' link at the top of the page."
+                    ],
+                    fix_suggestions=[
+                        "Add <a href='#maincontent' class='skip-link'>Skip to main content</a> and a corresponding <div id='maincontent'>."
+                    ],
+                    priority_score=0.5,
+                    code_location=CodeLocation(resource_type="html_structure"),
                 )
             )
 
@@ -696,21 +876,33 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     "jumped_from": f"h{prev_level}",
                     "jumped_to": f"h{level}",
                 })
-
-        if hierarchy_issues:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_2_4_6_incorrect_heading_hierarchy",
-                    severity=Severity.MEDIUM,
-                    message=f"WCAG 2.4.6: {len(hierarchy_issues)} heading hierarchy violations found",
-                    location=url,
-                    evidence={
-                        "hierarchy_issues": hierarchy_issues,
-                        "wcag_guideline": "2.4.6 Headings and Labels (Level AA)",
-                        "recommendation": "Maintain logical heading hierarchy (don't skip levels)",
-                    },
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="wcag_2_4_6_incorrect_heading_hierarchy",
+                        severity=Severity.MEDIUM,
+                        message=f"Incorrect heading hierarchy: skipped from h{prev_level} to h{level}",
+                        location=url,
+                        category="understandable",
+                        subcategory="navigation",
+                        description="Headings should be nested hierarchically without skipping levels.",
+                        impact="Screen reader users rely on proper heading structure for navigation.",
+                        technical_details={
+                            "skipped_levels": f"h{prev_level} to h{level}"
+                        },
+                        recommendations=[
+                            "Ensure headings follow a logical, hierarchical order (e.g., H1, H2, H3, not H1, H3)."
+                        ],
+                        fix_suggestions=[
+                            "Adjust heading tags to maintain proper hierarchy."
+                        ],
+                        priority_score=0.6,
+                        code_location=CodeLocation(
+                            element_selector=headings[i].name,
+                            element_tag=headings[i].name,
+                            full_element=str(headings[i]),
+                        ),
+                    )
                 )
-            )
 
         # Check for focus traps in modals/dialogs
         modals = soup.find_all(attrs={"role": "dialog"})
@@ -734,46 +926,92 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     "modal_id": modal.get("id", "no-id"),
                     "focusable_count": len(focusable_elements),
                 })
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="wcag_2_1_2_focus_trap",
+                        severity=Severity.HIGH,
+                        message=f"Potential focus trap in modal: {modal.get('id', 'no-id')}",
+                        location=url,
+                        category="operable",
+                        subcategory="keyboard_accessibility",
+                        description="If keyboard focus can be moved to a component of the page, then focus can be moved away from that component using only keyboard interface.",
+                        impact="Keyboard users may get trapped within a modal or component.",
+                        technical_details={
+                            "modal_id": modal.get("id", "no-id"),
+                            "focusable_elements_count": len(focusable_elements),
+                        },
+                        recommendations=[
+                            "Implement proper focus management for modals, ensuring focus can be moved in and out."
+                        ],
+                        fix_suggestions=[
+                            "Use a focus trap script or library to manage focus within modals."
+                        ],
+                        priority_score=0.9,
+                        code_location=CodeLocation(
+                            element_selector=modal.name,
+                            element_tag=modal.name,
+                            attribute_name="role",
+                            attribute_value=modal.get("role"),
+                            full_element=str(modal),
+                        ),
+                    )
+                )
 
-        metadata.update({
+        metrics.update({
             "skip_links_count": len(skip_to_content),
             "heading_hierarchy_issues": len(hierarchy_issues),
             "modal_count": len(modals),
             "focus_trap_issues": len(focus_trap_issues),
         })
+        raw_data["focus_management"] = {
+            "skip_links_list": skip_to_content,
+            "heading_hierarchy_issues_list": hierarchy_issues,
+            "focus_trap_issues_list": focus_trap_issues,
+        }
 
-        return {"issues": issues, "metadata": metadata}
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
 
-    async def _check_language_identification(
+    async def _check_language_identification_detailed(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
-        """Check WCAG 3.1.1 & 3.1.2 - Language identification."""
-        issues = []
-        metadata = {}
+    ) -> dict[str, Any]:
+        """Check WCAG 3.1.1 & 3.1.2 - Language identification with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check for lang attribute on html element
         html_element = soup.find("html")
         page_lang = html_element.get("lang") if html_element else None
 
-        metadata["page_language"] = page_lang
+        metrics["page_language"] = page_lang
+        raw_data["page_language"] = page_lang
 
         if not page_lang:
-            issues.append(
-                self.create_issue(
+            detailed_issues.append(
+                self.create_detailed_issue(
                     issue_type="wcag_3_1_1_missing_page_language",
                     severity=Severity.HIGH,
-                    message="WCAG 3.1.1: Page language not specified in html lang attribute",
+                    message="Page language not specified in html lang attribute",
                     location=url,
-                    evidence={
-                        "wcag_guideline": "3.1.1 Language of Page (Level A)",
-                        "recommendation": "Add lang attribute to html element (e.g., <html lang='en'>)",
-                    },
+                    category="understandable",
+                    subcategory="language",
+                    description="The primary human language of the Web page should be identified.",
+                    impact="Screen readers may not render content correctly without language identification.",
+                    technical_details={"html_lang_attribute": "missing"},
+                    recommendations=[
+                        "Add a 'lang' attribute to the <html> element (e.g., <html lang='en'>)."
+                    ],
+                    fix_suggestions=["Add lang='en' to the <html> tag."],
+                    priority_score=0.8,
+                    code_location=CodeLocation(
+                        element_tag="html", attribute_name="lang"
+                    ),
                 )
             )
 
         # Check for language changes within content
         elements_with_lang = soup.find_all(attrs={"lang": True})
-        metadata["elements_with_lang_changes"] = len(elements_with_lang)
+        metrics["elements_with_lang_changes"] = len(elements_with_lang)
 
         # Simple heuristic for detecting potential language changes without lang attributes
         text_elements = soup.find_all(["p", "span", "div"], string=True)
@@ -790,30 +1028,46 @@ class ZugaenglichkeitsZwerg(Dwarf):
                         "text": text[:50],
                         "element": element.name,
                     })
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_3_1_2_potential_unlabeled_language_changes",
+                            severity=Severity.LOW,
+                            message=f"Potential unlabeled language change: {text[:50]}",
+                            location=url,
+                            category="understandable",
+                            subcategory="language",
+                            description="The human language of each passage or phrase in the content should be identified.",
+                            impact="Screen readers may mispronounce words or phrases in different languages.",
+                            technical_details={
+                                "element_name": element.name,
+                                "text_content": text[:50],
+                            },
+                            recommendations=[
+                                "Identify language changes with the 'lang' attribute on the specific element."
+                            ],
+                            fix_suggestions=[
+                                "Add lang='es' to <span lang='es'>Spanish text</span>."
+                            ],
+                            priority_score=0.3,
+                            code_location=CodeLocation(
+                                element_selector=element.name,
+                                element_tag=element.name,
+                                full_element=str(element),
+                            ),
+                        )
+                    )
 
-        if (
-            potential_lang_changes and len(potential_lang_changes) > 5
-        ):  # Only flag if significant
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_3_1_2_potential_unlabeled_language_changes",
-                    severity=Severity.LOW,
-                    message=f"WCAG 3.1.2: {len(potential_lang_changes)} elements with potential language changes",
-                    location=url,
-                    evidence={
-                        "potential_changes": potential_lang_changes[:3],
-                        "wcag_guideline": "3.1.2 Language of Parts (Level AA)",
-                        "recommendation": "Add lang attributes for content in different languages",
-                    },
-                )
-            )
+        raw_data["potential_language_changes"] = potential_lang_changes
 
-        return {"issues": issues, "metadata": metadata}
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
 
-    async def _check_forms_and_labels(self, soup: BeautifulSoup, url: str) -> dict:
-        """Check WCAG 3.3.2 & 4.1.2 - Forms and Labels."""
-        issues = []
-        metadata = {}
+    async def _check_forms_and_labels_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
+        """Check WCAG 3.3.2 & 4.1.2 - Forms and Labels with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check form inputs for proper labeling
         form_inputs = soup.find_all(["input", "select", "textarea"])
@@ -843,27 +1097,47 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     "id": input_id or "no-id",
                     "name": input_elem.get("name", "no-name"),
                 })
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="wcag_3_3_2_unlabeled_form_inputs",
+                        severity=Severity.HIGH,
+                        message=f"Form input missing label: {input_elem.name} (id: {input_id or 'no-id'})",
+                        location=url,
+                        category="understandable",
+                        subcategory="forms",
+                        description="Form elements must have associated labels to identify their purpose.",
+                        impact="Screen reader users will not know the purpose of the input field.",
+                        technical_details={
+                            "element_name": input_elem.name,
+                            "input_id": input_id,
+                            "input_name": input_elem.get("name"),
+                        },
+                        recommendations=[
+                            "Provide a visible label using <label for='id'> or an aria-label/aria-labelledby attribute."
+                        ],
+                        fix_suggestions=[
+                            f"Add <label for='{input_id}'>Label Text</label> or aria-label='Label Text' to the input."
+                        ],
+                        priority_score=0.8,
+                        code_location=CodeLocation(
+                            element_selector=input_elem.name,
+                            element_tag=input_elem.name,
+                            attribute_name="id",
+                            attribute_value=input_id,
+                            full_element=str(input_elem),
+                        ),
+                    )
+                )
 
-        metadata.update({
+        metrics.update({
             "total_form_inputs": len(form_inputs),
             "unlabeled_inputs": len(unlabeled_inputs),
             "properly_labeled_inputs": len(inputs_with_labels),
         })
-
-        if unlabeled_inputs:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_3_3_2_unlabeled_form_inputs",
-                    severity=Severity.HIGH,
-                    message=f"WCAG 3.3.2: {len(unlabeled_inputs)} form inputs without proper labels",
-                    location=url,
-                    evidence={
-                        "unlabeled_inputs": unlabeled_inputs[:5],
-                        "wcag_guideline": "3.3.2 Labels or Instructions (Level A)",
-                        "recommendation": "Add <label> elements or aria-label attributes",
-                    },
-                )
-            )
+        raw_data["form_labels"] = {
+            "unlabeled_inputs_list": unlabeled_inputs,
+            "properly_labeled_inputs_list": inputs_with_labels,
+        }
 
         # Check for required field indicators
         required_inputs = soup.find_all(
@@ -887,27 +1161,53 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     "type": required.get("type", "unknown"),
                     "id": required.get("id", "no-id"),
                 })
-
-        if required_without_indication:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_3_3_2_required_fields_not_indicated",
-                    severity=Severity.MEDIUM,
-                    message=f"WCAG 3.3.2: {len(required_without_indication)} required fields without clear indication",
-                    location=url,
-                    evidence={
-                        "required_without_indication": required_without_indication,
-                        "wcag_guideline": "3.3.2 Labels or Instructions (Level A)",
-                    },
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="wcag_3_3_2_required_fields_not_indicated",
+                        severity=Severity.MEDIUM,
+                        message=f"Required field without clear indication: {required.name} (id: {required.get('id', 'no-id')})",
+                        location=url,
+                        category="understandable",
+                        subcategory="forms",
+                        description="Required fields must have a clear visual indication (e.g., asterisk, text).",
+                        impact="Users may not know which fields are mandatory, leading to form submission errors.",
+                        technical_details={
+                            "element_name": required.name,
+                            "input_id": required.get("id"),
+                            "has_asterisk": has_asterisk,
+                            "has_aria_label": has_aria_label,
+                            "has_aria_describedby": bool(has_aria_describedby),
+                        },
+                        recommendations=[
+                            "Add a visual indicator (e.g., an asterisk) and/or an ARIA attribute (aria-required='true') to required fields."
+                        ],
+                        fix_suggestions=[
+                            "Add a * next to the label or aria-required='true' to the input."
+                        ],
+                        priority_score=0.6,
+                        code_location=CodeLocation(
+                            element_selector=required.name,
+                            element_tag=required.name,
+                            attribute_name="required",
+                            attribute_value="true",
+                            full_element=str(required),
+                        ),
+                    )
                 )
-            )
 
-        return {"issues": issues, "metadata": metadata}
+        raw_data["required_fields"] = {
+            "required_without_indication_list": required_without_indication
+        }
 
-    async def _check_semantic_structure(self, soup: BeautifulSoup, url: str) -> dict:
-        """Check WCAG 4.1.1 & 4.1.2 - Semantic structure and valid markup."""
-        issues = []
-        metadata = {}
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
+
+    async def _check_semantic_structure_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
+        """Check WCAG 4.1.1 & 4.1.2 - Semantic structure and valid markup with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check for semantic HTML5 elements
         semantic_elements = soup.find_all([
@@ -919,36 +1219,56 @@ class ZugaenglichkeitsZwerg(Dwarf):
             "section",
             "article",
         ])
-        metadata["semantic_elements_count"] = len(semantic_elements)
+        metrics["semantic_elements_count"] = len(semantic_elements)
 
         # Check for main landmark
         main_elements = soup.find_all("main")
         main_with_role = soup.find_all(attrs={"role": "main"})
 
         if not main_elements and not main_with_role:
-            issues.append(
-                self.create_issue(
+            detailed_issues.append(
+                self.create_detailed_issue(
                     issue_type="wcag_4_1_2_missing_main_landmark",
                     severity=Severity.MEDIUM,
-                    message="WCAG 4.1.2: No main landmark found for primary content",
+                    message="No main landmark found for primary content",
                     location=url,
-                    evidence={
-                        "wcag_guideline": "4.1.2 Name, Role, Value (Level A)",
-                        "recommendation": "Add <main> element or role='main' to primary content",
-                    },
+                    category="robust",
+                    subcategory="parsing",
+                    description="Web pages should have a main landmark to identify the primary content area.",
+                    impact="Screen reader users may have difficulty locating the main content.",
+                    technical_details={"main_landmark_found": False},
+                    recommendations=[
+                        "Add a <main> element or role='main' to the primary content area."
+                    ],
+                    fix_suggestions=[
+                        "Wrap the main content in <main>...</main> or add role='main' to the main content container."
+                    ],
+                    priority_score=0.6,
+                    code_location=CodeLocation(resource_type="html_structure"),
                 )
             )
         elif len(main_elements) + len(main_with_role) > 1:
-            issues.append(
-                self.create_issue(
+            detailed_issues.append(
+                self.create_detailed_issue(
                     issue_type="wcag_4_1_2_multiple_main_landmarks",
                     severity=Severity.MEDIUM,
-                    message="WCAG 4.1.2: Multiple main landmarks found - should be unique",
+                    message="Multiple main landmarks found - should be unique",
                     location=url,
-                    evidence={
-                        "main_count": len(main_elements) + len(main_with_role),
-                        "wcag_guideline": "4.1.2 Name, Role, Value (Level A)",
+                    category="robust",
+                    subcategory="parsing",
+                    description="There should only be one main landmark per Web page.",
+                    impact="Screen reader users may be confused by multiple main content areas.",
+                    technical_details={
+                        "main_count": len(main_elements) + len(main_with_role)
                     },
+                    recommendations=[
+                        "Ensure only one main landmark is present on the page."
+                    ],
+                    fix_suggestions=[
+                        "Remove duplicate <main> elements or role='main' attributes."
+                    ],
+                    priority_score=0.6,
+                    code_location=CodeLocation(resource_type="html_structure"),
                 )
             )
 
@@ -957,64 +1277,95 @@ class ZugaenglichkeitsZwerg(Dwarf):
         nav_with_role = soup.find_all(attrs={"role": "navigation"})
         total_nav = len(nav_elements) + len(nav_with_role)
 
-        metadata["navigation_landmarks"] = total_nav
+        metrics["navigation_landmarks"] = total_nav
 
         if total_nav == 0:
-            issues.append(
-                self.create_issue(
+            detailed_issues.append(
+                self.create_detailed_issue(
                     issue_type="wcag_4_1_2_missing_navigation_landmark",
                     severity=Severity.LOW,
-                    message="WCAG 4.1.2: No navigation landmarks found",
+                    message="No navigation landmarks found",
                     location=url,
-                    evidence={
-                        "wcag_guideline": "4.1.2 Name, Role, Value (Level A)",
-                        "recommendation": "Add <nav> elements or role='navigation' to navigation areas",
-                    },
+                    category="robust",
+                    subcategory="parsing",
+                    description="Navigation sections should be identified with a <nav> element or role='navigation'.",
+                    impact="Screen reader users may have difficulty identifying navigation areas.",
+                    technical_details={"navigation_landmarks_found": False},
+                    recommendations=[
+                        "Add <nav> elements or role='navigation' to navigation areas."
+                    ],
+                    fix_suggestions=[
+                        "Wrap navigation links in <nav>...</nav> or add role='navigation' to the navigation container."
+                    ],
+                    priority_score=0.3,
+                    code_location=CodeLocation(resource_type="html_structure"),
                 )
             )
 
         # Check for duplicate IDs
         elements_with_id = soup.find_all(attrs={"id": True})
-        id_counts = {}
+        id_counts: dict[str, int] = {}
         duplicate_ids = []
 
         for element in elements_with_id:
             element_id = element.get("id")
-            id_counts[element_id] = id_counts.get(element_id, 0) + 1
-            if id_counts[element_id] > 1:
-                duplicate_ids.append(element_id)
+            if element_id:
+                id_counts[element_id] = id_counts.get(element_id, 0) + 1
+                if id_counts[element_id] > 1:
+                    duplicate_ids.append(element_id)
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="wcag_4_1_1_duplicate_ids",
+                            severity=Severity.HIGH,
+                            message=f"Duplicate ID found: {element_id}",
+                            location=url,
+                            category="robust",
+                            subcategory="parsing",
+                            description="All IDs in an HTML document must be unique.",
+                            impact="Assistive technologies may not correctly reference elements with duplicate IDs.",
+                            technical_details={
+                                "duplicate_id": element_id,
+                                "element_name": element.name,
+                            },
+                            recommendations=[
+                                "Ensure all IDs are unique within the HTML document."
+                            ],
+                            fix_suggestions=[
+                                f"Change the ID of {element.name} to a unique value."
+                            ],
+                            priority_score=0.9,
+                            code_location=CodeLocation(
+                                element_selector=element.name,
+                                element_tag=element.name,
+                                attribute_name="id",
+                                attribute_value=element_id,
+                                full_element=str(element),
+                            ),
+                        )
+                    )
 
-        if duplicate_ids:
-            issues.append(
-                self.create_issue(
-                    issue_type="wcag_4_1_1_duplicate_ids",
-                    severity=Severity.HIGH,
-                    message=f"WCAG 4.1.1: {len(set(duplicate_ids))} duplicate IDs found",
-                    location=url,
-                    evidence={
-                        "duplicate_ids": list(set(duplicate_ids))[:5],
-                        "wcag_guideline": "4.1.1 Parsing (Level A)",
-                        "recommendation": "Ensure all IDs are unique",
-                    },
-                )
-            )
+        metrics["duplicate_ids_count"] = len(set(duplicate_ids))
+        raw_data["semantic_structure"] = {
+            "main_elements_count": len(main_elements) + len(main_with_role),
+            "navigation_elements_count": total_nav,
+            "duplicate_ids_list": list(set(duplicate_ids)),
+        }
 
-        metadata["duplicate_ids_count"] = len(set(duplicate_ids))
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
 
-        return {"issues": issues, "metadata": metadata}
-
-    async def _check_aria_compliance(self, soup: BeautifulSoup, url: str) -> dict:
-        """Check ARIA usage and compliance with EU regulations and WCAG 2.1 AA."""
-        issues = []
-        metadata = {}
+    async def _check_aria_compliance_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
+        """Check ARIA usage and compliance with EU regulations and WCAG 2.1 AA with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check for ARIA attributes
         aria_elements = soup.find_all(
-            attrs=dict.fromkeys(
-                ["aria-label", "aria-labelledby", "aria-describedby", "role"], True
-            )
+            attrs=lambda x: x and any(attr.startswith("aria-") for attr in x)
         )
-        metadata["elements_with_aria"] = len(aria_elements)
+        metrics["elements_with_aria"] = len(aria_elements)
 
         # Check for invalid ARIA roles
         valid_roles = {
@@ -1093,27 +1444,45 @@ class ZugaenglichkeitsZwerg(Dwarf):
         role_elements = soup.find_all(attrs={"role": True})
 
         for element in role_elements:
-            role = element.get("role").strip().lower()
-            if role not in valid_roles:
+            role = element.get("role")
+            if isinstance(role, list):
+                role = " ".join(role)
+            if role.strip().lower() not in valid_roles:
                 invalid_roles.append({
                     "element": element.name,
                     "invalid_role": role,
                     "id": element.get("id", "no-id"),
                 })
-
-        if invalid_roles:
-            issues.append(
-                self.create_issue(
-                    issue_type="aria_invalid_roles",
-                    severity=Severity.MEDIUM,
-                    message=f"ARIA: {len(invalid_roles)} elements with invalid ARIA roles",
-                    location=url,
-                    evidence={
-                        "invalid_roles": invalid_roles[:5],
-                        "recommendation": "Use valid ARIA roles from the WAI-ARIA specification",
-                    },
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="aria_invalid_roles",
+                        severity=Severity.MEDIUM,
+                        message=f"Invalid ARIA role: {role} on {element.name}",
+                        location=url,
+                        category="robust",
+                        subcategory="aria_usage",
+                        description="Elements with ARIA roles must use valid roles from the WAI-ARIA specification.",
+                        impact="Assistive technologies may not correctly interpret the element's purpose.",
+                        technical_details={
+                            "element_name": element.name,
+                            "invalid_role": role,
+                        },
+                        recommendations=[
+                            "Use a valid ARIA role or remove the invalid role attribute."
+                        ],
+                        fix_suggestions=[
+                            f"Change role='{role}' to a valid role or remove it from {element.name}."
+                        ],
+                        priority_score=0.5,
+                        code_location=CodeLocation(
+                            element_selector=element.name,
+                            element_tag=element.name,
+                            attribute_name="role",
+                            attribute_value=role,
+                            full_element=str(element),
+                        ),
+                    )
                 )
-            )
 
         # Check for aria-labelledby pointing to non-existent elements
         labelledby_issues = []
@@ -1127,72 +1496,97 @@ class ZugaenglichkeitsZwerg(Dwarf):
                         "element_id": element.get("id", "no-id"),
                         "missing_reference": ref_id,
                     })
-
-        if labelledby_issues:
-            issues.append(
-                self.create_issue(
-                    issue_type="aria_broken_labelledby_references",
-                    severity=Severity.HIGH,
-                    message=f"ARIA: {len(labelledby_issues)} broken aria-labelledby references",
-                    location=url,
-                    evidence={
-                        "broken_references": labelledby_issues[:5],
-                        "recommendation": "Ensure aria-labelledby references point to existing elements",
-                    },
-                )
-            )
+                    detailed_issues.append(
+                        self.create_detailed_issue(
+                            issue_type="aria_broken_labelledby_references",
+                            severity=Severity.HIGH,
+                            message=f"Broken aria-labelledby reference: {ref_id} not found",
+                            location=url,
+                            category="robust",
+                            subcategory="aria_usage",
+                            description="aria-labelledby attributes must reference existing elements.",
+                            impact="Screen readers will not be able to associate the label with the element.",
+                            technical_details={
+                                "element_id": element.get("id", "no-id"),
+                                "missing_reference_id": ref_id,
+                            },
+                            recommendations=[
+                                "Ensure all IDs referenced by aria-labelledby exist on the page."
+                            ],
+                            fix_suggestions=[
+                                f"Create an element with id='{ref_id}' or update aria-labelledby on {element.name}."
+                            ],
+                            priority_score=0.9,
+                            code_location=CodeLocation(
+                                element_selector=element.name,
+                                element_tag=element.name,
+                                attribute_name="aria-labelledby",
+                                attribute_value=element.get("aria-labelledby"),
+                                full_element=str(element),
+                            ),
+                        )
+                    )
 
         # EU/EAA Standard ARIA Checks - WCAG 2.1 AA Compliance
 
         # 1. Form Accessibility (WCAG 3.3.2 - Labels or Instructions)
-        form_aria_issues = await self._check_form_aria_accessibility(soup, url)
-        issues.extend(form_aria_issues["issues"])
-        metadata.update(form_aria_issues["metadata"])
+        form_aria_issues = await self._check_form_aria_accessibility_detailed(soup, url)
+        detailed_issues.extend(form_aria_issues["issues"])
+        metrics.update(form_aria_issues["metrics"])
+        raw_data["form_aria_accessibility"] = form_aria_issues["raw"]
 
         # 2. Live Regions (WCAG 4.1.3 - Status Messages)
-        live_region_issues = await self._check_live_regions(soup, url)
-        issues.extend(live_region_issues["issues"])
-        metadata.update(live_region_issues["metadata"])
+        live_region_issues = await self._check_live_regions_detailed(soup, url)
+        detailed_issues.extend(live_region_issues["issues"])
+        metrics.update(live_region_issues["metrics"])
+        raw_data["live_regions"] = live_region_issues["raw"]
 
         # 3. Interactive Elements (WCAG 2.1.1 - Keyboard)
-        interactive_aria_issues = await self._check_interactive_aria_elements(soup, url)
-        issues.extend(interactive_aria_issues["issues"])
-        metadata.update(interactive_aria_issues["metadata"])
+        interactive_aria_issues = await self._check_interactive_aria_elements_detailed(
+            soup, url
+        )
+        detailed_issues.extend(interactive_aria_issues["issues"])
+        metrics.update(interactive_aria_issues["metrics"])
+        raw_data["interactive_aria_elements"] = interactive_aria_issues["raw"]
 
         # 4. Navigation and Landmarks (WCAG 2.4.1 - Bypass Blocks)
-        navigation_aria_issues = await self._check_navigation_aria(soup, url)
-        issues.extend(navigation_aria_issues["issues"])
-        metadata.update(navigation_aria_issues["metadata"])
+        navigation_aria_issues = await self._check_navigation_aria_detailed(soup, url)
+        detailed_issues.extend(navigation_aria_issues["issues"])
+        metrics.update(navigation_aria_issues["metrics"])
+        raw_data["navigation_aria"] = navigation_aria_issues["raw"]
 
         # 5. Error Handling (WCAG 3.3.1 - Error Identification)
-        error_aria_issues = await self._check_error_aria_handling(soup, url)
-        issues.extend(error_aria_issues["issues"])
-        metadata.update(error_aria_issues["metadata"])
+        error_aria_issues = await self._check_error_aria_handling_detailed(soup, url)
+        detailed_issues.extend(error_aria_issues["issues"])
+        metrics.update(error_aria_issues["metrics"])
+        raw_data["error_aria_handling"] = error_aria_issues["raw"]
 
-        metadata["invalid_roles_count"] = len(invalid_roles)
-        metadata["broken_labelledby_count"] = len(labelledby_issues)
+        metrics["invalid_roles_count"] = len(invalid_roles)
+        metrics["broken_labelledby_count"] = len(labelledby_issues)
+        raw_data["aria_compliance"] = {
+            "invalid_roles_list": invalid_roles,
+            "broken_labelledby_list": labelledby_issues,
+        }
 
-        return {"issues": issues, "metadata": metadata}
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
 
-    async def _check_form_aria_accessibility(
+    async def _check_form_aria_accessibility_detailed(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
-        """Check form ARIA compliance - EU/EAA standard for form accessibility."""
-        issues = []
-        metadata = {}
+    ) -> dict[str, Any]:
+        """Check form ARIA compliance - EU/EAA standard for form accessibility with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check form inputs for proper ARIA attributes
         form_inputs = soup.find_all(["input", "textarea", "select"])
         inputs_without_labels = []
-        required_inputs_without_aria = []
+        inputs_with_labels = []
 
         for input_elem in form_inputs:
             input_id = input_elem.get("id")
             input_name = input_elem.get("name")
             input_type = input_elem.get("type", "text")
-            is_required = input_elem.get(
-                "required"
-            ) is not None or "required" in input_elem.get("class", [])
 
             # Check for associated label
             has_label = False
@@ -1217,73 +1611,136 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     "id": input_id,
                     "name": input_name,
                 })
+            else:
+                inputs_with_labels.append({
+                    "type": input_type,
+                    "id": input_id,
+                    "name": input_name,
+                })
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="aria_form_missing_labels",
+                        severity=Severity.HIGH,
+                        message=f"Form input missing label: {input_elem.name} (id: {input_id or 'no-id'})",
+                        location=url,
+                        category="understandable",
+                        subcategory="forms",
+                        description="Form elements must have associated labels to identify their purpose.",
+                        impact="Screen reader users will not know the purpose of the input field.",
+                        technical_details={
+                            "element_name": input_elem.name,
+                            "input_id": input_id,
+                            "input_name": input_elem.get("name"),
+                        },
+                        recommendations=[
+                            "Provide a visible label using <label for='id'> or an aria-label/aria-labelledby attribute."
+                        ],
+                        fix_suggestions=[
+                            f"Add <label for='{input_id}'>Label Text</label> or aria-label='Label Text' to the input."
+                        ],
+                        priority_score=0.8,
+                        code_location=CodeLocation(
+                            element_selector=input_elem.name,
+                            element_tag=input_elem.name,
+                            attribute_name="id",
+                            attribute_value=input_id,
+                            full_element=str(input_elem),
+                        ),
+                    )
+                )
 
-            # Check for required ARIA attributes on required fields
-            if is_required:
-                aria_required = input_elem.get("aria-required")
-                if aria_required != "true":
-                    required_inputs_without_aria.append({
-                        "type": input_type,
-                        "id": input_id,
-                        "name": input_name,
-                    })
-
-        metadata.update({
+        metrics.update({
             "total_form_inputs": len(form_inputs),
             "inputs_without_labels": len(inputs_without_labels),
-            "required_inputs_without_aria": len(required_inputs_without_aria),
+            "properly_labeled_inputs": len(inputs_with_labels),
         })
+        raw_data["form_labels"] = {
+            "unlabeled_inputs_list": inputs_without_labels,
+            "properly_labeled_inputs_list": inputs_with_labels,
+        }
 
-        if inputs_without_labels:
-            issues.append(
-                self.create_issue(
-                    issue_type="aria_form_missing_labels",
-                    severity=Severity.HIGH,
-                    message=f"ARIA Form: {len(inputs_without_labels)} form inputs missing proper labels",
-                    location=url,
-                    evidence={
-                        "missing_labels_count": len(inputs_without_labels),
-                        "sample_inputs": inputs_without_labels[:5],
-                        "wcag_guideline": "3.3.2 Labels or Instructions (Level A)",
-                        "eaa_requirement": "Form accessibility compliance",
-                        "recommendation": "Use <label>, aria-label, or aria-labelledby for all form inputs",
-                    },
-                )
+        # Check for required field indicators
+        required_inputs = soup.find_all(
+            ["input", "select", "textarea"], attrs={"required": True}
+        )
+        required_inputs.extend(
+            soup.find_all(
+                ["input", "select", "textarea"], attrs={"aria-required": "true"}
             )
+        )
 
-        if required_inputs_without_aria:
-            issues.append(
-                self.create_issue(
-                    issue_type="aria_required_fields_missing_aria",
-                    severity=Severity.MEDIUM,
-                    message=f"ARIA Form: {len(required_inputs_without_aria)} required fields missing aria-required",
-                    location=url,
-                    evidence={
-                        "required_fields_count": len(required_inputs_without_aria),
-                        "sample_fields": required_inputs_without_aria[:5],
-                        "wcag_guideline": "3.3.2 Labels or Instructions (Level A)",
-                        "recommendation": "Add aria-required='true' to required form fields",
-                    },
+        required_without_indication = []
+        for required in required_inputs:
+            # Check if requirement is clearly indicated
+            has_asterisk = "*" in str(required.parent) if required.parent else False
+            has_aria_label = "required" in (required.get("aria-label") or "").lower()
+            has_aria_describedby = required.get("aria-describedby")
+
+            if not (has_asterisk or has_aria_label or has_aria_describedby):
+                required_without_indication.append({
+                    "type": required.get("type", "unknown"),
+                    "id": required.get("id", "no-id"),
+                })
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="wcag_3_3_2_required_fields_not_indicated",
+                        severity=Severity.MEDIUM,
+                        message=f"Required field without clear indication: {required.name} (id: {required.get('id', 'no-id')})",
+                        location=url,
+                        category="understandable",
+                        subcategory="forms",
+                        description="Required fields must have a clear visual indication (e.g., asterisk, text).",
+                        impact="Users may not know which fields are mandatory, leading to form submission errors.",
+                        technical_details={
+                            "element_name": required.name,
+                            "input_id": required.get("id"),
+                            "has_asterisk": has_asterisk,
+                            "has_aria_label": has_aria_label,
+                            "has_aria_describedby": bool(has_aria_describedby),
+                        },
+                        recommendations=[
+                            "Add a visual indicator (e.g., an asterisk) and/or an ARIA attribute (aria-required='true') to required fields."
+                        ],
+                        fix_suggestions=[
+                            "Add a * next to the label or aria-required='true' to the input."
+                        ],
+                        priority_score=0.6,
+                        code_location=CodeLocation(
+                            element_selector=required.name,
+                            element_tag=required.name,
+                            attribute_name="required",
+                            attribute_value="true",
+                            full_element=str(required),
+                        ),
+                    )
                 )
-            )
 
-        return {"issues": issues, "metadata": metadata}
+        raw_data["required_fields"] = {
+            "required_without_indication_list": required_without_indication
+        }
 
-    async def _check_live_regions(self, soup: BeautifulSoup, url: str) -> dict:
-        """Check live regions for dynamic content - EU/EAA standard for status messages."""
-        issues = []
-        metadata = {}
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
+
+    async def _check_live_regions_detailed(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
+        """Check live regions for dynamic content - EU/EAA standard for status messages with detailed issues."""
+        detailed_issues = []
+        metrics: dict[str, Any] = {}
+        raw_data: dict[str, Any] = {}
 
         # Check for live regions
         live_regions = soup.find_all(attrs={"aria-live": True})
-        live_region_types = {}
+        live_region_types: dict[str, int] = {}
 
         for region in live_regions:
             live_type = region.get("aria-live", "off")
+            if isinstance(live_type, list):
+                live_type = " ".join(live_type)
             live_region_types[live_type] = live_region_types.get(live_type, 0) + 1
 
-        metadata["live_regions_count"] = len(live_regions)
-        metadata["live_region_types"] = live_region_types
+        metrics["live_regions_count"] = len(live_regions)
+        metrics["live_region_types"] = live_region_types
 
         # Check for appropriate live region usage
         inappropriate_live_regions = []
@@ -1295,31 +1752,47 @@ class ZugaenglichkeitsZwerg(Dwarf):
                     "type": live_type,
                     "id": region.get("id", "no-id"),
                 })
-
-        if inappropriate_live_regions:
-            issues.append(
-                self.create_issue(
-                    issue_type="aria_inappropriate_live_regions",
-                    severity=Severity.MEDIUM,
-                    message=f"ARIA Live: {len(inappropriate_live_regions)} inappropriate live region usage",
-                    location=url,
-                    evidence={
-                        "inappropriate_regions": inappropriate_live_regions[:5],
-                        "wcag_guideline": "4.1.3 Status Messages (Level AA)",
-                        "eaa_requirement": "Dynamic content accessibility",
-                        "recommendation": "Use aria-live appropriately for status messages and updates",
-                    },
+                detailed_issues.append(
+                    self.create_detailed_issue(
+                        issue_type="aria_inappropriate_live_regions",
+                        severity=Severity.MEDIUM,
+                        message=f"Inappropriate live region usage: {live_type} on {region.name}",
+                        location=url,
+                        category="robust",
+                        subcategory="aria_usage",
+                        description="aria-live='assertive' should only be used for critical, time-sensitive updates.",
+                        impact="May interrupt screen reader users with non-critical information.",
+                        technical_details={
+                            "element_name": region.name,
+                            "aria_live_type": live_type,
+                        },
+                        recommendations=[
+                            "Use aria-live='polite' for most dynamic content updates."
+                        ],
+                        fix_suggestions=[
+                            f"Change aria-live='{live_type}' to aria-live='polite' on {region.name}."
+                        ],
+                        priority_score=0.5,
+                        code_location=CodeLocation(
+                            element_selector=region.name,
+                            element_tag=region.name,
+                            attribute_name="aria-live",
+                            attribute_value=live_type,
+                            full_element=str(region),
+                        ),
+                    )
                 )
-            )
 
-        return {"issues": issues, "metadata": metadata}
+        raw_data["inappropriate_live_regions_list"] = inappropriate_live_regions
+
+        return {"issues": detailed_issues, "metrics": metrics, "raw": raw_data}
 
     async def _check_interactive_aria_elements(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Check interactive ARIA elements for proper keyboard accessibility - EU/EAA standard."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check interactive elements with ARIA roles
         interactive_roles = {
@@ -1384,10 +1857,12 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
         return {"issues": issues, "metadata": metadata}
 
-    async def _check_navigation_aria(self, soup: BeautifulSoup, url: str) -> dict:
+    async def _check_navigation_aria(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
         """Check navigation ARIA for proper landmark structure - EU/EAA standard."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check for skip links (WCAG 2.4.1 - Bypass Blocks)
         skip_links = soup.find_all(
@@ -1458,10 +1933,12 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
         return {"issues": issues, "metadata": metadata}
 
-    async def _check_error_aria_handling(self, soup: BeautifulSoup, url: str) -> dict:
+    async def _check_error_aria_handling(
+        self, soup: BeautifulSoup, url: str
+    ) -> dict[str, Any]:
         """Check error handling with ARIA - EU/EAA standard for error identification."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check for error messages with proper ARIA
         error_elements = soup.find_all(
@@ -1522,10 +1999,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
     async def _check_eaa_specific_requirements(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Check EU Accessibility Act specific requirements."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check for EU-specific accessibility features
         eu_accessibility_features = []
@@ -1559,7 +2036,7 @@ class ZugaenglichkeitsZwerg(Dwarf):
         ]
         contact_found = False
         for pattern in contact_patterns:
-            if soup.find(text=re.compile(pattern, re.I)):
+            if soup.find(string=re.compile(pattern, re.I)):
                 contact_found = True
                 break
 
@@ -1587,7 +2064,7 @@ class ZugaenglichkeitsZwerg(Dwarf):
         ]
         compliance_declared = False
         for pattern in compliance_patterns:
-            if soup.find(text=re.compile(pattern, re.I)):
+            if soup.find(string=re.compile(pattern, re.I)):
                 compliance_declared = True
                 break
 
@@ -1616,10 +2093,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
     async def _check_mobile_responsive_accessibility(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Check mobile and responsive design accessibility features."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check viewport meta tag
         viewport_meta = soup.find("meta", attrs={"name": "viewport"})
@@ -1736,10 +2213,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
     async def _check_responsive_breakpoints(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Check for responsive design breakpoints and CSS media queries."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check for CSS media queries in style tags
         style_tags = soup.find_all("style")
@@ -1827,10 +2304,10 @@ class ZugaenglichkeitsZwerg(Dwarf):
 
     async def _check_mobile_performance_accessibility(
         self, soup: BeautifulSoup, url: str
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Check mobile performance aspects that affect accessibility."""
         issues = []
-        metadata = {}
+        metadata: dict[str, Any] = {}
 
         # Check for large images without optimization
         images = soup.find_all("img")
@@ -1873,14 +2350,22 @@ class ZugaenglichkeitsZwerg(Dwarf):
         scripts = soup.find_all("script", src=True)
         for script in scripts:
             src = script.get("src")
-            if src and not src.startswith(("/", "./", "../")):
+            if (
+                src
+                and not isinstance(src, list)
+                and not src.startswith(("/", "./", "../"))
+            ):
                 external_resources.append(f"script: {src}")
 
         # External stylesheets
         stylesheets = soup.find_all("link", rel="stylesheet")
         for stylesheet in stylesheets:
             href = stylesheet.get("href")
-            if href and not href.startswith(("/", "./", "../")):
+            if (
+                href
+                and not isinstance(href, list)
+                and not href.startswith(("/", "./", "../"))
+            ):
                 external_resources.append(f"stylesheet: {href}")
 
         if len(external_resources) > 5:
