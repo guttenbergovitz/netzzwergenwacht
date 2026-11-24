@@ -16,7 +16,7 @@ use crate::analysis;
 use crate::discovery::{CrawlBudget, CrawlSummary};
 use crate::domain::{
     AnalyserResult, AuditTarget, AxeEvidence, BrowserEvidence, CollectorOutcome, ExecutionBudget,
-    InvestigationScope, TargetPolicy,
+    InvestigationScope, LighthouseMetrics, TargetPolicy,
 };
 use crate::investigation::DiagnosticBackend;
 
@@ -280,6 +280,246 @@ authorised URL, classify page types, and cluster recurring systemic issues."
     }
 }
 
+/// Output produced by [`InspectPagePerformanceTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceToolOutput {
+    /// Raw Lighthouse outcome.
+    pub outcome: CollectorOutcome<LighthouseMetrics>,
+    /// `LeistungsZwerg` Level 2 performance analysis.
+    pub performance_result: AnalyserResult,
+}
+
+/// `rig-core` [`PortableTool`] wrapping Lighthouse + `LeistungsZwerg` CWV diagnosis.
+pub struct InspectPagePerformanceTool {
+    authorised_target: AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+}
+
+impl InspectPagePerformanceTool {
+    /// Constructs a new scoped performance diagnostic tool.
+    #[must_use]
+    pub fn new(
+        authorised_target: AuditTarget,
+        policy: TargetPolicy,
+        timeout: Duration,
+        backend: Arc<dyn DiagnosticBackend>,
+    ) -> Self {
+        Self {
+            authorised_target,
+            policy,
+            timeout,
+            backend,
+        }
+    }
+}
+
+impl PortableTool for InspectPagePerformanceTool {
+    const NAME: &'static str = "inspect_page_performance";
+    type Args = TargetToolArgs;
+    type Output = PerformanceToolOutput;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Run Lighthouse against the authorised URL to measure Core Web Vitals \
+(LCP, CLS, FCP, TBT) and performance score."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Authorised target URL" }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
+        let parsed = AuditTarget::parse(&arguments.url, self.policy)
+            .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
+            return Err(DiagnosticToolError::UnauthorisedTarget(format!(
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
+            )));
+        }
+
+        let outcome = self.backend.collect_lighthouse(&parsed, self.timeout).await;
+        let snap = crate::domain::EvidenceSnapshot {
+            target: parsed,
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::default(),
+            tls: CollectorOutcome::default(),
+            browser: CollectorOutcome::default(),
+            lighthouse: outcome.clone(),
+            axe: CollectorOutcome::default(),
+        };
+        let performance_result = analysis::performance::analyse(&snap);
+        Ok(PerformanceToolOutput {
+            outcome,
+            performance_result,
+        })
+    }
+}
+
+/// `rig-core` [`PortableTool`] wrapping `StrukturZwerg` semantic HTML inspection.
+pub struct InspectDocumentStructureTool {
+    authorised_target: AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+}
+
+impl InspectDocumentStructureTool {
+    /// Constructs a new scoped document-structure diagnostic tool.
+    #[must_use]
+    pub fn new(
+        authorised_target: AuditTarget,
+        policy: TargetPolicy,
+        timeout: Duration,
+        backend: Arc<dyn DiagnosticBackend>,
+    ) -> Self {
+        Self {
+            authorised_target,
+            policy,
+            timeout,
+            backend,
+        }
+    }
+}
+
+impl PortableTool for InspectDocumentStructureTool {
+    const NAME: &'static str = "inspect_document_structure";
+    type Args = TargetToolArgs;
+    type Output = AnalyserResult;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Inspect HTML5 landmarks, heading hierarchy, duplicate IDs, and interactive \
+element semantics for the authorised URL."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Authorised target URL" }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
+        let parsed = AuditTarget::parse(&arguments.url, self.policy)
+            .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
+            return Err(DiagnosticToolError::UnauthorisedTarget(format!(
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
+            )));
+        }
+
+        let exec_budget = ExecutionBudget {
+            audit_timeout: self.timeout,
+            http_timeout: self.timeout.min(Duration::from_secs(15)),
+            ..ExecutionBudget::default()
+        };
+        let snap = self
+            .backend
+            .collect_http(&parsed, exec_budget, self.policy)
+            .await;
+        match &snap.http {
+            CollectorOutcome::Captured { data } => {
+                let obs = analysis::document::DocumentObservations::from_html(&data.body_text);
+                Ok(analysis::semantics::analyse(&obs))
+            }
+            _ => Ok(AnalyserResult {
+                dwarf_id: crate::brigade::DwarfId::Struktur,
+                findings: Vec::new(),
+                checks: Vec::new(),
+            }),
+        }
+    }
+}
+
+/// `rig-core` [`PortableTool`] wrapping `SicherheitsZwerg` security posture checks.
+pub struct InspectSecurityPostureTool {
+    authorised_target: AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+}
+
+impl InspectSecurityPostureTool {
+    /// Constructs a new scoped security-posture diagnostic tool.
+    #[must_use]
+    pub fn new(
+        authorised_target: AuditTarget,
+        policy: TargetPolicy,
+        timeout: Duration,
+        backend: Arc<dyn DiagnosticBackend>,
+    ) -> Self {
+        Self {
+            authorised_target,
+            policy,
+            timeout,
+            backend,
+        }
+    }
+}
+
+impl PortableTool for InspectSecurityPostureTool {
+    const NAME: &'static str = "inspect_security_posture";
+    type Args = TargetToolArgs;
+    type Output = AnalyserResult;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Inspect HTTPS enforcement, TLS certificate metadata, HSTS, CSP, and security \
+headers for the authorised URL."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Authorised target URL" }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
+        let parsed = AuditTarget::parse(&arguments.url, self.policy)
+            .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
+            return Err(DiagnosticToolError::UnauthorisedTarget(format!(
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
+            )));
+        }
+
+        let exec_budget = ExecutionBudget {
+            audit_timeout: self.timeout,
+            http_timeout: self.timeout.min(Duration::from_secs(15)),
+            ..ExecutionBudget::default()
+        };
+        let snap = self
+            .backend
+            .collect_http(&parsed, exec_budget, self.policy)
+            .await;
+        Ok(analysis::security::analyse(&snap))
+    }
+}
+
 /// Returns `rig-core` [`ToolDefinition`] schemas for all registered follow-up tools.
 #[must_use]
 pub fn registered_tool_definitions(
@@ -296,10 +536,18 @@ pub fn registered_tool_definitions(
         timeout,
         Arc::clone(&backend),
     );
-    let crawl = CrawlAndClusterTool::new(target.clone(), policy, timeout, backend);
+    let crawl = CrawlAndClusterTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
+    let perf =
+        InspectPagePerformanceTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
+    let structure =
+        InspectDocumentStructureTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
+    let security = InspectSecurityPostureTool::new(target.clone(), policy, timeout, backend);
     vec![
         portable_tool_definition(&browser),
         portable_tool_definition(&axe),
         portable_tool_definition(&crawl),
+        portable_tool_definition(&perf),
+        portable_tool_definition(&structure),
+        portable_tool_definition(&security),
     ]
 }
