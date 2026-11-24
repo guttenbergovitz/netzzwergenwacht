@@ -1,46 +1,24 @@
-# Capability-Driven Implementation Roadmap
+# Operation Aufrüstung — Diagnostic Roadmap
 
-Status legend:
-- **Implemented**: Code exists on `develop` / `rewrite/rust`.
-- **Tested**: Covered by automated unit/integration tests.
-- **Experimentally demonstrated**: End-to-end flow demonstrated with controlled/mock inputs.
-- **Operationally validated**: Verified against real target applications and benchmarks.
-- **Planned** / **Blocked**: Not yet built or awaiting dependency/prerequisite.
+> Strategic goal: Equip Die Zwergenbrigade with broad, deterministic, evidence-first web diagnostics (70% diagnostics & collectors, 20% tests & differential validation, 10% agentic integration).
 
----
+## Phase A: Upstream Verification & Inventories (Complete)
+- Pinned upstream reference: `squirrelscan` `v0.0.191-beta.1` (`640f9b36afc467f83ab9ebf5890bf4ac8ae6bdaf`, MIT).
+- Machine-extracted inventories: `upstream-rule-inventory.json` (360 rules), `nzw-rule-inventory.json` (36 rules), `diagnostic-capability-mapping.json`.
 
-## Milestone A: Foundation Integrity *(In Progress)*
-- **Validated `AuditTarget` & SSRF guardrails** (`src/domain.rs`): *Implemented, Tested*
-- **Bounded HTTP + `rustls` TLS collector** (`src/collection.rs`): *Implemented, Tested*
-- **Shared single-parse `DocumentObservations` & 9 deterministic analysers** (`src/analysis/`): *Implemented, Tested*
-- **Level 2 subprocess adapters** (`lighthouse`, `chromium` CDP, `axe-core` in `src/adapters/`): *Implemented (CLI parsers Tested; live browser integration Planned)*
-- **Chaos & cancellation integration tests** (`tests/chaos_and_cancellation.rs`): *Implemented, Tested*
-- **Defect register remediation** (`docs/evaluation/defect-register.md` items #1–#10): *Planned* (required before declaring Milestone A complete)
+## Phase B: Observation Model Foundation (Slice 1 — Complete)
+- Enriched `DocumentObservations` (`LinkObs`, `HreflangObs`, `json_ld_blocks`, `SocialMetaObs`, `ScriptObs`, `StylesheetObs`, `FormObs`, `ImageObs` dimensions, `viewport_meta`, `charset_declared`, `has_skip_link`, `has_favicon`, `visible_text_sample`) and `HttpEvidence` header helpers.
 
-## Milestone B: Agentic Investigation Proof of Concept *(In Progress)*
-- [x] **ADR 0005 & Rig (`rig-core`) evaluation** (`docs/adr/0005-agentic-investigation-architecture.md`): *Implemented*
-- [x] **Investigation domain model & `InvestigationContext`** (`src/investigation/mod.rs`): *Implemented, Tested*
-- [x] **Rig `PortableTool` catalogue & multi-turn `KommandantZwerg` hypothesis loop** (`src/investigation/tools.rs`, `src/investigation/mod.rs`, `nzw investigate`): *Implemented, Experimentally demonstrated (mock LLM + backend)*
-- [x] **`rig-core` (`0.42.0`) crate integration**: *Implemented, Tested* (MSRV `1.88`-compatible `PortableTool` + `ToolDefinition`)
-- [x] **Initial `ExecutiveBrief` & backlog-ready `RemediationTask`s** (`src/investigation/mod.rs`): *Implemented, Tested*
+## Phase C: High-Value Deterministic Rule Families (In Progress)
+- **Slice 2 (`SuchZwerg` + `InhaltsZwerg`):** `H1` uniqueness, `hreflang`, JSON-LD validation, OpenGraph/Twitter Card, `X-Robots-Tag`, placeholders, text-to-HTML ratio, legal/trust links.
+- **Slice 3 (`SicherheitsZwerg` + `NetzZwerg`):** `Set-Cookie` flags, mixed content, SRI, permissive CORS, `security.txt`, CSP directive hardening, `robots.txt`/`sitemap.xml` diagnostics.
+- **Slice 4 (`LeistungsZwerg` + `GestaltungsZwerg` + `StrukturZwerg`):** Render-blocking assets, image `width`/`height`, `<meta name="viewport">`, charset/doctype, skip-link checks.
 
-## Milestone C: Application-Level Investigation *(In Progress)*
-- [x] **Bounded crawling, URL normalisation, and origin/depth caps** (`src/discovery/mod.rs`): *Implemented, Tested*
-- [x] **Page type classification (`PageType`)** (`src/discovery/mod.rs`): *Implemented, Tested*
-- [x] **Systemic issue clustering across pages (`SystemicIssue`)** (`src/discovery/mod.rs`): *Implemented, Tested*
-- [x] **Adaptive sampling & crawl tool wired into `KommandantZwerg`** (`src/investigation/tools.rs`, `CrawlAndClusterTool`): *Implemented, Tested*
+## Phase D: Application-Level Graph Diagnostics
+- Cross-page duplicate titles/descriptions, canonical graph, `hreflang` reciprocity, orphan pages, broken internal link checks.
 
-## Milestone D: Stakeholder Value *(In Progress)*
-- [x] **Executive brief (`ExecutiveBrief`) & backlog-ready `RemediationTask`s** (`src/investigation/reporting.rs`): *Implemented, Tested*
-- [x] **Configurable release readiness assessments (`ReleaseReadinessAssessment`)** (`src/investigation/reporting.rs`): *Implemented, Tested*
-- [x] **Role-tailored report perspectives & Markdown export (`--audience pm|po|cto|technical`, `--format markdown`)**: *Implemented, Tested*
+## Phase E: Optional External Adapters & Differential Validation
+- Optional bounded `adapters::squirrelscan` (`squirrel audit -f json`) + Zwergenprüfstand differential test suite.
 
-## Milestone E: Continuous Quality Assurance *(In Progress)*
-- [x] **Comparable regression semantics (`unverified_findings`, `changed_findings`, `reintroduced_findings`, `not_comparable_reason`)** (`src/persistence.rs`): *Implemented, Tested*
-- [x] **`nzw verify --baseline <path> <url>` remediation verification**: *Implemented, Tested via Zwergenprüfstand*
-- [ ] **Scheduled monitoring and portfolio comparisons**: *Planned*
-
-## Milestone F: Product Hardening & Integration *(In Progress)*
-- [x] **`Zwergenprüfstand` benchmark fixtures & Mode A vs Mode C evaluation** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): *Implemented, Experimentally demonstrated (local HTTP server + scripted LLM)*
-- [ ] **Live external LLM & real-browser operational benchmarks**: *Planned / Blocked on external API keys in CI*
-- [ ] **Optional MCP interface & external issue-tracker integrations**: *Planned*
+## Phase F: CLI & Rig Integration
+- Rich terminal presentation (`nzw check` / `nzw investigate`) and typed specialist observation queries over the expanded deterministic engine.
