@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Agentic Investigation Proof of Concept (Milestone B) (2026-11-24)
+- Added `src/investigation/mod.rs` (`InvestigationContext`, `InvestigationBudget`, `BudgetLedger`, `DiagnosticHypothesis`, `LiveDiagnosticBackend`, `run_investigation`) implementing the `KommandantZwerg` hypothesis-driven diagnostic loop.
+- Added `nzw investigate <url> [--objective ...]` CLI subcommand in `src/main.rs`.
+
 ### Strategic Reorientation & Defect Reconciliation (2026-11-24)
 - Added [docs/migration/original-agentic-vision.md](docs/migration/original-agentic-vision.md) recovering `./legacy` product intent and agentic lessons.
 - Added [docs/product/vision-and-strategy.md](docs/product/vision-and-strategy.md) and [docs/product/competitive-landscape.md](docs/product/competitive-landscape.md).

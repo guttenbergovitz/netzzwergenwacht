@@ -12,4 +12,5 @@ pub mod collection;
 pub mod config;
 pub mod domain;
 pub mod intelligence;
+pub mod investigation;
 pub mod persistence;
