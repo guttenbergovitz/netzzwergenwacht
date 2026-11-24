@@ -603,7 +603,7 @@ pub async fn run_investigation_with_specialists(
         });
 
         // Check for specialist consultation requests.
-        let (tool_succeeded, new_results) = if let Some(dwarf_str) = decision
+        let (tool_succeeded, new_results, is_consultation) = if let Some(dwarf_str) = decision
             .requested_tool
             .strip_prefix("consult_specialist:")
         {
@@ -621,15 +621,18 @@ pub async fn run_investigation_with_specialists(
                 _ => None,
             };
             if let Some(dwarf_id) = dwarf_id {
-                consult_specialist_during_investigation(
+                let (ok, results) = consult_specialist_during_investigation(
                     dwarf_id,
                     &hypothesis.proposed_explanation,
                     &mut ctx,
                     &initial_report,
                     llm,
                     tool_rem,
+                    Arc::clone(&backend),
+                    policy,
                 )
-                .await
+                .await;
+                (ok, results, true)
             } else {
                 ctx.tool_trace.push(ToolInvocationRecord {
                     tool_id: decision.requested_tool.clone(),
@@ -638,10 +641,10 @@ pub async fn run_investigation_with_specialists(
                     succeeded: false,
                     summary: format!("invalid dwarf_id in consult request: {dwarf_str}"),
                 });
-                (false, Vec::new())
+                (false, Vec::new(), false)
             }
         } else {
-            execute_rig_tool(
+            let (ok, results) = execute_rig_tool(
                 &decision.requested_tool,
                 &target,
                 policy,
@@ -650,8 +653,14 @@ pub async fn run_investigation_with_specialists(
                 &mut snapshot,
                 &mut ctx,
             )
-            .await
+            .await;
+            (ok, results, false)
         };
+        // Consultation tool execution returns results that need to be added to follow_up_results.
+        // Regular tool execution via execute_rig_tool already adds to ctx.follow_up_results internally.
+        if is_consultation {
+            ctx.follow_up_results.extend(new_results.clone());
+        }
         ctx.snapshot = Some(snapshot.clone());
         ctx.events.push(InvestigationEvent::ToolCompleted {
             tool_id: decision.requested_tool.clone(),
@@ -878,6 +887,11 @@ async fn execute_rig_tool(
 }
 
 /// Consults a specialist dwarf during investigation with full evidence context.
+/// If specialist requests a tool, executes it and incorporates findings.
+///
+/// # Provider Routing
+/// Currently uses the passed `llm` provider (typically Kommandant's model).
+/// P1: Should accept `ProviderRouter` to resolve per-specialist models.
 async fn consult_specialist_during_investigation(
     dwarf_id: DwarfId,
     question: &str,
@@ -885,6 +899,8 @@ async fn consult_specialist_during_investigation(
     initial_report: &AuditReport,
     llm: &dyn LlmProvider,
     timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    policy: TargetPolicy,
 ) -> (bool, Vec<AnalyserResult>) {
     // Build evidence summary from investigation context.
     let finding_summary: Vec<String> = initial_report
@@ -952,31 +968,62 @@ async fn consult_specialist_during_investigation(
         .await
     {
         Ok(raw_resp) => {
-            // Attempt structured parse; fall back to raw if invalid.
-            let contribution = if let Ok(out) =
-                serde_json::from_str::<crate::patrol::SpecialistOutput>(&raw_resp)
-            {
-                SpecialistContribution {
-                    dwarf_id,
-                    focus: question.to_owned(),
-                    observations: out.confirmed_observations,
-                    uncertainty: out.remaining_uncertainty,
+            // Attempt structured parse; reject unstructured responses.
+            let mut structured = match serde_json::from_str::<crate::patrol::SpecialistOutput>(&raw_resp) {
+                Ok(out) => out,
+                Err(_) => {
+                    eprintln!("Specialist consultation failed: unstructured response");
+                    return (false, Vec::new());
                 }
-            } else {
-                SpecialistContribution {
-                    dwarf_id,
-                    focus: question.to_owned(),
-                    observations: vec![raw_resp],
-                    uncertainty: "unstructured specialist response".to_owned(),
+            };
+
+            let mut tool_results = Vec::new();
+
+            // Execute tool if specialist requested one.
+            if let Some(ref tool_id) = structured.requested_tool {
+                if let Some(ref mut snapshot) = ctx.snapshot {
+                    let (tool_ok, tool_outputs) = run_specialist_tool_on_snapshot(
+                        tool_id,
+                        &ctx.target,
+                        policy,
+                        timeout,
+                        backend,
+                        snapshot,
+                    )
+                    .await;
+
+                    if tool_ok {
+                        for res in &tool_outputs {
+                            for f in &res.findings {
+                                structured.evidence_refs.push(f.rule_id.0.clone());
+                                structured.confirmed_observations.push(format!("{}: {}", f.rule_id.0, f.title));
+                            }
+                        }
+                        tool_results = tool_outputs;
+                        ctx.tool_trace.push(ToolInvocationRecord {
+                            tool_id: tool_id.clone(),
+                            dwarf_id,
+                            authorised: true,
+                            succeeded: true,
+                            summary: format!("specialist tool execution via consultation: {} findings", tool_results.iter().map(|r| r.findings.len()).sum::<usize>()),
+                        });
+                    }
                 }
+            }
+
+            let contribution = SpecialistContribution {
+                dwarf_id,
+                focus: question.to_owned(),
+                observations: structured.confirmed_observations,
+                uncertainty: structured.remaining_uncertainty,
             };
             ctx.specialists.push(contribution);
             ctx.events.push(InvestigationEvent::SpecialistActivated {
                 dwarf_id,
                 focus: question.to_owned(),
             });
-            // Return empty results since specialist consultation doesn't produce AnalyserResults.
-            (true, Vec::new())
+
+            (true, tool_results)
         }
         Err(err) => {
             eprintln!("Specialist consultation failed: {err}");
@@ -1612,10 +1659,10 @@ mod tests {
             responses: Mutex::new(VecDeque::from([
                 // Kommandant requests specialist consultation.
                 r#"{"ready_to_conclude":false,"originating_rule":"sec.http.tls","proposed_explanation":"TLS configuration unclear; consult SicherheitsZwerg","requested_tool":"consult_specialist:Sicherheits"}"#.to_owned(),
-                // Specialist responds with structured output.
-                r#"{"confirmed_observations":["TLS 1.2 negotiated","Certificate valid"],"evidence_refs":["sec.http.tls"],"remaining_uncertainty":"No TLS 1.3 support observed","requested_tool":null,"recommendation":"Upgrade to TLS 1.3"}"#.to_owned(),
-                // Kommandant evaluates with specialist input.
-                r#"{"status":"supported","evaluation_summary":"SicherheitsZwerg confirmed TLS 1.2 in use","conclusion":"TLS configuration confirmed but outdated."}"#.to_owned(),
+                // Specialist responds requesting security tool for detailed inspection.
+                r#"{"confirmed_observations":[],"evidence_refs":[],"remaining_uncertainty":"Need detailed TLS inspection","requested_tool":"inspect_security_posture","recommendation":"Run security analysis"}"#.to_owned(),
+                // Kommandant evaluates with specialist input + tool findings.
+                r#"{"status":"supported","evaluation_summary":"SicherheitsZwerg confirmed TLS 1.2 via security inspection","conclusion":"TLS configuration confirmed but outdated."}"#.to_owned(),
             ])),
         };
 
@@ -1638,9 +1685,12 @@ mod tests {
         assert_eq!(report.specialists.len(), 1, "Should record one specialist consultation");
         assert_eq!(report.specialists[0].dwarf_id, DwarfId::Sicherheits);
         assert!(report.specialists[0].focus.contains("TLS configuration unclear"));
-        assert!(report.specialists[0].observations.iter().any(|o| o.contains("TLS 1.2")));
+        // Specialist requested tool execution, should have observations from tool findings.
+        assert!(!report.specialists[0].observations.is_empty(), "Specialist should have observations from tool execution");
         assert_eq!(report.hypotheses.len(), 1);
         assert_eq!(report.hypotheses[0].status, HypothesisStatus::Supported);
+        // Verify tool was executed during consultation.
+        assert!(report.tool_trace.iter().any(|t| t.tool_id == "inspect_security_posture" && t.dwarf_id == DwarfId::Sicherheits), "Tool should be traced to specialist");
     }
 
     #[tokio::test]

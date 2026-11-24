@@ -60,6 +60,7 @@ cargo test --all-targets --locked
 
 ## Documentation
 
+- **[Configuration Guide](CONFIG.md)** — Model routing, provider setup, cost optimization strategies
 - [ADR 0001: Rewrite NetzZwergenWacht in Rust](docs/adr/0001-rewrite-netzzwergenwacht-in-rust.md)
 - [ADR 0002: Zwergenbrigade Domains, Shared Document Observations, and Evidence Levels](docs/adr/0002-zwergenbrigade-domains-shared-document-and-evidence-levels.md)
 - [Die Zwergenbrigade](docs/architecture/zwergenbrigade.md)

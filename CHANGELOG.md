@@ -7,8 +7,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 ### Shared Evidence & Collaborative Reasoning via Specialist Re-Consultation (2026-11-24)
 - Added `consult_specialist:<DwarfId>` tool for `KommandantZwerg` to re-consult domain specialists during investigation with full evidence context (findings, hypotheses, prior contributions).
 - Implemented `consult_specialist_during_investigation` (`src/investigation/mod.rs`) building comprehensive evidence summaries from `InvestigationContext` for specialist prompts.
+- Specialist consultations now execute requested tools (`inspect_security_posture`, etc.) and incorporate findings as evidence, returning actual `AnalyserResult`s rather than pure LLM opinions.
+- Reject unstructured specialist responses to enforce evidence-based reasoning.
 - Updated `kommandant_hypothesis_prompt` (`src/investigation/prompts.rs`) to advertise consultation tools and explain their usage for domain-specific interpretation.
-- Added test `kommandant_consults_specialist_with_full_context` verifying `KommandantZwerg` can delegate specific questions to specialists and incorporate their structured reasoning.
+- Added test `kommandant_consults_specialist_with_full_context` verifying specialist tool execution during consultation and evidence incorporation.
 
 ### Collaborative Specialist Tool Execution & Kommandant Handoff (2026-11-24)
 - Added `SpecialistOutput` (`confirmed_observations`, `evidence_refs`, `remaining_uncertainty`, `requested_tool`, `recommendation`) and tool execution via `run_specialist_tool_on_snapshot` (`src/investigation/mod.rs`, `src/patrol/mod.rs`).
