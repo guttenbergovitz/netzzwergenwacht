@@ -199,6 +199,7 @@ mod tests {
                 console_errors: Vec::new(),
                 failed_requests: Vec::new(),
                 viewports: Vec::new(),
+                provenance: None,
             },
         });
         let res = analyse(&snap);
@@ -227,6 +228,7 @@ mod tests {
                     status_code: Some(500),
                 }],
                 viewports: Vec::new(),
+                provenance: None,
             },
         });
         let res = analyse(&snap);

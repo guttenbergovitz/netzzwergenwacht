@@ -235,6 +235,12 @@ function findBrowser() {
       console_errors: consoleErrors,
       failed_requests: failedRequests,
       viewports,
+      provenance: {
+        viewport: 'mobile (390x844), desktop (1280x720)',
+        throttling_profile: 'unthrottled',
+        origin: 'lab',
+        captured_at: new Date().toISOString(),
+      },
     }));
   } finally {
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();

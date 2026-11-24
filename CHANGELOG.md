@@ -4,6 +4,9 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Measurement Provenance on Browser & Lighthouse Evidence (2026-11-24)
+- Added `MeasurementProvenance` (`viewport`, `throttling_profile`, `origin`, `captured_at`) to `BrowserEvidence` and `LighthouseMetrics` (`src/domain.rs`), populated by `CDP_HARNESS_JS` (`src/adapters/browser.rs`) and `parse_lighthouse_json` (`src/adapters/lighthouse.rs`).
+
 ### Level 2 Collector Policy Gates & Structured AI JSON Output (2026-11-24)
 - Added `Level2CollectorStatus` and `AuditReport::level2_collectors` (`src/analysis/mod.rs`), plus `PolicyConfig::require_collectors` gating in `config::evaluate_policy` (`src/config.rs`).
 - Added optional `AuditReport::ai_synthesis` (`AiSynthesis` with `JsonSchema`) and populated it in `nzw check --format json --ai` (`src/main.rs`).

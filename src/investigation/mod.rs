@@ -1309,6 +1309,7 @@ mod tests {
                     }],
                     failed_requests: Vec::new(),
                     viewports: Vec::new(),
+                    provenance: None,
                 },
             },
             axe: CollectorOutcome::default(),
@@ -1332,6 +1333,7 @@ mod tests {
                         unit: MeasurementUnit::Milliseconds,
                     },
                     performance_score: Some(58),
+                    provenance: None,
                 },
             },
         });

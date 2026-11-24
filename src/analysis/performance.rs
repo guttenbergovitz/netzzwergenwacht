@@ -520,6 +520,7 @@ mod tests {
                         unit: MeasurementUnit::Milliseconds,
                     },
                     performance_score: Some(62),
+                    provenance: None,
                 },
             },
             axe: CollectorOutcome::default(),
