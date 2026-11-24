@@ -8,7 +8,7 @@ use crate::analysis::header_value;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
-    FindingCategory, FindingKind, HttpEvidence, RuleId, Severity,
+    FindingCategory, FindingFingerprint, FindingKind, HttpEvidence, RuleId, Severity,
 };
 
 const RULE_THIN_CONTENT: &str = "inh.content.thin_content";
@@ -40,6 +40,7 @@ fn check_thin_content(
 ) {
     if obs.visible_word_count < 30 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_THIN_CONTENT.to_owned()),
             category: FindingCategory::Content,
             evidence_level: EvidenceLevel::Source,
@@ -66,6 +67,7 @@ fn check_thin_content(
         });
     } else if obs.visible_word_count < 100 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_THIN_CONTENT.to_owned()),
             category: FindingCategory::Content,
             evidence_level: EvidenceLevel::Source,
@@ -109,6 +111,7 @@ fn check_freshness_headers(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_FRESHNESS_HEADERS.to_owned()),
             category: FindingCategory::Content,
             evidence_level: EvidenceLevel::Source,

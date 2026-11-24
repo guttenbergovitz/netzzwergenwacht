@@ -2,9 +2,11 @@
 //!
 //! Separates validated domain contracts ([`domain`]), Die Zwergenbrigade
 //! identity registry ([`brigade`]), bounded external evidence collection
-//! ([`collection`]), and deterministic analysers ([`analysis`]).
+//! ([`collection`]), deterministic analysers ([`analysis`]), and audit history
+//! persistence ([`persistence`]).
 
 pub mod analysis;
 pub mod brigade;
 pub mod collection;
 pub mod domain;
+pub mod persistence;

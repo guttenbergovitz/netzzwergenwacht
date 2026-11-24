@@ -233,6 +233,34 @@ impl Default for ExecutionBudget {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct RuleId(pub String);
 
+/// Stable cross-run finding fingerprint for regression tracking.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+pub struct FindingFingerprint(pub String);
+
+impl FindingFingerprint {
+    /// Computes a deterministic 64-bit FNV-1a hex fingerprint for a finding.
+    #[must_use]
+    pub fn compute(host: &str, rule_id: &RuleId, subject_detail: &str) -> Self {
+        const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
+        let mut hash = FNV_OFFSET_BASIS;
+        for part in [
+            host.as_bytes(),
+            b"|",
+            rule_id.0.as_bytes(),
+            b"|",
+            subject_detail.as_bytes(),
+        ] {
+            for &byte in part {
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(FNV_PRIME);
+            }
+        }
+        Self(format!("{hash:016x}"))
+    }
+}
+
 /// Evidence capability level required or used by an observation or rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -398,6 +426,9 @@ impl EvidenceRef {
 /// Normalised audit finding emitted by a deterministic or heuristic analyser.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Finding {
+    /// Stable cross-run fingerprint for regression diffing.
+    #[serde(default)]
+    pub fingerprint: FindingFingerprint,
     /// Stable rule identifier (for example `netz.http.status_error`).
     pub rule_id: RuleId,
     /// Audit domain category.
@@ -648,6 +679,18 @@ mod tests {
             error: "timeout".to_owned(),
         };
         assert_ne!(ok, failed);
+    }
+
+    #[test]
+    fn fingerprint_is_deterministic_and_host_scoped() {
+        assert_ne!(
+            FindingFingerprint::compute("example.com", &RuleId("r1".to_owned()), "d1"),
+            FindingFingerprint::compute("example.org", &RuleId("r1".to_owned()), "d1")
+        );
+        assert_eq!(
+            FindingFingerprint::compute("example.com", &RuleId("r1".to_owned()), "d1"),
+            FindingFingerprint::compute("example.com", &RuleId("r1".to_owned()), "d1")
+        );
     }
 
     #[test]

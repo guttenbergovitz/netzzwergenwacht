@@ -8,7 +8,7 @@ use crate::analysis::header_value;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
-    FindingCategory, FindingKind, HttpEvidence, RuleId, Severity,
+    FindingCategory, FindingFingerprint, FindingKind, HttpEvidence, RuleId, Severity,
 };
 
 const RULE_TITLE: &str = "such.meta.title";
@@ -44,6 +44,7 @@ fn check_title(
 ) {
     let Some(title) = obs.title.as_deref() else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_TITLE.to_owned()),
             category: FindingCategory::Seo,
             evidence_level: EvidenceLevel::Source,
@@ -73,6 +74,7 @@ fn check_title(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_TITLE.to_owned()),
             category: FindingCategory::Seo,
             evidence_level: EvidenceLevel::Source,
@@ -108,6 +110,7 @@ fn check_description(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_DESCRIPTION.to_owned()),
             category: FindingCategory::Seo,
             evidence_level: EvidenceLevel::Source,
@@ -142,6 +145,7 @@ fn check_canonical(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_CANONICAL.to_owned()),
             category: FindingCategory::Seo,
             evidence_level: EvidenceLevel::Source,
@@ -186,6 +190,7 @@ fn check_robots(
             EvidenceSource::HttpBody
         };
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_ROBOTS.to_owned()),
             category: FindingCategory::Seo,
             evidence_level: EvidenceLevel::Source,

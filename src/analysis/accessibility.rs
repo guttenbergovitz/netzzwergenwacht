@@ -10,7 +10,7 @@ use crate::analysis::document::DocumentObservations;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
-    FindingCategory, FindingKind, RuleId, Severity,
+    FindingCategory, FindingFingerprint, FindingKind, RuleId, Severity,
 };
 
 const RULE_DOC_LANG: &str = "a11y.doc.lang";
@@ -105,6 +105,7 @@ fn check_doc_lang(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_DOC_LANG.to_owned()),
             category: FindingCategory::Accessibility,
             evidence_level: EvidenceLevel::Source,
@@ -139,6 +140,7 @@ fn check_image_alt(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_IMAGE_ALT.to_owned()),
             category: FindingCategory::Accessibility,
             evidence_level: EvidenceLevel::Source,
@@ -193,6 +195,7 @@ fn check_form_labels(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_FORM_LABELS.to_owned()),
             category: FindingCategory::Accessibility,
             evidence_level: EvidenceLevel::Source,
@@ -249,6 +252,7 @@ fn check_aria_references(
             .collect::<Vec<_>>()
             .join(", ");
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_ARIA_REFS.to_owned()),
             category: FindingCategory::Accessibility,
             evidence_level: EvidenceLevel::Source,
@@ -286,6 +290,7 @@ fn check_interactive_names(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_INTERACTIVE_NAMES.to_owned()),
             category: FindingCategory::Accessibility,
             evidence_level: EvidenceLevel::Source,

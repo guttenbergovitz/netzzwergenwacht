@@ -4,7 +4,7 @@ use crate::analysis::{require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot,
-    EvidenceSource, Finding, FindingCategory, FindingKind, RuleId, Severity,
+    EvidenceSource, Finding, FindingCategory, FindingFingerprint, FindingKind, RuleId, Severity,
 };
 
 const RULE_HTTP_STATUS: &str = "netz.http.status_error";
@@ -45,6 +45,7 @@ fn check_status(
 ) {
     if http.status_code >= 500 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_HTTP_STATUS.to_owned()),
             category: FindingCategory::Reliability,
             evidence_level: EvidenceLevel::Source,
@@ -68,6 +69,7 @@ fn check_status(
         });
     } else if http.status_code >= 400 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_HTTP_STATUS.to_owned()),
             category: FindingCategory::Reliability,
             evidence_level: EvidenceLevel::Source,
@@ -107,6 +109,7 @@ fn check_redirects(
 ) {
     if http.redirect_chain.len() > 2 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_REDIRECT_CHAIN.to_owned()),
             category: FindingCategory::Reliability,
             evidence_level: EvidenceLevel::Source,

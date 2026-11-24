@@ -8,8 +8,8 @@ use crate::analysis::{header_value, require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot,
-    EvidenceSource, Finding, FindingCategory, FindingKind, HttpEvidence, Measurement, RuleId,
-    Severity,
+    EvidenceSource, Finding, FindingCategory, FindingFingerprint, FindingKind, HttpEvidence,
+    Measurement, RuleId, Severity,
 };
 
 const RULE_EXCHANGE_DURATION: &str = "perf.http.exchange_duration";
@@ -116,6 +116,7 @@ fn check_exchange_duration(
 
     if ms >= thresholds.high_exchange_ms {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_EXCHANGE_DURATION.to_owned()),
             category: FindingCategory::Performance,
             evidence_level: EvidenceLevel::Source,
@@ -142,6 +143,7 @@ fn check_exchange_duration(
         });
     } else if ms >= thresholds.warn_exchange_ms {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_EXCHANGE_DURATION.to_owned()),
             category: FindingCategory::Performance,
             evidence_level: EvidenceLevel::Source,
@@ -179,6 +181,7 @@ fn check_payload_size(
 ) {
     if http.body_bytes >= thresholds.high_payload_bytes || http.body_truncated {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_PAYLOAD_SIZE.to_owned()),
             category: FindingCategory::Performance,
             evidence_level: EvidenceLevel::Source,
@@ -204,6 +207,7 @@ fn check_payload_size(
         });
     } else if http.body_bytes >= thresholds.warn_payload_bytes {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_PAYLOAD_SIZE.to_owned()),
             category: FindingCategory::Performance,
             evidence_level: EvidenceLevel::Source,
@@ -270,6 +274,7 @@ fn check_compression(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_COMPRESSION.to_owned()),
             category: FindingCategory::Performance,
             evidence_level: EvidenceLevel::Source,
@@ -312,6 +317,7 @@ fn check_cache_headers(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_CACHE_HEADERS.to_owned()),
             category: FindingCategory::Performance,
             evidence_level: EvidenceLevel::Source,

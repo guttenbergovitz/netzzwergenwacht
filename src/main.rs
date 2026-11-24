@@ -1,5 +1,6 @@
 //! `NetzZwergenWacht` CLI entry point (`DokumentationsZwerg` presentation).
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use netzzwergenwacht::domain::{
     AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, ExecutionBudget, Measurement,
     Severity, TargetPolicy,
 };
+use netzzwergenwacht::persistence::{self, RegressionReport};
 
 const EXIT_OK: u8 = 0;
 const EXIT_FINDINGS: u8 = 1;
@@ -49,6 +51,9 @@ enum Command {
         /// Maximum number of HTTP redirects to follow.
         #[arg(long, default_value_t = 5)]
         max_redirects: usize,
+        /// Optional JSONL file path to append this audit report for history/regression tracking.
+        #[arg(long)]
+        history: Option<PathBuf>,
     },
     /// Validate a target URL against target and SSRF policies without fetching.
     Validate {
@@ -57,6 +62,16 @@ enum Command {
         /// Allow loopback and private network targets.
         #[arg(long)]
         allow_private: bool,
+    },
+    /// Compare a baseline and current audit report (JSON or JSONL) for regressions.
+    Diff {
+        /// Path to baseline JSON or JSONL report file.
+        baseline: PathBuf,
+        /// Path to current JSON or JSONL report file.
+        current: PathBuf,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
     },
 }
 
@@ -95,6 +110,7 @@ async fn main() -> ExitCode {
             timeout_secs,
             audit_timeout_secs,
             max_redirects,
+            history,
         } => {
             let policy = target_policy(allow_private);
             let target = match AuditTarget::parse(&url, policy) {
@@ -114,6 +130,17 @@ async fn main() -> ExitCode {
 
             let snapshot = collection::collect_http(&target, &budget, policy).await;
             let report = analysis::run_all(&snapshot);
+
+            if let Some(history_path) = history
+                && let Err(err) = persistence::append_report(&history_path, &report)
+            {
+                eprintln!(
+                    "failed to append audit history to {}: {err}",
+                    history_path.display()
+                );
+                return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+            }
+
             let code = exit_code_for_report(&report);
 
             match format {
@@ -132,6 +159,75 @@ async fn main() -> ExitCode {
                     code
                 }
             }
+        }
+        Command::Diff {
+            baseline,
+            current,
+            format,
+        } => run_diff(&baseline, &current, format),
+    }
+}
+
+fn run_diff(baseline_path: &Path, current_path: &Path, format: OutputFormat) -> ExitCode {
+    let baseline = match persistence::load_latest_or_single(baseline_path) {
+        Ok(r) => r,
+        Err(err) => {
+            eprintln!("failed to load baseline {}: {err}", baseline_path.display());
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+    let current = match persistence::load_latest_or_single(current_path) {
+        Ok(r) => r,
+        Err(err) => {
+            eprintln!("failed to load current {}: {err}", current_path.display());
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+
+    let diff = persistence::diff_reports(&baseline, &current);
+    let code = if diff.summary.new_count > 0 {
+        ExitCode::from(EXIT_FINDINGS)
+    } else {
+        ExitCode::from(EXIT_OK)
+    };
+
+    match format {
+        OutputFormat::Json => match serde_json::to_string_pretty(&diff) {
+            Ok(json) => {
+                println!("{json}");
+                code
+            }
+            Err(err) => {
+                eprintln!("failed to serialise diff JSON: {err}");
+                ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+            }
+        },
+        OutputFormat::Text => {
+            print_diff_report(&diff);
+            code
+        }
+    }
+}
+
+fn print_diff_report(diff: &RegressionReport) {
+    println!("NETZZWERGENWACHT REGRESSION DIFF");
+    println!("Baseline: {}", diff.baseline_target);
+    println!("Current:  {}", diff.current_target);
+    println!(
+        "Summary:  {} new, {} persisting, {} resolved",
+        diff.summary.new_count, diff.summary.persisting_count, diff.summary.resolved_count
+    );
+
+    if !diff.new_findings.is_empty() {
+        println!("\nNew findings:");
+        for f in &diff.new_findings {
+            println!("  + [{:?}] ({}) {}", f.severity, f.rule_id.0, f.title);
+        }
+    }
+    if !diff.resolved_findings.is_empty() {
+        println!("\nResolved findings:");
+        for f in &diff.resolved_findings {
+            println!("  - [{:?}] ({}) {}", f.severity, f.rule_id.0, f.title);
         }
     }
 }

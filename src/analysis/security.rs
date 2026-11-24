@@ -6,8 +6,8 @@ use crate::analysis::{header_value, require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, CollectorOutcome, Confidence, EvidenceLevel, EvidenceRef,
-    EvidenceSnapshot, EvidenceSource, Finding, FindingCategory, FindingKind, HttpEvidence, RuleId,
-    Severity,
+    EvidenceSnapshot, EvidenceSource, Finding, FindingCategory, FindingFingerprint, FindingKind,
+    HttpEvidence, RuleId, Severity,
 };
 
 const RULE_HTTPS: &str = "sec.transport.https";
@@ -100,6 +100,7 @@ fn check_tls_expiry(
 
     if tls.days_until_expiry < 0 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
@@ -124,6 +125,7 @@ fn check_tls_expiry(
         });
     } else if tls.days_until_expiry < 14 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
@@ -144,6 +146,7 @@ fn check_tls_expiry(
         });
     } else if tls.days_until_expiry < 30 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
@@ -183,6 +186,7 @@ fn check_https(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_HTTPS.to_owned()),
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
@@ -233,6 +237,7 @@ fn check_hsts(
         }
         Some(val) => {
             findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
                 rule_id: RuleId(RULE_HSTS.to_owned()),
                 category: FindingCategory::Security,
                 evidence_level: EvidenceLevel::Source,
@@ -257,6 +262,7 @@ fn check_hsts(
         }
         None => {
             findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
                 rule_id: RuleId(RULE_HSTS.to_owned()),
                 category: FindingCategory::Security,
                 evidence_level: EvidenceLevel::Source,
@@ -303,6 +309,7 @@ fn check_csp(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<
         .filter(|v| !v.is_empty())
     else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_CSP.to_owned()),
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
@@ -333,6 +340,7 @@ fn check_csp(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<
     let has_unsafe = lower.contains("'unsafe-inline'") || lower.contains("'unsafe-eval'");
     if has_unsafe {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_CSP.to_owned()),
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
@@ -373,6 +381,7 @@ fn check_xcto(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec
         other => {
             let detail = other.map_or_else(|| "absent".to_owned(), |v| format!("value={v}"));
             findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
                 rule_id: RuleId(RULE_XCTO.to_owned()),
                 category: FindingCategory::Security,
                 evidence_level: EvidenceLevel::Source,
@@ -411,6 +420,7 @@ fn check_xfo(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<
             |v| format!("x-frame-options={v}"),
         );
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_XFO.to_owned()),
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
@@ -445,6 +455,7 @@ fn check_referrer_policy(
             let last_token = lower.split(',').next_back().map_or("", str::trim);
             if last_token == "unsafe-url" || !VALID_REFERRER_POLICIES.contains(&last_token) {
                 findings.push(Finding {
+                    fingerprint: FindingFingerprint::default(),
                     rule_id: RuleId(RULE_REFERRER.to_owned()),
                     category: FindingCategory::Security,
                     evidence_level: EvidenceLevel::Source,
@@ -477,6 +488,7 @@ fn check_referrer_policy(
         }
         _ => {
             findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
                 rule_id: RuleId(RULE_REFERRER.to_owned()),
                 category: FindingCategory::Security,
                 evidence_level: EvidenceLevel::Source,

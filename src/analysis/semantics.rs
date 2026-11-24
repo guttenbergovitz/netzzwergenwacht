@@ -7,7 +7,7 @@ use crate::analysis::document::DocumentObservations;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
-    FindingCategory, FindingKind, RuleId, Severity,
+    FindingCategory, FindingFingerprint, FindingKind, RuleId, Severity,
 };
 
 const RULE_DUPLICATE_IDS: &str = "str.doc.duplicate_ids";
@@ -63,6 +63,7 @@ fn check_duplicate_ids(
             .collect::<Vec<_>>()
             .join(", ");
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_DUPLICATE_IDS.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -109,6 +110,7 @@ fn check_heading_hierarchy(
 
     if h1_count == 0 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_HEADING_HIERARCHY.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -122,6 +124,7 @@ fn check_heading_hierarchy(
         });
     } else if h1_count > 1 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_HEADING_HIERARCHY.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -143,6 +146,7 @@ fn check_heading_hierarchy(
     if !skipped_jumps.is_empty() {
         let jumps = skipped_jumps.join(", ");
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_HEADING_HIERARCHY.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -179,6 +183,7 @@ fn check_landmarks(
         });
     } else {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_LANDMARKS.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -229,6 +234,7 @@ fn check_interactive_semantics(
 
     if obs.clickable_generic_containers > 0 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_INTERACTIVE_SEMANTICS.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -250,6 +256,7 @@ fn check_interactive_semantics(
 
     if obs.nested_interactive_count > 0 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_INTERACTIVE_SEMANTICS.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -268,6 +275,7 @@ fn check_interactive_semantics(
 
     if obs.links_without_href > 0 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_INTERACTIVE_SEMANTICS.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,
@@ -312,6 +320,7 @@ fn check_container_ratio(
     // Use integer cross-multiplication to avoid floating-point casts.
     if generic * 100 > obs.total_elements * 75 {
         findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_CONTAINER_RATIO.to_owned()),
             category: FindingCategory::Semantics,
             evidence_level: EvidenceLevel::Source,

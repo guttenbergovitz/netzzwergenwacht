@@ -20,7 +20,7 @@ use crate::analysis::document::DocumentObservations;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, EvidenceLevel, EvidenceSnapshot,
-    HttpEvidence, RuleId, Severity,
+    FindingFingerprint, HttpEvidence, RuleId, Severity,
 };
 
 /// Schema version for serialised [`AuditReport`] JSON payloads.
@@ -120,6 +120,8 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
         }],
     });
 
+    populate_fingerprints(snapshot.target.host(), &mut analysers);
+
     let summary = summarise(&analysers);
 
     AuditReport {
@@ -129,6 +131,18 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
         http: snapshot.http.clone(),
         analysers,
         summary,
+    }
+}
+
+fn populate_fingerprints(host: &str, analysers: &mut [AnalyserResult]) {
+    for analyser in analysers {
+        for finding in &mut analyser.findings {
+            let detail = finding
+                .evidence_refs
+                .first()
+                .map_or("", |r| r.detail.as_str());
+            finding.fingerprint = FindingFingerprint::compute(host, &finding.rule_id, detail);
+        }
     }
 }
 
