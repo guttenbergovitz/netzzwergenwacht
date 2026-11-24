@@ -244,7 +244,19 @@ fn plan_returning_patrol(
         selections,
     );
 
+    // Reserve at least 20% of `max_pages` (min 1 when max_pages >= 3) for newly
+    // discovered URLs and rotating exploration so known defects cannot starve them.
+    let reserved_exploration = if max_pages >= 3 {
+        (max_pages / 5).max(1)
+    } else {
+        0
+    };
+    let defect_cap = max_pages.saturating_sub(reserved_exploration);
+
     for url in candidates {
+        if selections.len() >= defect_cap {
+            break;
+        }
         if let Some(rec) = mem.page_records.get(url.as_str())
             && rec.open_finding_count > 0
         {
@@ -253,7 +265,7 @@ fn plan_returning_patrol(
                 SelectionReason::PreviouslyDefective,
                 true,
                 Some(rec.page_type),
-                max_pages,
+                defect_cap,
                 max_deep,
                 deep_used,
                 selected_set,
@@ -262,6 +274,13 @@ fn plan_returning_patrol(
         }
     }
 
+    // Reserve 1 slot for RotatingExploration when max_pages >= 3 so newly
+    // discovered URLs cannot crowd out healthy rotating checks either.
+    let changed_cap = if max_pages >= 3 {
+        max_pages - 1
+    } else {
+        max_pages
+    };
     for url in candidates {
         if !mem.page_records.contains_key(url.as_str()) {
             try_push_selection(
@@ -269,7 +288,7 @@ fn plan_returning_patrol(
                 SelectionReason::RecentlyChanged,
                 true,
                 None,
-                max_pages,
+                changed_cap,
                 max_deep,
                 deep_used,
                 selected_set,

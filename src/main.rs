@@ -157,6 +157,9 @@ enum Command {
     Patrol {
         /// Target HTTP or HTTPS URL to patrol (omit when using `--targets`).
         url: Option<String>,
+        /// Optional TOML configuration file (`[budget]`, `[policy]`, `[models]`).
+        #[arg(short, long)]
+        config: Option<PathBuf>,
         /// Path to a portfolio TOML file (`applications.toml`).
         #[arg(long)]
         targets: Option<PathBuf>,
@@ -363,6 +366,7 @@ async fn main() -> ExitCode {
         } => run_verify(&baseline, &url, allow_private, format).await,
         Command::Patrol {
             url,
+            config: config_path,
             targets,
             browser,
             memory_dir,
@@ -373,6 +377,7 @@ async fn main() -> ExitCode {
         } => {
             run_patrol_cmd(
                 url.as_deref(),
+                config_path.as_deref(),
                 targets.as_deref(),
                 browser,
                 &memory_dir,
@@ -462,9 +467,10 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 async fn run_patrol_cmd(
     url: Option<&str>,
+    config_path: Option<&Path>,
     targets_path: Option<&Path>,
     enable_level2: bool,
     memory_dir: &Path,
@@ -473,7 +479,16 @@ async fn run_patrol_cmd(
     format: OutputFormat,
     audience: AudienceArg,
 ) -> ExitCode {
-    let llm_provider = netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env().ok();
+    let app_cfg = match load_optional_config(config_path) {
+        Ok(cfg) => cfg,
+        Err(code) => return code,
+    };
+    let router = netzzwergenwacht::intelligence::RigProviderRouter::new(app_cfg.models.clone());
+    let llm_provider = router
+        .provider_for(netzzwergenwacht::brigade::DwarfId::Kommandant)
+        .or_else(|_| netzzwergenwacht::intelligence::RigCompletionProvider::from_env())
+        .ok();
+    let exec_budget = app_cfg.execution_budget();
     let backend: std::sync::Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
         std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
     let patrol_budget = netzzwergenwacht::patrol::PatrolBudget {
@@ -495,8 +510,8 @@ async fn run_patrol_cmd(
             llm_provider.map(|p| std::sync::Arc::new(p) as _);
         let portfolio = netzzwergenwacht::patrol::portfolio::run_portfolio_patrol(
             &cfg,
-            allow_private,
-            netzzwergenwacht::domain::ExecutionBudget::default(),
+            allow_private || app_cfg.policy.allow_private,
+            exec_budget,
             patrol_budget,
             Some(memory_dir),
             llm_arc,
@@ -510,7 +525,7 @@ async fn run_patrol_cmd(
         eprintln!("either <URL> or --targets <FILE> must be provided");
         return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
     };
-    let policy = target_policy(allow_private);
+    let policy = target_policy(allow_private || app_cfg.policy.allow_private);
     let target = match AuditTarget::parse(raw_url, policy) {
         Ok(t) => t,
         Err(err) => {
@@ -524,7 +539,7 @@ async fn run_patrol_cmd(
     let report = netzzwergenwacht::patrol::run_patrol(
         target,
         policy,
-        netzzwergenwacht::domain::ExecutionBudget::default(),
+        exec_budget,
         patrol_budget,
         Some(memory_dir),
         llm_ref,
