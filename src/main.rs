@@ -71,6 +71,9 @@ enum Command {
         /// Run optional Level 2 `axe-core` subprocess adapter (`ZugänglichkeitsZwerg`).
         #[arg(long)]
         axe: bool,
+        /// Run optional `KommandantZwerg` AI synthesis (requires `NZW_LLM_API_KEY`).
+        #[arg(long)]
+        ai: bool,
     },
     /// Run a bounded deterministic audit over a list of URLs (one per line, `#` comments allowed).
     Batch {
@@ -198,6 +201,7 @@ async fn main() -> ExitCode {
             lighthouse,
             browser,
             axe,
+            ai,
         } => {
             run_check(
                 &url,
@@ -214,6 +218,7 @@ async fn main() -> ExitCode {
                     browser,
                     axe,
                 },
+                ai,
             )
             .await
         }
@@ -264,6 +269,7 @@ async fn run_check(
     fail_on: Option<FailOnSeverity>,
     history: Option<&Path>,
     adapters: AdapterOptions,
+    ai: bool,
 ) -> ExitCode {
     let app_cfg = match load_optional_config(config_path) {
         Ok(cfg) => cfg,
@@ -336,8 +342,38 @@ async fn run_check(
         },
         OutputFormat::Text => {
             print_text_report(&report, &eval);
+            if ai {
+                print_optional_ai(&report).await;
+            }
             code
         }
+    }
+}
+
+async fn print_optional_ai(report: &analysis::AuditReport) {
+    let provider = match netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env() {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("KommandantZwerg skipped: {err}");
+            return;
+        }
+    };
+    let budget = netzzwergenwacht::intelligence::LlmBudget::default();
+    match netzzwergenwacht::intelligence::synthesise(report, &provider, &budget).await {
+        Ok(syn) => {
+            println!(
+                "\nKommandantZwerg (advisory AI synthesis, model={}):",
+                syn.model
+            );
+            println!("  {}", syn.executive_summary);
+            for (idx, action) in syn.prioritised_actions.iter().enumerate() {
+                println!("  {}. {action}", idx + 1);
+            }
+            for corr in &syn.correlations {
+                println!("  - [AI] {}: {}", corr.title, corr.summary);
+            }
+        }
+        Err(err) => eprintln!("KommandantZwerg failed (deterministic report preserved): {err}"),
     }
 }
 

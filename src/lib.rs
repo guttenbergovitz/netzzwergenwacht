@@ -11,4 +11,5 @@ pub mod brigade;
 pub mod collection;
 pub mod config;
 pub mod domain;
+pub mod intelligence;
 pub mod persistence;

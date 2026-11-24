@@ -181,7 +181,7 @@ pub const ZWERGENBRIGADE: &[DwarfProfile] = &[
         role: DwarfRole::OptionalIntelligence,
         character: "The brigade commander",
         required_evidence: EvidenceLevel::Source,
-        status: ImplementationStatus::Planned,
+        status: ImplementationStatus::Implemented,
     },
 ];
 
