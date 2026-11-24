@@ -27,7 +27,8 @@ NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on `develop` / 
     - **BrowserZwerg** (`analysis::browser`): Level 2 console errors and failed subresource requests.
     - **GestaltungsZwerg** (`analysis::visual`): Level 2 viewport horizontal overflow and broken rendered images.
   - Bounded Level 2 subprocess adapters (`src/adapters/`: Lighthouse `--lighthouse`, headless Chromium CDP `--browser`, `axe-core` `--axe`).
-  - Optional `KommandantZwerg` AI synthesis (`src/intelligence/`, opt-in `--ai`, `LlmBudget` caps, `<untrusted_audit_evidence>` prompt-injection boundaries).
+  - **Agentic Investigation (`nzw investigate`, `nzw verify`)**: `rig-core` (`0.42.0`) `PortableTool` catalogue (`inspect_browser_runtime`, `inspect_rendered_accessibility`, `inspect_page_performance`, `inspect_document_structure`, `inspect_security_posture`, `crawl_and_cluster_site`), multi-turn `KommandantZwerg` hypothesis loop, `InvestigationScope` origin enforcement, `ExecutiveBrief`, `ReleaseReadinessAssessment`, `RemediationTask`s, and `--audience pm|po|cto|technical` Markdown/JSON reports.
+  - **Zwergenprüfstand** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): Controlled benchmark fixtures and comparative Mode A vs Mode C evaluation suite.
   - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`) with plain-text and versioned JSON output, TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), `tracing` diagnostics (`RUST_LOG`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
   - Production hardening: chaos/cancellation integration tests (`tests/chaos_and_cancellation.rs`), `cargo-audit` CI check, LTO-optimised release profile, and automated tag release packaging (`.github/workflows/release.yml`).
 
