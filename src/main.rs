@@ -153,6 +153,7 @@ enum Command {
 enum OutputFormat {
     Text,
     Json,
+    Markdown,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -344,6 +345,14 @@ async fn run_verify(
                 diff.summary.new_count
             );
         }
+        OutputFormat::Markdown => {
+            println!("# NetzZwergenWacht Verification Report\n");
+            println!("- **Target**: {}", diff.current_target);
+            println!("- **Resolved**: {}", diff.summary.resolved_count);
+            println!("- **Persisting**: {}", diff.summary.persisting_count);
+            println!("- **Unverified**: {}", diff.summary.unverified_count);
+            println!("- **New**: {}", diff.summary.new_count);
+        }
     }
 
     if matches!(current.http, CollectorOutcome::Failed { .. }) {
@@ -399,40 +408,48 @@ async fn run_investigate(
                 return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
             }
         },
-        OutputFormat::Text => {
-            println!(
-                "NETZZWERGENWACHT — KommandantZwerg Investigation [{}] ({MOTTO})",
-                report.id.0
-            );
-            println!(
-                "Target: {} | State: {:?} | Tools: {}/{} | LLM turns: {}/{}",
-                report.target.as_str(),
-                report.state,
-                report.ledger.tool_calls_used,
-                report.ledger.budget.max_tool_calls,
-                report.ledger.llm_turns_used,
-                report.ledger.budget.max_llm_turns,
-            );
-            println!("\nExecutive Brief:");
-            println!("  Assessment: {}", report.executive_brief.assessment);
-            println!("  Coverage: {}", report.executive_brief.coverage_summary);
-            println!("  Confidence: {}", report.executive_brief.confidence_note);
-            for hyp in &report.hypotheses {
+        OutputFormat::Text | OutputFormat::Markdown => {
+            if matches!(format, OutputFormat::Markdown) {
                 println!(
-                    "\nHypothesis [{}] ({:?}): {} -> tool `{}`",
-                    hyp.id, hyp.status, hyp.proposed_explanation, hyp.requested_tool
+                    "{}",
+                    netzzwergenwacht::investigation::render_markdown_report(&report)
                 );
-                if let Some(summary) = &hyp.evaluation_summary {
-                    println!("  Evaluation: {summary}");
+            } else {
+                println!(
+                    "NETZZWERGENWACHT — KommandantZwerg Investigation [{}] ({MOTTO})",
+                    report.id.0
+                );
+                println!(
+                    "Target: {} | State: {:?} | Readiness: {:?} | Tools: {}/{} | LLM turns: {}/{}",
+                    report.target.as_str(),
+                    report.state,
+                    report.release_readiness.state,
+                    report.ledger.tool_calls_used,
+                    report.ledger.budget.max_tool_calls,
+                    report.ledger.llm_turns_used,
+                    report.ledger.budget.max_llm_turns,
+                );
+                println!("\nExecutive Brief:");
+                println!("  Assessment: {}", report.executive_brief.assessment);
+                println!("  Coverage: {}", report.executive_brief.coverage_summary);
+                println!("  Confidence: {}", report.executive_brief.confidence_note);
+                for hyp in &report.hypotheses {
+                    println!(
+                        "\nHypothesis [{}] ({:?}): {} -> tool `{}`",
+                        hyp.id, hyp.status, hyp.proposed_explanation, hyp.requested_tool
+                    );
+                    if let Some(summary) = &hyp.evaluation_summary {
+                        println!("  Evaluation: {summary}");
+                    }
                 }
-            }
-            if !report.remediation_tasks.is_empty() {
-                println!("\nBacklog Remediation Tasks:");
-                for task in &report.remediation_tasks {
-                    println!("  - [{}] ({:?}) {}", task.id, task.priority, task.title);
+                if !report.remediation_tasks.is_empty() {
+                    println!("\nBacklog Remediation Tasks:");
+                    for task in &report.remediation_tasks {
+                        println!("  - [{}] ({:?}) {}", task.id, task.priority, task.title);
+                    }
                 }
+                println!("\nConclusion: {}", report.conclusion);
             }
-            println!("\nConclusion: {}", report.conclusion);
         }
     }
     ExitCode::from(EXIT_OK)
@@ -528,7 +545,7 @@ async fn run_check(
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
             }
         },
-        OutputFormat::Text => {
+        OutputFormat::Text | OutputFormat::Markdown => {
             print_text_report(&report, &eval);
             if ai {
                 print_optional_ai(&report).await;
@@ -715,7 +732,7 @@ fn render_batch_report(
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
             }
         },
-        OutputFormat::Text => {
+        OutputFormat::Text | OutputFormat::Markdown => {
             println!("NETZZWERGENWACHT BATCH AUDIT");
             println!(
                 "Targets: {} total, {} completed, {} invalid\n",
@@ -775,7 +792,7 @@ fn run_diff(baseline_path: &Path, current_path: &Path, format: OutputFormat) -> 
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
             }
         },
-        OutputFormat::Text => {
+        OutputFormat::Text | OutputFormat::Markdown => {
             print_diff_report(&diff);
             code
         }

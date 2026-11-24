@@ -243,6 +243,31 @@ pub struct RemediationTask {
     pub verification_procedure: String,
 }
 
+/// Configurable release readiness classification grounded in investigated scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseReadinessState {
+    /// No blocking findings observed within the investigated scope.
+    NoBlockingFindingsWithinScope,
+    /// Moderate concerns require stakeholder review or scheduled remediation.
+    MaterialConcerns,
+    /// High or critical defects represent potential release blockers.
+    PotentialReleaseBlockers,
+    /// Required evidence was incomplete, failed, or inconclusive.
+    InsufficientEvidence,
+}
+
+/// Defensible release readiness assessment for stakeholder decisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReleaseReadinessAssessment {
+    /// Overall readiness state.
+    pub state: ReleaseReadinessState,
+    /// Evidence-backed rationale bullets.
+    pub rationale: Vec<String>,
+    /// Explicit coverage and evidence limitations.
+    pub coverage_limitations: Vec<String>,
+}
+
 /// Shared structured context exchanged between `KommandantZwerg` and tools.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InvestigationContext {
@@ -301,6 +326,8 @@ pub struct InvestigationReport {
     pub ledger: BudgetLedger,
     /// Stakeholder-facing executive brief.
     pub executive_brief: ExecutiveBrief,
+    /// Defensible release readiness assessment.
+    pub release_readiness: ReleaseReadinessAssessment,
     /// Backlog-ready remediation tasks.
     pub remediation_tasks: Vec<RemediationTask>,
     /// `KommandantZwerg` conclusion grounded in observed evidence.
@@ -854,7 +881,13 @@ evidence. Respond strictly with JSON: {\"status\": \"supported\"|\"rejected\"|\"
     Ok(eval.conclusion)
 }
 
-fn build_stakeholder_outputs(ctx: &InvestigationContext) -> (ExecutiveBrief, Vec<RemediationTask>) {
+fn build_stakeholder_outputs(
+    ctx: &InvestigationContext,
+) -> (
+    ExecutiveBrief,
+    ReleaseReadinessAssessment,
+    Vec<RemediationTask>,
+) {
     let mut all_findings: Vec<&Finding> = ctx
         .initial_report
         .iter()
@@ -913,6 +946,8 @@ fn build_stakeholder_outputs(ctx: &InvestigationContext) -> (ExecutiveBrief, Vec
         "Deterministic measurements carry high confidence; multi-page crawl and authenticated journeys were not evaluated in this single-target investigation."
             .to_owned();
 
+    let release_readiness = compute_release_readiness(ctx, &all_findings);
+
     let remediation_tasks = all_findings
         .into_iter()
         .filter(|f| f.severity >= Severity::Medium)
@@ -948,8 +983,164 @@ fn build_stakeholder_outputs(ctx: &InvestigationContext) -> (ExecutiveBrief, Vec
             coverage_summary,
             confidence_note,
         },
+        release_readiness,
         remediation_tasks,
     )
+}
+
+fn compute_release_readiness(
+    ctx: &InvestigationContext,
+    all_findings: &[&Finding],
+) -> ReleaseReadinessAssessment {
+    let has_critical_or_high = all_findings.iter().any(|f| f.severity >= Severity::High);
+    let has_medium = all_findings.iter().any(|f| f.severity == Severity::Medium);
+    let http_incomplete = ctx.snapshot.as_ref().is_none_or(|s| {
+        matches!(
+            s.http,
+            CollectorOutcome::Failed { .. }
+                | CollectorOutcome::Skipped { .. }
+                | CollectorOutcome::Partial { .. }
+        )
+    });
+    let has_inconclusive_hyp = ctx
+        .hypotheses
+        .iter()
+        .any(|h| h.status == HypothesisStatus::Inconclusive);
+
+    let state = if has_critical_or_high {
+        ReleaseReadinessState::PotentialReleaseBlockers
+    } else if http_incomplete
+        || matches!(
+            ctx.state,
+            InvestigationState::BudgetExhausted | InvestigationState::Failed
+        )
+        || has_inconclusive_hyp
+    {
+        ReleaseReadinessState::InsufficientEvidence
+    } else if has_medium {
+        ReleaseReadinessState::MaterialConcerns
+    } else {
+        ReleaseReadinessState::NoBlockingFindingsWithinScope
+    };
+
+    let mut rationale = Vec::new();
+    if has_critical_or_high {
+        rationale
+            .push("One or more Critical/High deterministic findings were observed.".to_owned());
+    }
+    if http_incomplete {
+        rationale.push("Initial HTTP collection was failed, skipped, or partial.".to_owned());
+    }
+    if has_inconclusive_hyp {
+        rationale.push("At least one diagnostic hypothesis remained inconclusive.".to_owned());
+    }
+    if rationale.is_empty() {
+        rationale.push("All executed checks within scope completed cleanly.".to_owned());
+    }
+    ReleaseReadinessAssessment {
+        state,
+        rationale,
+        coverage_limitations: vec![
+            "Authenticated user journeys were not exercised.".to_owned(),
+            if ctx.discovered_pages.is_empty() {
+                "Only a single seed URL was investigated.".to_owned()
+            } else {
+                format!(
+                    "Bounded crawl covered {} discovered URL(s).",
+                    ctx.discovered_pages.len()
+                )
+            },
+        ],
+    }
+}
+
+/// Renders an [`InvestigationReport`] as a stakeholder-ready Markdown document.
+#[must_use]
+pub fn render_markdown_report(report: &InvestigationReport) -> String {
+    use std::fmt::Write;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "# NetzZwergenWacht Investigation Report\n");
+    let _ = writeln!(out, "- **Investigation ID**: `{}`", report.id.0);
+    let _ = writeln!(out, "- **Target**: {}", report.target.as_str());
+    let _ = writeln!(out, "- **Objective**: {}", report.objective);
+    let _ = writeln!(out, "- **State**: `{:?}`", report.state);
+    let _ = writeln!(
+        out,
+        "- **Release Readiness**: `{:?}`\n",
+        report.release_readiness.state
+    );
+
+    let _ = writeln!(out, "## Executive Brief\n");
+    let _ = writeln!(out, "{}\n", report.executive_brief.assessment);
+    let _ = writeln!(
+        out,
+        "- **Coverage**: {}",
+        report.executive_brief.coverage_summary
+    );
+    let _ = writeln!(
+        out,
+        "- **Confidence**: {}\n",
+        report.executive_brief.confidence_note
+    );
+
+    if !report.executive_brief.immediate_actions.is_empty() {
+        let _ = writeln!(out, "### Immediate Actions\n");
+        for action in &report.executive_brief.immediate_actions {
+            let _ = writeln!(out, "- {action}");
+        }
+        let _ = writeln!(out);
+    }
+
+    if !report.hypotheses.is_empty() {
+        let _ = writeln!(out, "## Diagnostic Hypotheses\n");
+        for hyp in &report.hypotheses {
+            let _ = writeln!(
+                out,
+                "- **{}** (`{:?}`, tool `{}`): {}",
+                hyp.id, hyp.status, hyp.requested_tool, hyp.proposed_explanation
+            );
+            if let Some(summary) = &hyp.evaluation_summary {
+                let _ = writeln!(out, "  - Evaluation: {summary}");
+            }
+        }
+        let _ = writeln!(out);
+    }
+
+    if !report.systemic_issues.is_empty() {
+        let _ = writeln!(out, "## Systemic Issues\n");
+        for sys in &report.systemic_issues {
+            let _ = writeln!(
+                out,
+                "- **{}** (`{}`): {} ({} URL(s))",
+                sys.id,
+                sys.rule_id.0,
+                sys.summary,
+                sys.affected_urls.len()
+            );
+        }
+        let _ = writeln!(out);
+    }
+
+    if !report.remediation_tasks.is_empty() {
+        let _ = writeln!(out, "## Backlog Remediation Tasks\n");
+        for task in &report.remediation_tasks {
+            let _ = writeln!(
+                out,
+                "### {} ({:?}) — {}\n",
+                task.id, task.priority, task.title
+            );
+            let _ = writeln!(out, "{}\n", task.problem_statement);
+            let _ = writeln!(out, "**Acceptance Criteria:**");
+            for ac in &task.acceptance_criteria {
+                let _ = writeln!(out, "- {ac}");
+            }
+            let _ = writeln!(out, "\n**Verification:** {}\n", task.verification_procedure);
+        }
+    }
+
+    let _ = writeln!(out, "## Conclusion\n\n{}", report.conclusion);
+    out
 }
 
 fn finish_budget_exhausted(mut ctx: InvestigationContext, reason: String) -> InvestigationReport {
@@ -958,7 +1149,7 @@ fn finish_budget_exhausted(mut ctx: InvestigationContext, reason: String) -> Inv
 }
 
 fn build_report(ctx: InvestigationContext, conclusion: String) -> InvestigationReport {
-    let (executive_brief, remediation_tasks) = build_stakeholder_outputs(&ctx);
+    let (executive_brief, release_readiness, remediation_tasks) = build_stakeholder_outputs(&ctx);
     InvestigationReport {
         id: ctx.id,
         target: ctx.target,
@@ -973,6 +1164,7 @@ fn build_report(ctx: InvestigationContext, conclusion: String) -> InvestigationR
         tool_trace: ctx.tool_trace,
         ledger: ctx.ledger,
         executive_brief,
+        release_readiness,
         remediation_tasks,
         conclusion,
     }
@@ -1228,5 +1420,12 @@ mod tests {
 
         assert_eq!(report.state, InvestigationState::BudgetExhausted);
         assert_eq!(report.ledger.tool_calls_used, 1);
+        assert_eq!(
+            report.release_readiness.state,
+            ReleaseReadinessState::PotentialReleaseBlockers
+        );
+        let md = render_markdown_report(&report);
+        assert!(md.contains("# NetzZwergenWacht Investigation Report"));
+        assert!(md.contains("## Backlog Remediation Tasks"));
     }
 }
