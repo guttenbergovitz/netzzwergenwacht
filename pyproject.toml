@@ -89,6 +89,10 @@ disallow_untyped_defs = true
 explicit_package_bases = true
 mypy_path = "src"
 
+[[tool.mypy.overrides]]
+module = ["reportlab.*", "psutil.*", "nmap.*"]
+ignore_missing_imports = true
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -4,8 +4,8 @@ import os
 from typing import Any
 
 from crewai import Crew, Task
-from crewai.agent import BaseAgent
 from langchain_openai import ChatOpenAI
+from pydantic import SecretStr
 
 from ..dwarfs.base import ComprehensiveAnalysisReport
 from ..utils.logging import get_logger
@@ -37,10 +37,10 @@ class WorkingAutonomousCrew:
         self.llm = ChatOpenAI(
             model=model,
             temperature=temperature,
-            api_key=self.api_key,
+            api_key=SecretStr(self.api_key),
         )
 
-        self.agents: list[BaseAgent] = []
+        self.agents: list[Any] = []
         self.tasks: list[Task] = []
         self.crew: Crew | None = None
 
