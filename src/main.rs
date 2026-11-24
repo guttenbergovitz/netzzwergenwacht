@@ -116,6 +116,23 @@ enum Command {
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+    /// Run a hypothesis-driven `KommandantZwerg` investigation (requires `NZW_LLM_API_KEY`).
+    Investigate {
+        /// Target HTTP or HTTPS URL to investigate.
+        url: String,
+        /// Stakeholder objective guiding the investigation.
+        #[arg(
+            long,
+            default_value = "Assess overall web quality and release readiness"
+        )]
+        objective: String,
+        /// Allow loopback and private network targets (for local testing only).
+        #[arg(long)]
+        allow_private: bool,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -252,7 +269,80 @@ async fn main() -> ExitCode {
             current,
             format,
         } => run_diff(&baseline, &current, format),
+        Command::Investigate {
+            url,
+            objective,
+            allow_private,
+            format,
+        } => run_investigate(&url, objective, allow_private, format).await,
     }
+}
+
+async fn run_investigate(
+    url: &str,
+    objective: String,
+    allow_private: bool,
+    format: OutputFormat,
+) -> ExitCode {
+    let policy = target_policy(allow_private);
+    let target = match AuditTarget::parse(url, policy) {
+        Ok(t) => t,
+        Err(err) => {
+            eprintln!("invalid target: {err}");
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+    let llm = match netzzwergenwacht::intelligence::OpenAiCompatibleProvider::from_env() {
+        Ok(p) => p,
+        Err(err) => {
+            eprintln!("KommandantZwerg unavailable: {err}");
+            return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        }
+    };
+
+    let backend = netzzwergenwacht::investigation::LiveDiagnosticBackend;
+    let report = netzzwergenwacht::investigation::run_investigation(
+        target,
+        objective,
+        policy,
+        netzzwergenwacht::investigation::InvestigationBudget::default(),
+        &backend,
+        &llm,
+    )
+    .await;
+
+    match format {
+        OutputFormat::Json => match serde_json::to_string_pretty(&report) {
+            Ok(json) => println!("{json}"),
+            Err(err) => {
+                eprintln!("failed to serialise investigation report: {err}");
+                return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+            }
+        },
+        OutputFormat::Text => {
+            println!("NETZZWERGENWACHT — KommandantZwerg Investigation ({MOTTO})");
+            println!(
+                "Target: {} | State: {:?} | Tools: {}/{} | LLM turns: {}/{}",
+                report.target.as_str(),
+                report.state,
+                report.ledger.tool_calls_used,
+                report.ledger.budget.max_tool_calls,
+                report.ledger.llm_turns_used,
+                report.ledger.budget.max_llm_turns,
+            );
+            for hyp in &report.hypotheses {
+                println!(
+                    "Hypothesis [{}] ({:?}): {} -> tool `{}`",
+                    hyp.id, hyp.status, hyp.proposed_explanation, hyp.requested_tool
+                );
+                if let Some(summary) = &hyp.evaluation_summary {
+                    println!("  Evaluation: {summary}");
+                }
+            }
+            println!("Conclusion: {}", report.conclusion);
+        }
+    }
+    ExitCode::from(EXIT_OK)
 }
 
 #[derive(Debug, Clone, Copy)]

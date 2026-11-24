@@ -18,10 +18,10 @@ Status legend:
 - **Defect register remediation** (`docs/evaluation/defect-register.md` items #1–#10): *Planned* (required before declaring Milestone A complete)
 
 ## Milestone B: Agentic Investigation Proof of Concept *(In Progress)*
-- **ADR 0005 & Rig (`rig-core`) evaluation** (`docs/adr/0005-agentic-investigation-architecture.md`): *Implemented*
-- **Investigation domain model & `InvestigationContext`** (`src/investigation/`): *Planned* (next feature branch)
-- **Typed `DiagnosticTool` catalogue & `KommandantZwerg` hypothesis loop**: *Planned* (next feature branch)
-- **Online `rig-core` crate integration**: *Blocked* (requires online Cargo dependency resolution; domain designed to be Rig-compatible)
+- [x] **ADR 0005 & Rig (`rig-core`) evaluation** (`docs/adr/0005-agentic-investigation-architecture.md`): *Implemented*
+- [x] **Investigation domain model & `InvestigationContext`** (`src/investigation/mod.rs`): *Implemented, Tested*
+- [x] **Typed `DiagnosticTool` catalogue & `KommandantZwerg` hypothesis loop** (`src/investigation/mod.rs`, `nzw investigate`): *Implemented, Experimentally demonstrated (mock LLM + backend)*
+- [ ] **Online `rig-core` crate integration**: *Blocked* (requires online Cargo dependency resolution; domain designed to be Rig-compatible)
 
 ## Milestone C: Application-Level Investigation *(Planned)*
 - Bounded crawling, URL normalisation, and origin/depth caps
