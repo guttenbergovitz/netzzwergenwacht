@@ -21,6 +21,9 @@ const RULE_IMAGE_SRCSET: &str = "vis.images.responsive_srcset";
 const RULE_IMAGE_FILENAME: &str = "vis.images.filename_quality";
 const RULE_IMAGE_HOTLINKED: &str = "vis.images.hotlinked";
 const RULE_INLINE_SVG_A11Y: &str = "vis.images.inline_svg_a11y";
+const RULE_OVERSIZED_IMAGES: &str = "vis.rendered.oversized_images";
+const RULE_ASPECT_DISTORTION: &str = "vis.rendered.aspect_ratio_distortion";
+const RULE_ABOVE_FOLD_LAZY: &str = "vis.rendered.above_fold_lazy_lcp";
 
 /// All Level 2 rules owned by `GestaltungsZwerg`.
 pub const ALL_RULES: &[&str] = &[RULE_HORIZONTAL_OVERFLOW, RULE_BROKEN_IMAGES];
@@ -128,6 +131,7 @@ pub fn analyse_with_document(
 
     check_horizontal_overflow(browser, &mut findings, &mut checks);
     check_broken_images(browser, &mut findings, &mut checks);
+    check_rendered_image_geometry(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Gestaltungs,
@@ -682,6 +686,172 @@ fn check_inline_svg_a11y(
     }
 }
 
+fn check_rendered_image_geometry(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if browser.rendered_images.is_empty() {
+        return;
+    }
+
+    let oversized: Vec<&str> = browser
+        .rendered_images
+        .iter()
+        .filter(|img| {
+            img.rendered_width > 0
+                && img.natural_width > 200
+                && img.natural_width > img.rendered_width.saturating_mul(2)
+        })
+        .map(|img| img.src.as_str())
+        .collect();
+    if oversized.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_OVERSIZED_IMAGES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_OVERSIZED_IMAGES.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!(
+                "Oversized rendered images (>2x natural width) ({})",
+                oversized.len()
+            ),
+            summary: format!(
+                "{} image(s) serve intrinsic widths more than double their rendered CSS width.",
+                oversized.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("oversized_images={}", oversized.len()),
+            )],
+            remediation: Some(
+                "Serve appropriately sized responsive image variants via `srcset` and `sizes`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_OVERSIZED_IMAGES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    check_rendered_image_distortion_and_lazy(browser, findings, checks);
+}
+
+fn check_rendered_image_distortion_and_lazy(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let distorted: Vec<&str> = browser
+        .rendered_images
+        .iter()
+        .filter(|img| {
+            if img.natural_width == 0
+                || img.natural_height == 0
+                || img.rendered_width == 0
+                || img.rendered_height == 0
+            {
+                return false;
+            }
+            let lhs = u128::from(img.natural_width) * u128::from(img.rendered_height);
+            let rhs = u128::from(img.rendered_width) * u128::from(img.natural_height);
+            let diff = lhs.abs_diff(rhs);
+            let max_val = lhs.max(rhs);
+            diff.saturating_mul(4) > max_val
+        })
+        .map(|img| img.src.as_str())
+        .collect();
+    if distorted.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ASPECT_DISTORTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_ASPECT_DISTORTION.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Rendered image aspect-ratio distortion ({})", distorted.len()),
+            summary: format!(
+                "{} image(s) render with >25% aspect ratio mismatch relative to intrinsic dimensions.",
+                distorted.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("aspect_distorted_images={}", distorted.len()),
+            )],
+            remediation: Some(
+                "Use `object-fit: cover` / `contain` or match CSS box dimensions to intrinsic aspect ratio."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_ASPECT_DISTORTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    let above_fold_lazy: Vec<&str> = browser
+        .rendered_images
+        .iter()
+        .filter(|img| {
+            img.in_initial_viewport
+                && img
+                    .loading
+                    .as_deref()
+                    .is_some_and(|l| l.eq_ignore_ascii_case("lazy"))
+        })
+        .map(|img| img.src.as_str())
+        .collect();
+    if above_fold_lazy.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ABOVE_FOLD_LAZY.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_ABOVE_FOLD_LAZY.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Above-the-fold images marked loading=\"lazy\" ({})",
+                above_fold_lazy.len()
+            ),
+            summary: format!(
+                "{} image(s) intersecting the initial viewport use `loading=\"lazy\"`, delaying LCP.",
+                above_fold_lazy.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("above_fold_lazy_images={}", above_fold_lazy.len()),
+            )],
+            remediation: Some(
+                "Remove `loading=\"lazy\"` from above-the-fold hero/LCP images.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_ABOVE_FOLD_LAZY.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -731,7 +901,7 @@ mod tests {
                     broken_images: Vec::new(),
                     screenshot_path: None,
                 }],
-                provenance: None,
+                ..BrowserEvidence::default()
             },
         });
         let res = analyse(&snap);
@@ -763,7 +933,7 @@ mod tests {
                     }],
                     screenshot_path: None,
                 }],
-                provenance: None,
+                ..BrowserEvidence::default()
             },
         });
         let res = analyse(&snap);
@@ -810,5 +980,37 @@ mod tests {
         assert!(ids.contains(&RULE_IMAGE_FILENAME));
         assert!(ids.contains(&RULE_IMAGE_HOTLINKED));
         assert!(ids.contains(&RULE_INLINE_SVG_A11Y));
+    }
+
+    #[test]
+    fn flags_oversized_distorted_and_above_fold_lazy_rendered_images() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                viewports: vec![ViewportLayoutObs {
+                    viewport_name: "desktop".to_owned(),
+                    width: 1280,
+                    height: 720,
+                    has_horizontal_overflow: false,
+                    broken_images: Vec::new(),
+                    screenshot_path: None,
+                }],
+                rendered_images: vec![crate::domain::RenderedImageObs {
+                    src: "https://example.com/hero.webp".to_owned(),
+                    natural_width: 1600,
+                    natural_height: 800,
+                    rendered_width: 400,
+                    rendered_height: 400,
+                    in_initial_viewport: true,
+                    loading: Some("lazy".to_owned()),
+                }],
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_OVERSIZED_IMAGES));
+        assert!(ids.contains(&RULE_ASPECT_DISTORTION));
+        assert!(ids.contains(&RULE_ABOVE_FOLD_LAZY));
     }
 }

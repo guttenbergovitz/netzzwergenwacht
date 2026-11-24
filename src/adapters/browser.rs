@@ -97,6 +97,7 @@ function findBrowser() {
     const consoleErrors = [];
     const failedRequests = [];
     const reqUrls = new Map();
+    const resourcesByReqId = new Map();
     let loadResolve = null;
 
     ws.addEventListener('message', (ev) => {
@@ -122,12 +123,34 @@ function findBrowser() {
           error_text: msg.params.errorText || 'loading failed',
           status_code: null,
         });
-      } else if (msg.method === 'Network.responseReceived' && msg.params?.response?.status >= 400) {
-        failedRequests.push({
-          url: msg.params.response.url || '',
-          error_text: `HTTP ${msg.params.response.status}`,
-          status_code: msg.params.response.status,
+      } else if (msg.method === 'Network.responseReceived') {
+        const resp = msg.params?.response;
+        const rUrl = resp?.url || '';
+        if (resp?.status >= 400) {
+          failedRequests.push({
+            url: rUrl,
+            error_text: `HTTP ${resp.status}`,
+            status_code: resp.status,
+          });
+        }
+        const headers = Object.fromEntries(
+          Object.entries(resp?.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)])
+        );
+        resourcesByReqId.set(msg.params.requestId, {
+          url: rUrl,
+          resource_type: String(msg.params?.type || 'other').toLowerCase(),
+          mime_type: resp?.mimeType || null,
+          transfer_size: null,
+          duration_ms: null,
+          protocol: resp?.protocol || null,
+          cache_control: headers['cache-control'] || null,
+          content_encoding: headers['content-encoding'] || null,
         });
+      } else if (msg.method === 'Network.loadingFinished') {
+        const rec = resourcesByReqId.get(msg.params.requestId);
+        if (rec && typeof msg.params.encodedDataLength === 'number') {
+          rec.transfer_size = Math.max(0, Math.round(msg.params.encodedDataLength));
+        }
       } else if (msg.method === 'Fetch.requestPaused') {
         const reqUrl = msg.params?.request?.url || '';
         const blocked = isForbiddenSubresourceUrl(reqUrl);
@@ -228,6 +251,33 @@ function findBrowser() {
       });
     }
 
+    const domAndImagesRes = await call('Runtime.evaluate', {
+      expression: `(() => {
+        const vh = window.innerHeight || 720;
+        const vw = window.innerWidth || 1280;
+        const imgs = Array.from(document.images).slice(0, 100).map((img) => {
+          const r = img.getBoundingClientRect();
+          const inVp = r.width > 0 && r.height > 0 && r.top < vh && r.bottom > 0 && r.left < vw && r.right > 0;
+          return {
+            src: img.currentSrc || img.getAttribute('src') || '',
+            natural_width: Math.round(img.naturalWidth || 0),
+            natural_height: Math.round(img.naturalHeight || 0),
+            rendered_width: Math.round(r.width || 0),
+            rendered_height: Math.round(r.height || 0),
+            in_initial_viewport: inVp,
+            loading: img.getAttribute('loading') || null,
+          };
+        });
+        return {
+          rendered_dom_elements: document.querySelectorAll('*').length,
+          rendered_images: imgs,
+        };
+      })()`,
+      returnByValue: true,
+    });
+    const domAndImages = domAndImagesRes?.result?.value || {};
+    const resources = Array.from(resourcesByReqId.values()).slice(0, 200);
+
     process.stdout.write(JSON.stringify({
       final_url: finalUrl,
       browser_version: browserVersion,
@@ -235,6 +285,9 @@ function findBrowser() {
       console_errors: consoleErrors,
       failed_requests: failedRequests,
       viewports,
+      resources,
+      rendered_images: Array.isArray(domAndImages.rendered_images) ? domAndImages.rendered_images : [],
+      rendered_dom_elements: typeof domAndImages.rendered_dom_elements === 'number' ? domAndImages.rendered_dom_elements : null,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',

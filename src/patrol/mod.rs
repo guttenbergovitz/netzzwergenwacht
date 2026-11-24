@@ -564,9 +564,9 @@ pub async fn run_patrol_with_router(
     let mut current_graph_rules: BTreeSet<String> = BTreeSet::new();
     for res in &graph_results {
         for f in &res.findings {
-            current_graph_rules.insert(f.rule_id.0.clone());
-            let is_new_graph_defect =
-                !is_returning || !prev_graph_rules.contains(f.rule_id.0.as_str());
+            let sig = format!("{}::{}", f.rule_id.0, f.summary);
+            current_graph_rules.insert(sig.clone());
+            let is_new_graph_defect = !is_returning || !prev_graph_rules.contains(sig.as_str());
             if f.severity >= Severity::Medium && is_new_graph_defect {
                 let affected_url = extract_first_url_from_summary(&f.summary)
                     .unwrap_or_else(|| seed.as_str().to_owned());
