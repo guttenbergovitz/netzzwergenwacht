@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Patrol Resource Governor, Multi-Specialist Per-Dwarf Delegation & Scale Test Fix (2026-11-24)
+- Bounded `KommandantZwerg` escalation by the remaining patrol wall-clock deadline (`src/patrol/mod.rs`), capped `conditional_checks` and re-inspections within `max_pages`, and marked conditional `304`/ETag revalidation as `EvidenceFreshness::HttpRepresentationOnly` (`src/patrol/memory.rs`).
+- Added `ProviderRouter`, `CachedProviderRouter` (`src/intelligence/mod.rs`), `SpecialistDelegation`, and `run_patrol_with_router` (`src/patrol/mod.rs`, wired into `nzw patrol` in `src/main.rs`) to delegate top anomalies to distinct per-dwarf models.
+- Strengthened `tests/patrol_scale_eval.rs` to assert full coverage of all 12 distinct template families (`assert_eq!(templates_covered.len(), 12)`).
+
 ### Large-Scale Sampling Evaluation, Anti-Starvation & CLI `--config` Routing (2026-11-24)
 - Added anti-starvation cap in `plan_returning_patrol` (`src/patrol/sampling.rs`) reserving at least 20% of `max_pages` for `RecentlyChanged` and `RotatingExploration`.
 - Wired `--config <FILE>` and `RigProviderRouter` (`[models]`) into `nzw patrol` (`src/main.rs`).

@@ -44,14 +44,15 @@ fn sampling_scales_across_2000_urls_8_locales_and_12_templates_without_starvatio
         .collect();
     assert_eq!(p1_locales.len(), 8);
 
-    // Build institutional memory for 1,995 pages across 12 template families,
-    // with 30 defective pages (> max_pages = 25) to stress-test anti-starvation,
-    // leaving 5 URLs as newly discovered (`RecentlyChanged`).
+    // Build institutional memory for 1,995 pages across 12 template families
+    // with 12 defective pages (1 per template family) + 15 additional defective
+    // pages (total 27 > max_pages = 25) to verify both anti-starvation AND full
+    // coverage of all 12 distinct template families.
     let mut mem = ApplicationMemory::new(&seed, 1_000);
     mem.patrol_count = 1;
     for (idx, url) in discovered.iter().take(1_995).enumerate() {
         let tpl = format!("tpl-{:02}", idx % 12);
-        let open_finding_count = usize::from(idx < 30);
+        let open_finding_count = usize::from(idx < 27);
         mem.page_records.insert(
             url.as_str().to_owned(),
             RememberedPage {
@@ -92,7 +93,7 @@ fn sampling_scales_across_2000_urls_8_locales_and_12_templates_without_starvatio
         .count();
     assert!(defect_count <= 20);
 
-    // Distinct templates covered by non-defective + defective selections.
+    // Distinct templates covered must include all 12 template families!
     let templates_covered: HashSet<&str> = p2
         .selections
         .iter()
@@ -102,6 +103,6 @@ fn sampling_scales_across_2000_urls_8_locales_and_12_templates_without_starvatio
                 .and_then(|r| r.template_fingerprint.as_deref())
         })
         .collect();
-    assert!(!templates_covered.is_empty());
+    assert_eq!(templates_covered.len(), 12);
     assert!(p2.reused_urls.len() > 1_900);
 }

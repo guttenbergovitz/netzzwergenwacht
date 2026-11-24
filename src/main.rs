@@ -479,15 +479,14 @@ async fn run_patrol_cmd(
     format: OutputFormat,
     audience: AudienceArg,
 ) -> ExitCode {
+    use netzzwergenwacht::intelligence::ProviderRouter as _;
     let app_cfg = match load_optional_config(config_path) {
         Ok(cfg) => cfg,
         Err(code) => return code,
     };
-    let router = netzzwergenwacht::intelligence::RigProviderRouter::new(app_cfg.models.clone());
-    let llm_provider = router
-        .provider_for(netzzwergenwacht::brigade::DwarfId::Kommandant)
-        .or_else(|_| netzzwergenwacht::intelligence::RigCompletionProvider::from_env())
-        .ok();
+    let router =
+        netzzwergenwacht::intelligence::CachedProviderRouter::from_routing(&app_cfg.models);
+    let llm_provider = router.resolve_for_dwarf(netzzwergenwacht::brigade::DwarfId::Kommandant);
     let exec_budget = app_cfg.execution_budget();
     let backend: std::sync::Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
         std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
@@ -507,7 +506,13 @@ async fn run_patrol_cmd(
                 }
             };
         let llm_arc: Option<std::sync::Arc<dyn netzzwergenwacht::intelligence::LlmProvider>> =
-            llm_provider.map(|p| std::sync::Arc::new(p) as _);
+            llm_provider.and_then(|_| {
+                netzzwergenwacht::intelligence::RigProviderRouter::new(app_cfg.models.clone())
+                    .provider_for(netzzwergenwacht::brigade::DwarfId::Kommandant)
+                    .or_else(|_| netzzwergenwacht::intelligence::RigCompletionProvider::from_env())
+                    .ok()
+                    .map(|p| std::sync::Arc::new(p) as _)
+            });
         let portfolio = netzzwergenwacht::patrol::portfolio::run_portfolio_patrol(
             &cfg,
             allow_private || app_cfg.policy.allow_private,
@@ -533,16 +538,13 @@ async fn run_patrol_cmd(
             return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
         }
     };
-    let llm_ref: Option<&dyn netzzwergenwacht::intelligence::LlmProvider> = llm_provider
-        .as_ref()
-        .map(|p| p as &dyn netzzwergenwacht::intelligence::LlmProvider);
-    let report = netzzwergenwacht::patrol::run_patrol(
+    let report = netzzwergenwacht::patrol::run_patrol_with_router(
         target,
         policy,
         exec_budget,
         patrol_budget,
         Some(memory_dir),
-        llm_ref,
+        Some(&router),
         backend,
     )
     .await;

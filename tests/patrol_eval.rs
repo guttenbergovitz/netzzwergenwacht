@@ -32,12 +32,15 @@ impl LlmProvider for SequenceLlm {
 
     fn complete<'a>(
         &'a self,
-        _system: &'a str,
+        system: &'a str,
         _user: &'a str,
         _budget: LlmBudget,
     ) -> LlmFuture<'a> {
         let mut c = self.calls.lock().unwrap();
         *c += 1;
+        if system.contains("specialist member of Die Zwergenbrigade") {
+            return Box::pin(async move { Ok("Specialist assessment recorded.".to_owned()) });
+        }
         let next = self
             .responses
             .lock()
@@ -305,4 +308,86 @@ async fn quiet_patrol_spends_zero_llm_calls_when_unchanged() {
     assert_eq!(p2.resource_ledger.llm_requests, 0);
     assert_eq!(*llm_p2.calls.lock().unwrap(), 0);
     let _ = fs::remove_dir_all(&mem_dir);
+}
+
+struct NamedMockLlm {
+    model: &'static str,
+    response: &'static str,
+}
+
+impl LlmProvider for NamedMockLlm {
+    fn model_name(&self) -> &str {
+        self.model
+    }
+
+    fn complete<'a>(
+        &'a self,
+        _system: &'a str,
+        _user: &'a str,
+        _budget: LlmBudget,
+    ) -> LlmFuture<'a> {
+        let out = self.response.to_owned();
+        Box::pin(async move { Ok(out) })
+    }
+}
+
+#[tokio::test]
+async fn patrol_delegates_to_distinct_per_dwarf_models() {
+    use netzzwergenwacht::brigade::DwarfId;
+    use netzzwergenwacht::intelligence::CachedProviderRouter;
+    use netzzwergenwacht::patrol::run_patrol_with_router;
+
+    let regressed = Arc::new(AtomicBool::new(true));
+    let base = spawn_multilingual_site(regressed).await;
+    let seed = AuditTarget::parse(&format!("{base}/"), TargetPolicy::AllowPrivate).unwrap();
+
+    let mut router = CachedProviderRouter::default();
+    router.insert(
+        DwarfId::Sicherheits,
+        Arc::new(NamedMockLlm {
+            model: "mock-sec-claude",
+            response: "HTTPS and security headers absent on HTTP origin.",
+        }),
+    );
+    router.insert(
+        DwarfId::Zugaenglichkeits,
+        Arc::new(NamedMockLlm {
+            model: "mock-a11y-gpt",
+            response: "Root page missing <html lang> and image alt attributes.",
+        }),
+    );
+    router.set_fallback(Arc::new(NamedMockLlm {
+        model: "mock-kommandant-reasoner",
+        response: r#"{"ready_to_conclude":true,"conclusion":"Delegated specialists confirmed findings."}"#,
+    }));
+
+    let backend: Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
+        Arc::new(LiveDiagnosticBackend);
+    let report = run_patrol_with_router(
+        seed,
+        TargetPolicy::AllowPrivate,
+        ExecutionBudget::default(),
+        PatrolBudget {
+            max_pages: 5,
+            allow_ai_escalation: true,
+            ..PatrolBudget::default()
+        },
+        None,
+        Some(&router),
+        backend,
+    )
+    .await;
+
+    assert!(report.execution_succeeded);
+    assert_ne!(
+        report.specialist_delegations,
+        Vec::<netzzwergenwacht::patrol::SpecialistDelegation>::new()
+    );
+    assert!(
+        report
+            .specialist_delegations
+            .iter()
+            .any(|d| d.model_used == "mock-sec-claude" || d.model_used == "mock-a11y-gpt")
+    );
+    assert!(report.investigation.is_some());
 }

@@ -35,8 +35,10 @@ impl ApplicationId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceFreshness {
-    /// Verified during the current patrol.
+    /// Verified during the current patrol (full inspection).
     CurrentlyVerified,
+    /// HTTP representation verified unchanged via `304`/matching `ETag` (does not prove runtime/browser stability).
+    HttpRepresentationOnly,
     /// Verified in a prior patrol within the freshness TTL.
     PreviouslyVerified,
     /// Older than the configured freshness TTL.
