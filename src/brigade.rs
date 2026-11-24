@@ -154,7 +154,7 @@ pub const ZWERGENBRIGADE: &[DwarfProfile] = &[
         role: DwarfRole::DeterministicAnalyser,
         character: "The perpetually dissatisfied designer",
         required_evidence: EvidenceLevel::Rendered,
-        status: ImplementationStatus::Planned,
+        status: ImplementationStatus::Implemented,
     },
     DwarfProfile {
         id: DwarfId::Browser,
@@ -163,7 +163,7 @@ pub const ZWERGENBRIGADE: &[DwarfProfile] = &[
         role: DwarfRole::DeterministicAnalyser,
         character: "The experimental mechanic",
         required_evidence: EvidenceLevel::Rendered,
-        status: ImplementationStatus::Planned,
+        status: ImplementationStatus::Implemented,
     },
     DwarfProfile {
         id: DwarfId::Dokumentations,

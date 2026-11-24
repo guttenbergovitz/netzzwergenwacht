@@ -401,6 +401,14 @@ pub enum EvidenceSource {
     HttpBody,
     /// TLS peer certificate metadata.
     TlsCertificate,
+    /// Headless browser runtime events (console, failed requests).
+    BrowserRuntime,
+    /// Lighthouse performance report.
+    LighthouseReport,
+    /// axe-core rendered accessibility report.
+    AxeReport,
+    /// Browser viewport layout and visual asset observations.
+    VisualLayout,
 }
 
 /// Reference linking a finding back to an artefact inside an [`EvidenceSnapshot`].
@@ -582,6 +590,120 @@ pub enum CollectorOutcome<T> {
     },
 }
 
+impl<T> Default for CollectorOutcome<T> {
+    fn default() -> Self {
+        Self::Skipped {
+            reason: "not collected".to_owned(),
+        }
+    }
+}
+
+/// JavaScript console error observed during Level 2 browser execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ConsoleErrorEvent {
+    /// Console severity level (for example `"error"`).
+    pub level: String,
+    /// Console message text.
+    pub text: String,
+}
+
+/// Subresource request failure observed during Level 2 browser execution.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct FailedNetworkRequest {
+    /// Requested subresource URL.
+    pub url: String,
+    /// Failure description or error text.
+    pub error_text: String,
+    /// Optional HTTP status code if a response was received.
+    pub status_code: Option<u16>,
+}
+
+/// Broken image observed in the rendered DOM (`naturalWidth == 0`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BrokenImageObs {
+    /// Image `src` attribute or resolved URL.
+    pub src: String,
+    /// Rendered `naturalWidth` (0 indicates broken/unloaded image).
+    pub natural_width: u64,
+}
+
+/// Layout and visual integrity observations for a single browser viewport.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ViewportLayoutObs {
+    /// Logical viewport label (for example `"mobile"`, `"desktop"`).
+    pub viewport_name: String,
+    /// Viewport width in CSS pixels.
+    pub width: u32,
+    /// Viewport height in CSS pixels.
+    pub height: u32,
+    /// Whether `document.documentElement.scrollWidth > window.innerWidth`.
+    pub has_horizontal_overflow: bool,
+    /// Images that failed to decode or load in this viewport.
+    pub broken_images: Vec<BrokenImageObs>,
+    /// Optional path to a captured screenshot artefact.
+    pub screenshot_path: Option<String>,
+}
+
+/// Level 2 browser runtime and visual layout evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BrowserEvidence {
+    /// Final URL after client-side navigation.
+    pub final_url: String,
+    /// Browser version string if recorded.
+    pub browser_version: Option<String>,
+    /// Console error events emitted during navigation.
+    pub console_errors: Vec<ConsoleErrorEvent>,
+    /// Failed subresource network requests.
+    pub failed_requests: Vec<FailedNetworkRequest>,
+    /// Per-viewport layout and broken-asset observations.
+    pub viewports: Vec<ViewportLayoutObs>,
+}
+
+/// Level 2 Core Web Vitals and performance metrics from Lighthouse.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct LighthouseMetrics {
+    /// Recorded Lighthouse version.
+    pub lighthouse_version: String,
+    /// Largest Contentful Paint in milliseconds.
+    pub lcp_ms: Measurement<u64>,
+    /// Cumulative Layout Shift in thousandths (for example `120` = `0.120`).
+    pub cls_milli: Measurement<u64>,
+    /// First Contentful Paint in milliseconds.
+    pub fcp_ms: Measurement<u64>,
+    /// Total Blocking Time in milliseconds.
+    pub tbt_ms: Measurement<u64>,
+    /// Optional Lighthouse performance category score (`0..=100`).
+    pub performance_score: Option<u8>,
+}
+
+/// Single accessibility violation reported by `axe-core`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AxeViolation {
+    /// Stable axe rule ID (for example `"color-contrast"`).
+    pub id: String,
+    /// Impact level (`"critical"`, `"serious"`, `"moderate"`, `"minor"`).
+    pub impact: Option<String>,
+    /// Short rule description.
+    pub description: String,
+    /// Reference documentation URL.
+    pub help_url: String,
+    /// Number of affected DOM nodes.
+    pub nodes_count: usize,
+}
+
+/// Level 2 rendered-DOM accessibility evidence from `axe-core`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AxeEvidence {
+    /// Recorded `axe-core` version.
+    pub axe_version: String,
+    /// Reported rule violations.
+    pub violations: Vec<AxeViolation>,
+    /// Number of passed rules.
+    pub passes_count: usize,
+    /// Number of rules requiring manual review.
+    pub incomplete_count: usize,
+}
+
 /// Immutable snapshot of all collected evidence for a single target audit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceSnapshot {
@@ -593,6 +715,15 @@ pub struct EvidenceSnapshot {
     pub http: CollectorOutcome<HttpEvidence>,
     /// TLS certificate collection outcome.
     pub tls: CollectorOutcome<TlsEvidence>,
+    /// Level 2 browser runtime and visual layout outcome.
+    #[serde(default)]
+    pub browser: CollectorOutcome<BrowserEvidence>,
+    /// Level 2 Lighthouse performance outcome.
+    #[serde(default)]
+    pub lighthouse: CollectorOutcome<LighthouseMetrics>,
+    /// Level 2 axe-core accessibility outcome.
+    #[serde(default)]
+    pub axe: CollectorOutcome<AxeEvidence>,
 }
 
 #[cfg(test)]

@@ -5,6 +5,7 @@
 //! bounded external evidence collection ([`collection`]), deterministic
 //! analysers ([`analysis`]), and audit history persistence ([`persistence`]).
 
+pub mod adapters;
 pub mod analysis;
 pub mod brigade;
 pub mod collection;
