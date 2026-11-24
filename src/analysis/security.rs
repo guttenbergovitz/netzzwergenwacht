@@ -567,30 +567,51 @@ fn check_cookies(
     }
 
     let mut missing_secure = 0usize;
-    let mut missing_httponly = 0usize;
+    let mut missing_httponly_session = 0usize;
     let mut missing_samesite = 0usize;
 
     for raw in &cookies {
         let lower = raw.to_ascii_lowercase();
-        let attrs: Vec<&str> = lower.split(';').skip(1).map(str::trim).collect();
+        let mut parts = lower.split(';');
+        let name_part = parts
+            .next()
+            .unwrap_or("")
+            .split('=')
+            .next()
+            .unwrap_or("")
+            .trim();
+        let looks_sensitive = [
+            "sess",
+            "sid",
+            "token",
+            "auth",
+            "jwt",
+            "csrf",
+            "xsrf",
+            "__host-",
+            "__secure-",
+        ]
+        .iter()
+        .any(|kw| name_part.contains(kw));
+        let attrs: Vec<&str> = parts.map(str::trim).collect();
         if uses_https && !attrs.contains(&"secure") {
             missing_secure += 1;
         }
-        if !attrs.contains(&"httponly") {
-            missing_httponly += 1;
+        if looks_sensitive && !attrs.contains(&"httponly") {
+            missing_httponly_session += 1;
         }
         if !attrs.iter().any(|a| a.starts_with("samesite=")) {
             missing_samesite += 1;
         }
     }
 
-    if missing_secure == 0 && missing_httponly == 0 && missing_samesite == 0 {
+    if missing_secure == 0 && missing_httponly_session == 0 && missing_samesite == 0 {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_COOKIES.to_owned()),
             evidence_level: EvidenceLevel::Source,
         });
     } else {
-        let severity = if missing_secure > 0 || missing_httponly > 0 {
+        let severity = if missing_secure > 0 || missing_httponly_session > 0 {
             Severity::Medium
         } else {
             Severity::Low
@@ -605,7 +626,7 @@ fn check_cookies(
             confidence: Confidence::High,
             title: "Cookies missing security hardening attributes".to_owned(),
             summary: format!(
-                "Across {} Set-Cookie header(s): {missing_secure} missing `Secure`, {missing_httponly} missing `HttpOnly`, {missing_samesite} missing `SameSite`.",
+                "Across {} Set-Cookie header(s): {missing_secure} missing `Secure`, {missing_httponly_session} session/auth cookie(s) missing `HttpOnly`, {missing_samesite} missing `SameSite`.",
                 cookies.len()
             ),
             evidence_refs: vec![EvidenceRef::new(
@@ -646,11 +667,11 @@ fn check_cors(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Source,
             kind: FindingKind::Deterministic,
-            severity: Severity::High,
+            severity: Severity::Medium,
             confidence: Confidence::High,
-            title: "Wildcard CORS combined with Allow-Credentials".to_owned(),
+            title: "Invalid wildcard CORS with Allow-Credentials".to_owned(),
             summary:
-                "`Access-Control-Allow-Origin: *` is paired with `Access-Control-Allow-Credentials: true`."
+                "`Access-Control-Allow-Origin: *` is paired with `Access-Control-Allow-Credentials: true`; browsers reject credentialed responses with wildcard origins."
                     .to_owned(),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpHeaders,
@@ -780,18 +801,15 @@ fn check_sri(
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    let page_host = url::Url::parse(&http.final_url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    let page_origin = url::Url::parse(&http.final_url).ok().map(|u| u.origin());
 
     let is_cross_origin = |raw: &str| -> bool {
         let Ok(parsed) = url::Url::parse(raw) else {
             return false;
         };
-        match (&page_host, parsed.host_str()) {
-            (Some(ph), Some(rh)) => !rh.eq_ignore_ascii_case(ph),
-            _ => false,
-        }
+        page_origin
+            .as_ref()
+            .is_some_and(|origin| parsed.origin() != *origin)
     };
 
     let missing_script_sri = obs

@@ -243,17 +243,29 @@ fn check_soft_error(
         .as_deref()
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
-    let looks_like_error_title = [
+    let h1_lower = obs
+        .headings
+        .iter()
+        .find(|h| h.level == 1)
+        .map(|h| h.text.to_ascii_lowercase())
+        .unwrap_or_default();
+    let combined = format!("{title_lower} {h1_lower}");
+    let looks_like_error_page = [
         "404",
+        "410",
         "page not found",
         "not found",
+        "nie znaleziono",
+        "strona nie istnieje",
+        "seite nicht gefunden",
+        "nicht gefunden",
         "500 internal server error",
         "error 404",
     ]
     .iter()
-    .any(|p| title_lower.contains(p));
+    .any(|p| combined.contains(p));
 
-    if looks_like_error_title && obs.visible_word_count < 120 {
+    if looks_like_error_page && obs.visible_word_count < 80 {
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_SOFT_ERROR.to_owned()),
@@ -261,7 +273,7 @@ fn check_soft_error(
             evidence_level: EvidenceLevel::Source,
             kind: FindingKind::Heuristic,
             severity: Severity::Medium,
-            confidence: Confidence::Medium,
+            confidence: Confidence::Low,
             title: "Potential soft-404 / error page served with HTTP 200".to_owned(),
             summary: format!(
                 "Response returned HTTP 200 with error-like title `{}` and {} visible words.",

@@ -317,13 +317,9 @@ fn check_hreflang(
     let mut seen = std::collections::HashSet::new();
     let mut duplicates = Vec::new();
     let mut non_absolute = Vec::new();
-    let mut has_x_default = false;
 
     for item in &obs.hreflangs {
         let lang = item.lang.to_ascii_lowercase();
-        if lang == "x-default" {
-            has_x_default = true;
-        }
         if !seen.insert(lang.clone()) {
             duplicates.push(lang);
         }
@@ -341,9 +337,6 @@ fn check_hreflang(
             "{} non-absolute hreflang URL(s)",
             non_absolute.len()
         ));
-    }
-    if obs.hreflangs.len() >= 2 && !has_x_default {
-        issues.push("missing `x-default` fallback".to_owned());
     }
 
     if issues.is_empty() {
@@ -398,15 +391,20 @@ fn check_json_ld(
     for raw in &obs.json_ld_blocks {
         match serde_json::from_str::<serde_json::Value>(raw) {
             Ok(val) => {
-                let has_keys = match &val {
-                    serde_json::Value::Object(map) => {
+                let has_schema_keys = |v: &serde_json::Value| -> bool {
+                    v.as_object().is_some_and(|map| {
                         map.contains_key("@context")
                             && (map.contains_key("@type") || map.contains_key("@graph"))
+                    })
+                };
+                let valid_shape = match &val {
+                    serde_json::Value::Object(_) => has_schema_keys(&val),
+                    serde_json::Value::Array(items) => {
+                        !items.is_empty() && items.iter().all(has_schema_keys)
                     }
-                    serde_json::Value::Array(items) => !items.is_empty(),
                     _ => false,
                 };
-                if !has_keys {
+                if !valid_shape {
                     missing_schema_keys += 1;
                 }
             }
@@ -604,6 +602,22 @@ mod tests {
         let (http, obs) = http_with_html(html);
         let res = analyse(&http, &obs);
         assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_HREFLANG));
+        assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_JSON_LD));
+    }
+
+    #[test]
+    fn allows_optional_x_default_and_rejects_invalid_json_ld_array_item() {
+        let html = r#"<html><head>
+            <title>NetzZwergenWacht Audit Engine</title>
+            <meta name="description" content="External web auditing engine.">
+            <link rel="canonical" href="https://example.com/">
+            <link rel="alternate" hreflang="en" href="https://example.com/en">
+            <link rel="alternate" hreflang="de" href="https://example.com/de">
+            <script type="application/ld+json">[{"foo":"bar"}]</script>
+        </head><body><h1>Main</h1></body></html>"#;
+        let (http, obs) = http_with_html(html);
+        let res = analyse(&http, &obs);
+        assert!(!res.findings.iter().any(|f| f.rule_id.0 == RULE_HREFLANG));
         assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_JSON_LD));
     }
 }
