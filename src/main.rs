@@ -574,7 +574,12 @@ async fn run_check(
     let mut snapshot = collection::collect_http(&target, &budget, target_pol).await;
     if adapters.lighthouse {
         snapshot.lighthouse = match remaining_audit_budget(audit_started, budget.audit_timeout) {
-            Some(rem) => netzzwergenwacht::adapters::lighthouse::run_lighthouse(&target, rem).await,
+            Some(rem) => {
+                netzzwergenwacht::adapters::lighthouse::run_lighthouse_with_policy(
+                    &target, rem, target_pol,
+                )
+                .await
+            }
             None => CollectorOutcome::Skipped {
                 reason: "shared audit_timeout budget exhausted".to_owned(),
             },
@@ -582,7 +587,12 @@ async fn run_check(
     }
     if adapters.browser {
         snapshot.browser = match remaining_audit_budget(audit_started, budget.audit_timeout) {
-            Some(rem) => netzzwergenwacht::adapters::browser::run_browser(&target, rem).await,
+            Some(rem) => {
+                netzzwergenwacht::adapters::browser::run_browser_with_policy(
+                    &target, rem, target_pol,
+                )
+                .await
+            }
             None => CollectorOutcome::Skipped {
                 reason: "shared audit_timeout budget exhausted".to_owned(),
             },

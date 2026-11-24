@@ -10,10 +10,24 @@ use tokio::process::Command;
 
 use crate::adapters::run_bounded_command;
 use crate::domain::{
-    AuditTarget, CollectorOutcome, LighthouseMetrics, Measurement, MeasurementUnit,
+    AuditTarget, CollectorOutcome, LighthouseMetrics, Measurement, MeasurementUnit, TargetPolicy,
 };
 
-/// Runs `lighthouse` against `target` within `timeout`, returning a typed outcome.
+/// Builds the `--chrome-flags` string for headless Lighthouse execution.
+#[must_use]
+pub fn build_lighthouse_chrome_flags(policy: TargetPolicy, allow_unsafe_sandbox: bool) -> String {
+    let mut chrome_flags = "--headless --disable-gpu".to_owned();
+    if matches!(policy, TargetPolicy::PublicOnly) {
+        chrome_flags
+            .push_str(" --host-resolver-rules=\"MAP localhost ~NOTFOUND, MAP *.local ~NOTFOUND\"");
+    }
+    if allow_unsafe_sandbox {
+        chrome_flags.push_str(" --no-sandbox");
+    }
+    chrome_flags
+}
+
+/// Runs `lighthouse` against `target` within `timeout` using [`TargetPolicy::PublicOnly`].
 ///
 /// If the `lighthouse` binary is not installed, returns [`CollectorOutcome::Failed`]
 /// with a clear diagnostic rather than aborting the entire audit.
@@ -21,10 +35,17 @@ pub async fn run_lighthouse(
     target: &AuditTarget,
     timeout: Duration,
 ) -> CollectorOutcome<LighthouseMetrics> {
-    let mut chrome_flags = "--headless --disable-gpu".to_owned();
-    if std::env::var("NZW_ALLOW_UNSAFE_BROWSER_SANDBOX").as_deref() == Ok("1") {
-        chrome_flags.push_str(" --no-sandbox");
-    }
+    run_lighthouse_with_policy(target, timeout, TargetPolicy::PublicOnly).await
+}
+
+/// Runs `lighthouse` against `target` within `timeout` while applying `policy`.
+pub async fn run_lighthouse_with_policy(
+    target: &AuditTarget,
+    timeout: Duration,
+    policy: TargetPolicy,
+) -> CollectorOutcome<LighthouseMetrics> {
+    let allow_unsafe = std::env::var("NZW_ALLOW_UNSAFE_BROWSER_SANDBOX").as_deref() == Ok("1");
+    let chrome_flags = build_lighthouse_chrome_flags(policy, allow_unsafe);
 
     let mut cmd = Command::new("lighthouse");
     cmd.arg(target.as_str())
@@ -200,5 +221,15 @@ mod tests {
         let metrics = parse_lighthouse_json(fixture).unwrap();
         assert!(matches!(metrics.lcp_ms, Measurement::Unavailable { .. }));
         assert!(matches!(metrics.cls_milli, Measurement::Unavailable { .. }));
+    }
+
+    #[test]
+    fn public_only_lighthouse_flags_block_localhost_and_keep_sandbox() {
+        let flags = build_lighthouse_chrome_flags(TargetPolicy::PublicOnly, false);
+        assert!(flags.contains("MAP localhost ~NOTFOUND"));
+        assert!(!flags.contains("--no-sandbox"));
+
+        let local_flags = build_lighthouse_chrome_flags(TargetPolicy::AllowPrivate, false);
+        assert!(!local_flags.contains("NOTFOUND"));
     }
 }
