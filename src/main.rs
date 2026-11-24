@@ -2,7 +2,7 @@
 
 use std::process::ExitCode;
 
-use netzzwergenwacht::domain::AuditTarget;
+use netzzwergenwacht::domain::{AuditTarget, TargetPolicy};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -16,7 +16,7 @@ fn main() -> ExitCode {
                 eprintln!("usage: nzw validate <url>");
                 return ExitCode::FAILURE;
             };
-            match AuditTarget::parse(&raw_url) {
+            match AuditTarget::parse(&raw_url, TargetPolicy::PublicOnly) {
                 Ok(target) => {
                     println!(
                         "valid target: {} (host: {})",

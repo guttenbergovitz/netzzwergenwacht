@@ -1,6 +1,7 @@
 //! `NetzZwergenWacht` core library.
 //!
-//! Phase 0 establishes the core domain contracts and invariants before
-//! implementing the Phase 1 HTTP collector and deterministic analysers.
+//! Separates validated domain contracts ([`domain`]) from bounded external
+//! evidence collection ([`collection`]).
 
+pub mod collection;
 pub mod domain;
