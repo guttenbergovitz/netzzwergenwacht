@@ -183,9 +183,13 @@ function findBrowser() {
       await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
     }
 
+    let loadTimedOut = false;
     const loaded = new Promise((resolve) => {
       loadResolve = resolve;
-      setTimeout(resolve, 15000);
+      setTimeout(() => {
+        loadTimedOut = true;
+        resolve();
+      }, 15000);
     });
     await call('Page.navigate', { url: targetUrl });
     await loaded;
@@ -227,6 +231,7 @@ function findBrowser() {
     process.stdout.write(JSON.stringify({
       final_url: finalUrl,
       browser_version: browserVersion,
+      load_timed_out: loadTimedOut,
       console_errors: consoleErrors,
       failed_requests: failedRequests,
       viewports,
@@ -261,9 +266,49 @@ pub async fn run_browser(
         Err(error) => return CollectorOutcome::Failed { error },
     };
 
-    match parse_browser_json(&stdout) {
-        Ok(evidence) => CollectorOutcome::Captured { data: evidence },
-        Err(error) => CollectorOutcome::Failed { error },
+    parse_browser_outcome(&stdout)
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RawBrowserOutput {
+    #[serde(default)]
+    load_timed_out: bool,
+    #[serde(flatten)]
+    evidence: BrowserEvidence,
+}
+
+/// Parses raw JSON produced by the browser adapter into a [`CollectorOutcome`].
+///
+/// Returns [`CollectorOutcome::Partial`] when `load_timed_out` is `true` so
+/// downstream analysers know `Page.loadEventFired` did not complete within
+/// the navigation deadline.
+#[must_use]
+pub fn parse_browser_outcome(raw: &str) -> CollectorOutcome<BrowserEvidence> {
+    let parsed: RawBrowserOutput = match serde_json::from_str(raw) {
+        Ok(v) => v,
+        Err(e) => {
+            return CollectorOutcome::Failed {
+                error: format!("invalid browser evidence JSON: {e}"),
+            };
+        }
+    };
+    if parsed.evidence.final_url.trim().is_empty() {
+        return CollectorOutcome::Failed {
+            error: "browser evidence JSON has empty `final_url`".to_owned(),
+        };
+    }
+    if parsed.load_timed_out {
+        CollectorOutcome::Partial {
+            data: parsed.evidence,
+            warnings: vec![
+                "Page.loadEventFired timed out after 15000 ms; DOM metrics captured before full load"
+                    .to_owned(),
+            ],
+        }
+    } else {
+        CollectorOutcome::Captured {
+            data: parsed.evidence,
+        }
     }
 }
 
@@ -327,5 +372,45 @@ mod tests {
             "viewports": []
         }"#;
         assert!(parse_browser_json(raw).is_err());
+        assert!(matches!(
+            parse_browser_outcome(raw),
+            CollectorOutcome::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn load_timed_out_produces_partial_outcome_with_warning() {
+        let raw = r#"{
+            "final_url": "https://example.org/",
+            "browser_version": "HeadlessChrome/131.0",
+            "load_timed_out": true,
+            "console_errors": [],
+            "failed_requests": [],
+            "viewports": []
+        }"#;
+        match parse_browser_outcome(raw) {
+            CollectorOutcome::Partial { data, warnings } => {
+                assert_eq!(data.final_url, "https://example.org/");
+                assert_eq!(warnings.len(), 1);
+                assert!(warnings[0].contains("Page.loadEventFired timed out"));
+            }
+            other => panic!("expected Partial outcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_completed_produces_captured_outcome() {
+        let raw = r#"{
+            "final_url": "https://example.org/",
+            "browser_version": "HeadlessChrome/131.0",
+            "load_timed_out": false,
+            "console_errors": [],
+            "failed_requests": [],
+            "viewports": []
+        }"#;
+        assert!(matches!(
+            parse_browser_outcome(raw),
+            CollectorOutcome::Captured { .. }
+        ));
     }
 }
