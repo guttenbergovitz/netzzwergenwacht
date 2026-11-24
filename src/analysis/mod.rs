@@ -11,6 +11,7 @@ pub mod document;
 pub mod graph;
 pub mod network;
 pub mod performance;
+pub mod schema;
 pub mod security;
 pub mod semantics;
 pub mod seo;

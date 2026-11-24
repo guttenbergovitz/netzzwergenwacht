@@ -5,6 +5,7 @@
 
 use crate::analysis::document::DocumentObservations;
 use crate::analysis::header_value;
+use crate::analysis::schema;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
@@ -32,6 +33,9 @@ pub const ALL_RULES: &[&str] = &[
     RULE_JSON_LD,
     RULE_SOCIAL,
     RULE_URL_HYGIENE,
+    schema::RULE_SCHEMA_TYPE_REQUIREMENTS,
+    schema::RULE_SCHEMA_SAME_AS,
+    schema::RULE_SCHEMA_ENTITY_REFS,
 ];
 
 /// Evaluates search metadata and indexability signals over `http` and `obs`.
@@ -47,6 +51,7 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_h1(obs, &mut findings, &mut checks);
     check_hreflang(obs, &mut findings, &mut checks);
     check_json_ld(obs, &mut findings, &mut checks);
+    schema::analyse_into(obs, &mut findings, &mut checks);
     check_social_meta(obs, &mut findings, &mut checks);
     check_url_hygiene(http, &mut findings, &mut checks);
 

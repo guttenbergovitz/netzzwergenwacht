@@ -634,6 +634,7 @@ fn build_captured_graph_input(
         hreflangs: obs.hreflangs.clone(),
         same_page_fragments,
         all_ids: obs.all_ids.clone(),
+        entities: crate::analysis::schema::extract_entities(&obs.json_ld_blocks).entities,
     }
 }
 
@@ -653,6 +654,7 @@ fn unreachable_graph_input(target: &AuditTarget, depth: usize, in_sitemap: bool)
         hreflangs: Vec::new(),
         same_page_fragments: Vec::new(),
         all_ids: HashSet::new(),
+        entities: Vec::new(),
     }
 }
 
