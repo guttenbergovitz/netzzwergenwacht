@@ -101,7 +101,7 @@ pub struct PatrolBudget {
 impl Default for PatrolBudget {
     fn default() -> Self {
         Self {
-            max_pages: 10,
+            max_pages: 25,
             max_deep_samples: 2,
             freshness_ttl_secs: 3_600,
             allow_ai_escalation: true,
@@ -134,12 +134,18 @@ pub struct CoverageMatrix {
 /// Resource consumption ledger recorded for a single patrol run.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct PatrolResourceLedger {
+    /// HTTP requests made during sitemap/`robots.txt` discovery.
+    #[serde(default)]
+    pub discovery_requests: usize,
     /// Total HTTP page fetches executed during sampling.
     pub http_requests: usize,
     /// Total Level 2 headless browser sessions executed.
     pub browser_sessions: usize,
     /// Total LLM turns consumed by selective specialist escalation.
     pub llm_requests: usize,
+    /// Total diagnostic tool invocations consumed during specialist escalation.
+    #[serde(default)]
+    pub investigation_tool_calls: usize,
     /// Healthy remembered page observations reused without re-fetching.
     pub reused_observations: usize,
     /// Total patrol wall-clock duration in milliseconds.
@@ -183,6 +189,9 @@ pub struct PatrolReport {
     pub executive_summary: String,
     /// `true` when no material changes or anomalies were detected.
     pub is_quiet_patrol: bool,
+    /// Non-empty when persisting updated [`ApplicationMemory`] failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_save_error: Option<String>,
 }
 
 fn unix_now_secs() -> u64 {
@@ -293,16 +302,31 @@ pub async fn run_patrol(
         sampling_plan.total_discovered = page_types.len().max(sampling_plan.total_discovered);
     }
 
-    // 4. Historical comparison on the primary entry point.
+    // 4. Historical comparison on the primary entry point and all remembered subpages.
     let regression = match (&mem.latest_report, &seed_report) {
         (Some(prev), Some(curr)) => Some(persistence::diff_reports(prev, curr)),
         _ => None,
     };
+    let subpage_regressions: Vec<RegressionReport> = page_reports
+        .iter()
+        .filter(|(sel, _, _, _)| sel.url != seed)
+        .filter_map(|(sel, curr, _, _)| {
+            mem.page_records
+                .get(sel.url.as_str())
+                .and_then(|rec| rec.latest_report.as_ref())
+                .map(|prev| persistence::diff_reports(prev, curr))
+        })
+        .collect();
 
-    // 5. Anomaly detection.
-    let anomalies = detect_anomalies(&page_reports, regression.as_ref(), is_returning);
+    // 5. Anomaly detection across seed + subpages.
+    let anomalies = detect_anomalies(
+        &page_reports,
+        regression.as_ref(),
+        &subpage_regressions,
+        is_returning,
+    );
 
-    // 6. Selective specialist escalation.
+    // 6. Selective specialist escalation directed at the actual anomalous URL.
     let mut specialist_escalations: Vec<DwarfId> = Vec::new();
     let mut investigation: Option<InvestigationReport> = None;
     if patrol_budget.allow_ai_escalation
@@ -314,14 +338,17 @@ pub async fn run_patrol(
                 specialist_escalations.push(a.suggested_competency);
             }
         }
+        let investigation_target =
+            AuditTarget::parse(&anomalies[0].affected_url, policy).unwrap_or_else(|_| seed.clone());
         let objective = format!(
-            "Investigate {} patrol anomaly(ies); top concern: {}",
+            "Investigate {} patrol anomaly(ies); top concern on {}: {}",
             anomalies.len(),
+            investigation_target.as_str(),
             anomalies[0].summary
         );
         investigation = Some(
             run_investigation(
-                seed.clone(),
+                investigation_target,
                 objective,
                 policy,
                 InvestigationBudget::default(),
@@ -351,10 +378,19 @@ pub async fn run_patrol(
             .get(sel.url.as_str())
             .copied()
             .unwrap_or(PageType::Unknown);
-        let freshness = if matches!(report.http, CollectorOutcome::Captured { .. }) {
-            EvidenceFreshness::CurrentlyVerified
-        } else {
-            EvidenceFreshness::Unverified
+        let (freshness, etag, last_modified) = match &report.http {
+            CollectorOutcome::Captured { data } => (
+                EvidenceFreshness::CurrentlyVerified,
+                data.headers
+                    .iter()
+                    .find(|h| h.name == "etag")
+                    .map(|h| h.value.clone()),
+                data.headers
+                    .iter()
+                    .find(|h| h.name == "last-modified")
+                    .map(|h| h.value.clone()),
+            ),
+            _ => (EvidenceFreshness::Unverified, None, None),
         };
         mem.page_records.insert(
             sel.url.as_str().to_owned(),
@@ -364,6 +400,9 @@ pub async fn run_patrol(
                 page_type: pt,
                 template_fingerprint: tpl.clone(),
                 content_hash: body_hash.clone(),
+                etag,
+                last_modified,
+                latest_report: Some(report.clone()),
                 last_inspected_unix_secs: now,
                 open_finding_count,
                 healthy_streak,
@@ -380,15 +419,19 @@ pub async fn run_patrol(
     if seed_report.is_some() {
         mem.latest_report.clone_from(&seed_report);
     }
-    if let Some(dir) = memory_dir {
-        let _ = save_memory(dir, &mem);
-    }
+    let memory_save_error = memory_dir
+        .and_then(|dir| save_memory(dir, &mem).err())
+        .map(|err| format!("failed to save patrol memory: {err}"));
 
     let execution_succeeded = seed_report
         .as_ref()
         .is_some_and(|r| !matches!(r.http, CollectorOutcome::Failed { .. }));
     let reused_page_count = sampling_plan.reused_urls.len();
+    let has_subpage_regressions = subpage_regressions
+        .iter()
+        .any(|r| r.summary.new_count > 0 || r.summary.reintroduced_count > 0);
     let is_quiet_patrol = anomalies.is_empty()
+        && !has_subpage_regressions
         && regression
             .as_ref()
             .is_none_or(|r| r.summary.new_count == 0 && r.summary.reintroduced_count == 0);
@@ -449,11 +492,15 @@ pub async fn run_patrol(
     );
 
     let resource_ledger = PatrolResourceLedger {
+        discovery_requests: usize::from(!discovered.is_empty()).max(1),
         http_requests: page_reports.len(),
         browser_sessions: deep_inspected_urls,
         llm_requests: investigation
             .as_ref()
             .map_or(0, |inv| inv.ledger.llm_turns_used),
+        investigation_tool_calls: investigation
+            .as_ref()
+            .map_or(0, |inv| inv.ledger.tool_calls_used),
         reused_observations: reused_page_count,
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     };
@@ -475,6 +522,7 @@ pub async fn run_patrol(
         coverage_summary,
         executive_summary,
         is_quiet_patrol,
+        memory_save_error,
     }
 }
 
@@ -565,35 +613,43 @@ fn suggested_competency(f: &Finding) -> DwarfId {
     }
 }
 
-fn detect_anomalies(
-    page_reports: &[(SampleSelection, AuditReport, Option<String>, Option<String>)],
-    regression: Option<&RegressionReport>,
-    is_returning: bool,
-) -> Vec<PatrolAnomaly> {
-    let mut anomalies = Vec::new();
-    if let Some(reg) = regression {
-        for f in &reg.new_findings {
-            if f.severity >= Severity::Medium {
-                anomalies.push(PatrolAnomaly {
-                    id: format!("ANO-{}", anomalies.len() + 1),
-                    category: AnomalyCategory::MaterialRegression,
-                    affected_url: reg.current_target.clone(),
-                    severity: f.severity,
-                    summary: format!("New finding `{}`: {}", f.rule_id.0, f.title),
-                    suggested_competency: suggested_competency(f),
-                });
-            }
-        }
-        for f in &reg.reintroduced_findings {
+fn push_regression_anomalies(reg: &RegressionReport, anomalies: &mut Vec<PatrolAnomaly>) {
+    for f in &reg.new_findings {
+        if f.severity >= Severity::Medium {
             anomalies.push(PatrolAnomaly {
                 id: format!("ANO-{}", anomalies.len() + 1),
                 category: AnomalyCategory::MaterialRegression,
                 affected_url: reg.current_target.clone(),
                 severity: f.severity,
-                summary: format!("Reintroduced finding `{}`: {}", f.rule_id.0, f.title),
+                summary: format!("New finding `{}`: {}", f.rule_id.0, f.title),
                 suggested_competency: suggested_competency(f),
             });
         }
+    }
+    for f in &reg.reintroduced_findings {
+        anomalies.push(PatrolAnomaly {
+            id: format!("ANO-{}", anomalies.len() + 1),
+            category: AnomalyCategory::MaterialRegression,
+            affected_url: reg.current_target.clone(),
+            severity: f.severity,
+            summary: format!("Reintroduced finding `{}`: {}", f.rule_id.0, f.title),
+            suggested_competency: suggested_competency(f),
+        });
+    }
+}
+
+fn detect_anomalies(
+    page_reports: &[(SampleSelection, AuditReport, Option<String>, Option<String>)],
+    regression: Option<&RegressionReport>,
+    subpage_regressions: &[RegressionReport],
+    is_returning: bool,
+) -> Vec<PatrolAnomaly> {
+    let mut anomalies = Vec::new();
+    if let Some(reg) = regression {
+        push_regression_anomalies(reg, &mut anomalies);
+    }
+    for reg in subpage_regressions {
+        push_regression_anomalies(reg, &mut anomalies);
     }
     if !is_returning {
         for (sel, report, _, _) in page_reports {

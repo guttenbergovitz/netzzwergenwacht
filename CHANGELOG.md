@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Patrol Subpage Diffing, Template Stratification & Targeted Escalation (2026-11-24)
+- Stored `latest_report`, `etag`, and `last_modified` per `RememberedPage` (`src/patrol/memory.rs`) and diffed every inspected subpage against its prior report (`src/patrol/mod.rs`).
+- Added template-family stratification and oldest-inspected-first `RotatingExploration` in `src/patrol/sampling.rs`.
+- Directed `KommandantZwerg` escalation at the actual anomalous `affected_url`, surfaced `memory_save_error` on `PatrolReport`, and added `discovery_requests` and `investigation_tool_calls` to `PatrolResourceLedger`.
+
 ### Patrol Resource Ledger & `nzw report` Command (2026-11-24)
 - Added `PatrolResourceLedger` (`http_requests`, `browser_sessions`, `llm_requests`, `reused_observations`, `duration_ms`) to `PatrolReport` (`src/patrol/mod.rs`).
 - Added `nzw report <file>` (`--format text|json|markdown`, `--audience`) to present stored Patrol, Investigation, or Audit reports (`src/main.rs`).
