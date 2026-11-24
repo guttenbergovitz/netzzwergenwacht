@@ -185,6 +185,16 @@ impl Origin {
             port: target.port(),
         }
     }
+
+    /// Returns a canonical `scheme://host:port` string representation.
+    #[must_use]
+    pub fn canonical_string(&self) -> String {
+        let scheme = match self.scheme {
+            TargetScheme::Http => "http",
+            TargetScheme::Https => "https",
+        };
+        format!("{scheme}://{}:{}", self.host, self.port)
+    }
 }
 
 /// Explicit investigation scope enforcing origin, additional origins, and SSRF policy.

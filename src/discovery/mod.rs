@@ -181,9 +181,113 @@ pub fn discover_same_origin_links(
     out
 }
 
+/// Language and optional regional market variant detected for a page.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct LocaleVariant {
+    /// Lowercased ISO-639-1 language subtag (for example `"en"` or `"de"`).
+    pub language: String,
+    /// Uppercased ISO-3166-1 region/market subtag when present (for example `"GB"` or `"US"`).
+    pub market: Option<String>,
+    /// Canonical BCP-47-style tag (for example `"en-GB"` or `"de"`).
+    pub tag: String,
+}
+
+const KNOWN_LANG_CODES: &[&str] = &[
+    "en", "de", "fr", "es", "it", "nl", "pl", "pt", "sv", "da", "no", "fi", "cs", "ja", "zh", "ko",
+    "ru", "uk",
+];
+
+/// Parses a BCP-47-like tag (`"en-GB"`, `"de"`, `"fr_CA"`) into a [`LocaleVariant`].
+#[must_use]
+pub fn parse_locale_tag(raw: &str) -> Option<LocaleVariant> {
+    let cleaned = raw.trim().replace('_', "-");
+    let mut parts = cleaned.split('-');
+    let lang = parts.next()?.to_ascii_lowercase();
+    if lang.len() != 2 || !KNOWN_LANG_CODES.contains(&lang.as_str()) {
+        return None;
+    }
+    let market = parts
+        .next()
+        .filter(|r| r.len() == 2 && r.chars().all(|c| c.is_ascii_alphabetic()))
+        .map(str::to_ascii_uppercase);
+    let tag = match &market {
+        Some(m) => format!("{lang}-{m}"),
+        None => lang.clone(),
+    };
+    Some(LocaleVariant {
+        language: lang,
+        market,
+        tag,
+    })
+}
+
+/// Detects a [`LocaleVariant`] from the first URL path segment (e.g. `/en-gb/pricing`).
+#[must_use]
+pub fn detect_locale_from_url(url: &AuditTarget) -> Option<LocaleVariant> {
+    let parsed = Url::parse(url.as_str()).ok()?;
+    let first = parsed.path().split('/').find(|seg| !seg.is_empty())?;
+    parse_locale_tag(first)
+}
+
+/// Detects a [`LocaleVariant`] combining `<html lang>` and URL path signals.
+#[must_use]
+pub fn detect_locale(
+    url: &AuditTarget,
+    obs: Option<&DocumentObservations>,
+) -> Option<LocaleVariant> {
+    if let Some(html_lang) = obs.and_then(|o| o.html_lang.as_deref())
+        && let Some(loc) = parse_locale_tag(html_lang)
+    {
+        return Some(loc);
+    }
+    detect_locale_from_url(url)
+}
+
+/// Computes a structural template fingerprint invariant to dynamic copy, prices, and IDs.
+#[must_use]
+pub fn template_fingerprint(obs: &DocumentObservations) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut mix = |bytes: &[u8]| {
+        for &b in bytes {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    };
+    mix(&[u8::from(obs.landmarks.main_count > 0)]);
+    mix(&[u8::from(!obs.form_controls.is_empty())]);
+    for h in &obs.headings {
+        mix(&[h.level]);
+    }
+    mix(&(obs.form_controls.len().min(8) as u64).to_le_bytes());
+    mix(&((obs.link_hrefs.len() / 5).min(10) as u64).to_le_bytes());
+    format!("tpl-{hash:016x}")
+}
+
 /// Extracts and normalises same-origin URLs from an XML sitemap `<loc>` list.
 #[must_use]
 pub fn parse_sitemap_urls(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> Vec<AuditTarget> {
+    if xml.contains("<sitemapindex") {
+        return Vec::new();
+    }
+    extract_loc_targets(xml, base, policy)
+}
+
+/// Extracts same-origin child sitemap URLs from an XML `<sitemapindex>` document.
+#[must_use]
+pub fn parse_sitemap_index_urls(
+    xml: &str,
+    base: &AuditTarget,
+    policy: TargetPolicy,
+) -> Vec<AuditTarget> {
+    if !xml.contains("<sitemapindex") {
+        return Vec::new();
+    }
+    extract_loc_targets(xml, base, policy)
+}
+
+fn extract_loc_targets(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> Vec<AuditTarget> {
     let base_origin = Origin::from_target(base);
     let mut seen = HashSet::new();
     let mut out = Vec::new();
@@ -444,7 +548,9 @@ pub async fn crawl_and_cluster(
     }
 }
 
-async fn seed_sitemap_urls(
+/// Fetches `/sitemap.xml` (including bounded `<sitemapindex>` child sitemaps)
+/// on `seed`'s origin and returns prioritised same-origin URLs.
+pub async fn seed_sitemap_urls(
     seed: &AuditTarget,
     exec_budget: ExecutionBudget,
     policy: TargetPolicy,
@@ -467,12 +573,32 @@ async fn seed_sitemap_urls(
         ..exec_budget
     };
     let sm_snap = collection::collect_http(&sm_target, &sm_budget, policy).await;
-    if let CollectorOutcome::Captured { data } = sm_snap.http
-        && data.status_code == 200
-    {
+    let CollectorOutcome::Captured { data } = sm_snap.http else {
+        return Vec::new();
+    };
+    if data.status_code != 200 {
+        return Vec::new();
+    }
+    let child_sitemaps = parse_sitemap_index_urls(&data.body_text, seed, policy);
+    if child_sitemaps.is_empty() {
         return prioritise_representative_urls(parse_sitemap_urls(&data.body_text, seed, policy));
     }
-    Vec::new()
+
+    let mut all_urls = Vec::new();
+    let mut visited_urls = HashSet::new();
+    for child in child_sitemaps.into_iter().take(5) {
+        let child_snap = collection::collect_http(&child, &sm_budget, policy).await;
+        if let CollectorOutcome::Captured { data: child_data } = child_snap.http
+            && child_data.status_code == 200
+        {
+            for u in parse_sitemap_urls(&child_data.body_text, seed, policy) {
+                if visited_urls.insert(u.as_str().to_owned()) {
+                    all_urls.push(u);
+                }
+            }
+        }
+    }
+    prioritise_representative_urls(all_urls)
 }
 
 #[cfg(test)]
@@ -604,5 +730,48 @@ mod tests {
                 "https://example.org/privacy",
             ]
         );
+    }
+
+    #[test]
+    fn parses_sitemap_index_and_detects_locales_and_templates() {
+        let base = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let index_xml = r"
+            <sitemapindex>
+                <sitemap><loc>https://example.org/sitemap-en.xml</loc></sitemap>
+                <sitemap><loc>https://other.example.com/sitemap.xml</loc></sitemap>
+            </sitemapindex>
+        ";
+        assert_eq!(
+            parse_sitemap_urls(index_xml, &base, TargetPolicy::PublicOnly),
+            Vec::<AuditTarget>::new()
+        );
+        let children = parse_sitemap_index_urls(index_xml, &base, TargetPolicy::PublicOnly);
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].as_str(), "https://example.org/sitemap-en.xml");
+
+        let gb = AuditTarget::parse(
+            "https://example.org/en-gb/products",
+            TargetPolicy::PublicOnly,
+        )
+        .unwrap();
+        let us = AuditTarget::parse(
+            "https://example.org/en-us/products",
+            TargetPolicy::PublicOnly,
+        )
+        .unwrap();
+        assert_eq!(detect_locale(&gb, None).unwrap().tag, "en-GB");
+        assert_eq!(detect_locale(&us, None).unwrap().tag, "en-US");
+
+        let p1 = DocumentObservations::from_html(
+            "<html lang=\"de\"><body><main><h1>Widget A</h1><p>19.99</p></main></body></html>",
+        );
+        let p2 = DocumentObservations::from_html(
+            "<html lang=\"de\"><body><main><h1>Widget B</h1><p>49.00</p></main></body></html>",
+        );
+        let form = DocumentObservations::from_html(
+            "<html><body><main><h1>Login</h1><form><input name=\"u\"></form></main></body></html>",
+        );
+        assert_eq!(template_fingerprint(&p1), template_fingerprint(&p2));
+        assert_ne!(template_fingerprint(&p1), template_fingerprint(&form));
     }
 }

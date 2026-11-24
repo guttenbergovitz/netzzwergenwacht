@@ -4,7 +4,7 @@
 
 > **NetzZwergenWacht** is an open-source, agentic web quality investigation system. A brigade of specialised diagnostic agents collaboratively investigates, measures and explains the reliability, security, accessibility, performance and overall quality of web applications.
 
-> **Organisational Mission**: NetzZwergenWacht provides an on-demand brigade of digital quality specialists (**Die Zwergenbrigade**) that helps Product Owners, Project Managers, Engineering Managers, CTOs and other responsible stakeholders understand the condition of their applications, identify meaningful risks, prioritise improvements and verify that corrective actions have actually been completed.
+> **Operational Mission (Autonomous Web Quality Patrol)**: NetzZwergenWacht autonomously patrols digital applications, learns their externally observable structure, identifies changes and emerging quality risks, selectively deploys specialist diagnostic agents and maintains evidence-backed institutional memory across recurring patrols.
 
 **We are not building another website auditor. We are building a virtual team of website auditors.**
 
@@ -30,8 +30,9 @@ NetzZwergenWacht must **not** be positioned as:
 | **CTO / Engineering Management** | Are we accumulating systemic quality debt? Which issues are architectural/template-level? How do applications compare over time? | Cross-domain correlations, systemic issue clusters, evidence-backed risk register, historical trends. |
 | **SRE / QA / Technical Specialists** | Which observations support a finding? Can it be reproduced? What changed since the baseline? | Structured evidence artefacts, tool versions, reproduction steps, machine-readable JSON/SARIF, investigation traces. |
 
-## 4. Three Operating Modes
+## 4. Operating Modes
 
-1. **Deterministic Audit (`nzw check`)**: Runs configurable deterministic rules with zero LLM dependencies. Built for CI/CD quality gates, baselines, and offline/restricted environments.
-2. **Agentic Investigation (`nzw investigate`, Milestone B+)**: `KommandantZwerg` interprets stakeholder objectives, establishes scope and budgets, delegates typed diagnostic tools, formulates and tests falsifiable hypotheses, correlates systemic issues, and produces stakeholder-ready reports.
-3. **Verification Investigation (`nzw verify`, Milestone E+)**: Re-investigates previously identified findings or remediation tasks and distinguishes confirmed resolution from missing or incomparable evidence.
+1. **Autonomous Patrol (`nzw patrol`)** *(Flagship)*: Requires only a target URL. Discovers application topology and locales, retrieves institutional memory, plans stratified sampling, runs low-cost deterministic checks, escalates material anomalies selectively to `KommandantZwerg` and specialists, updates memory, and emits a change-oriented situation report.
+2. **Deterministic Audit (`nzw check`)**: Runs configurable deterministic rules with zero LLM dependencies. Built for CI/CD quality gates, baselines, and offline/restricted environments.
+3. **Agentic Investigation (`nzw investigate`)**: Explicitly commissioned specialist investigation where `KommandantZwerg` interprets stakeholder objectives, delegates typed diagnostic tools, formulates and tests falsifiable hypotheses, and produces stakeholder-ready reports.
+4. **Verification Investigation (`nzw verify`)**: Re-investigates previously identified findings or remediation tasks and distinguishes confirmed resolution from missing or incomparable evidence.
