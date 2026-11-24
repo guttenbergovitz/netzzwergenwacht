@@ -5,6 +5,8 @@ All notable changes to NetzZwergenWacht are documented in this file.
 ## [Unreleased] - `rewrite/rust`
 
 ### Phase 3: Persistence & Regression Analysis (2026-11-24)
+- Added TOML configuration (`AppConfig`, `BudgetConfig`, `PolicyConfig`) and `evaluate_policy` quality gates (`src/config.rs`, `--config`, `--fail-on`).
+- Added bounded concurrent batch auditing (`collection::collect_batch` with Tokio `Semaphore` + `nzw batch <targets_file>`).
 - Added deterministic `FindingFingerprint` (`domain.rs`) populated automatically for every emitted finding in `analysis::run_all`.
 - Added JSONL audit history persistence and `diff_reports` regression classification (`src/persistence.rs`).
 - Added `--history <path>` to `nzw check` and `nzw diff <baseline> <current>` CLI subcommand.

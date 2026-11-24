@@ -26,11 +26,11 @@ NetzZwergenWacht is being rewritten in Rust on `rewrite/rust` using incremental 
 - [ ] Implement `GestaltungsZwerg` (viewport overflow, broken images, responsive screenshots)
 - [ ] Validate all analysers against controlled offline HTML/DOM fixtures
 
-## Phase 3: Persistence and Regression Analysis *(Partially Implemented)*
+## Phase 3: Persistence and Regression Analysis *(Completed)*
 - [x] Persist `AuditReport` entries as JSONL (`src/persistence.rs`, `nzw check --history`)
 - [x] Implement stable `FindingFingerprint` generation (FNV-1a 64-bit over host, rule, and evidence)
 - [x] Add `nzw diff` regression comparison (`New`, `Persisting`, `Resolved`)
-- [ ] Support batch auditing and configurable policy quality gates
+- [x] Support batch auditing (`nzw batch`) and TOML configuration / policy quality gates (`src/config.rs`, `--config`, `--fail-on`)
 
 ## Phase 4: Optional Intelligence (`KommandantZwerg`)
 - [ ] Run focused technical spike for `rig-core`
