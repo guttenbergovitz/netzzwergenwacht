@@ -220,6 +220,9 @@ pub struct PatrolReport {
     pub resource_ledger: PatrolResourceLedger,
     /// Anomalies detected during this patrol.
     pub anomalies: Vec<PatrolAnomaly>,
+    /// Cross-page Application Graph results evaluated over inspected patrol pages.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graph_results: Vec<crate::domain::AnalyserResult>,
     /// Specialist competencies activated for anomaly investigation.
     pub specialist_escalations: Vec<DwarfId>,
     /// Per-anomaly specialist assessments produced using per-dwarf model routing.
@@ -505,13 +508,51 @@ pub async fn run_patrol_with_router(
         })
         .collect();
 
-    // 5. Anomaly detection across seed + subpages.
-    let anomalies = detect_anomalies(
+    // 5. Application Graph analysis + anomaly detection across seed + subpages.
+    let graph_inputs: Vec<crate::analysis::graph::GraphPageInput> = page_reports
+        .iter()
+        .map(|(sel, rep, _, _)| match &rep.http {
+            CollectorOutcome::Captured { data } => crate::discovery::build_captured_graph_input(
+                &sel.url,
+                data,
+                &crate::analysis::document::DocumentObservations::from_html(&data.body_text),
+                usize::from(sel.url != seed),
+                false,
+                policy,
+            ),
+            _ => crate::discovery::unreachable_graph_input(
+                &sel.url,
+                usize::from(sel.url != seed),
+                false,
+            ),
+        })
+        .collect();
+    let app_graph = crate::analysis::graph::ApplicationGraph::from_pages(
+        &graph_inputs,
+        page_reports.len() >= discovered.len(),
+    );
+    let graph_results = crate::analysis::graph::analyse(&app_graph);
+
+    let mut anomalies = detect_anomalies(
         &page_reports,
         regression.as_ref(),
         &subpage_regressions,
         is_returning,
     );
+    for res in &graph_results {
+        for f in &res.findings {
+            if f.severity >= Severity::Medium {
+                anomalies.push(PatrolAnomaly {
+                    id: format!("anom-graph-{}", anomalies.len() + 1),
+                    category: AnomalyCategory::NewDefect,
+                    affected_url: seed.as_str().to_owned(),
+                    severity: f.severity,
+                    summary: format!("[Graph: {}] {}", f.rule_id.0, f.title),
+                    suggested_competency: res.dwarf_id,
+                });
+            }
+        }
+    }
 
     // 6. Collaborative specialist delegation (with evidence context & authorised tool
     // execution) followed by KommandantZwerg synthesis over specialist contributions,
@@ -839,6 +880,7 @@ pub async fn run_patrol_with_router(
         coverage_matrix,
         resource_ledger,
         anomalies,
+        graph_results,
         specialist_escalations,
         specialist_delegations,
         investigation,

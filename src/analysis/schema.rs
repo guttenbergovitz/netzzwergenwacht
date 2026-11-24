@@ -128,11 +128,11 @@ fn evaluate_type_requirements(
             rule_id: RuleId(RULE_SCHEMA_TYPE_REQUIREMENTS.to_owned()),
             category: FindingCategory::Seo,
             evidence_level: EvidenceLevel::Source,
-            kind: FindingKind::Deterministic,
+            kind: FindingKind::Heuristic,
             severity: Severity::Medium,
             confidence: Confidence::High,
             title: format!(
-                "Structured data missing required properties ({})",
+                "Structured data missing search-eligibility properties ({})",
                 extracted.type_issues.len()
             ),
             summary: extracted
@@ -147,7 +147,8 @@ fn evaluate_type_requirements(
                 format!("schema_type_issues={}", extracted.type_issues.len()),
             )],
             remediation: Some(
-                "Populate required Schema.org properties for each declared entity type.".to_owned(),
+                "Populate recommended Rich Results / Schema.org properties for each declared entity type."
+                    .to_owned(),
             ),
         });
         checks.push(CheckStatus::Failed {
@@ -297,9 +298,16 @@ fn collect_value_entities(
                     collect_value_entities(item, out, defined_ids);
                 }
             }
-            if map.contains_key("@type") || map.contains_key("@id") {
+            let is_definition =
+                map.contains_key("@type") || map.keys().any(|k| !k.starts_with('@'));
+            if is_definition {
                 let entity = extract_object_entity(map, out, defined_ids);
                 out.entities.push(entity);
+            }
+            for (k, v) in map {
+                if !k.starts_with('@') {
+                    collect_value_entities(v, out, defined_ids);
+                }
             }
         }
         _ => {}
@@ -544,5 +552,22 @@ mod tests {
         assert!(ids.contains(&RULE_SCHEMA_TYPE_REQUIREMENTS));
         assert!(ids.contains(&RULE_SCHEMA_SAME_AS));
         assert!(ids.contains(&RULE_SCHEMA_ENTITY_REFS));
+    }
+
+    #[test]
+    fn registers_nested_inline_entity_ids_in_defined_set() {
+        let block = r##"{
+            "@context": "https://schema.org",
+            "@type": "Article",
+            "headline": "Hello",
+            "author": {"@type": "Person", "name": "Ada"},
+            "datePublished": "2026-11-25",
+            "publisher": {"@type": "Organization", "@id": "#pub", "name": "Acme", "url": "https://example.com/"},
+            "mainEntityOfPage": {"@id": "#pub"}
+        }"##
+        .to_owned();
+        let extracted = extract_entities(&[block]);
+        assert_eq!(extracted.unresolved_fragment_refs, Vec::<String>::new());
+        assert_eq!(extracted.entities.len(), 3);
     }
 }
