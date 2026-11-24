@@ -13,15 +13,16 @@ use url::Url;
 
 use crate::domain::{
     AuditTarget, CollectorOutcome, EvidenceSnapshot, ExecutionBudget, HttpEvidence, HttpHeader,
-    Measurement, RedirectHop, TargetPolicy, is_forbidden_ip,
+    Measurement, MeasurementUnit, RedirectHop, TargetPolicy, is_forbidden_ip,
 };
 
 const USER_AGENT: &str = concat!("NetzZwergenWacht/", env!("CARGO_PKG_VERSION"));
 
 /// Performs a single bounded HTTP `GET` collection pass for `target`.
 ///
-/// Enforces [`ExecutionBudget`] timeouts, redirect caps, streaming payload size
-/// limits, and [`TargetPolicy`] SSRF/DNS-pinning defences on every hop.
+/// Enforces [`ExecutionBudget`] end-to-end deadlines, per-request timeouts,
+/// redirect caps, streaming payload size limits, and [`TargetPolicy`]
+/// SSRF/DNS-pinning defences on every hop.
 pub async fn collect_http(
     target: &AuditTarget,
     budget: &ExecutionBudget,
@@ -31,16 +32,28 @@ pub async fn collect_http(
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
 
-    let http = match execute_bounded_get(target, budget, policy).await {
-        Ok(evidence) if evidence.body_truncated => CollectorOutcome::Partial {
+    let outcome = tokio::time::timeout(
+        budget.audit_timeout,
+        execute_bounded_get(target, budget, policy),
+    )
+    .await;
+
+    let http = match outcome {
+        Ok(Ok(evidence)) if evidence.body_truncated => CollectorOutcome::Partial {
             warnings: vec![format!(
                 "response body truncated at {} bytes budget",
                 budget.max_response_bytes
             )],
             data: evidence,
         },
-        Ok(evidence) => CollectorOutcome::Captured { data: evidence },
-        Err(error) => CollectorOutcome::Failed { error },
+        Ok(Ok(evidence)) => CollectorOutcome::Captured { data: evidence },
+        Ok(Err(error)) => CollectorOutcome::Failed { error },
+        Err(_) => CollectorOutcome::Failed {
+            error: format!(
+                "audit collection exceeded {} ms deadline",
+                budget.audit_timeout.as_millis()
+            ),
+        },
     };
 
     EvidenceSnapshot {
@@ -64,6 +77,7 @@ async fn execute_bounded_get(
         let host_for_pin = strip_ipv6_brackets(current_target.host());
 
         let client = reqwest::Client::builder()
+            .no_proxy()
             .redirect(Policy::none())
             .timeout(budget.http_timeout)
             .user_agent(USER_AGENT)
@@ -126,7 +140,7 @@ async fn execute_bounded_get(
             headers,
             elapsed_ms: Measurement::Measured {
                 value: elapsed_ms,
-                unit: "ms".to_owned(),
+                unit: MeasurementUnit::Milliseconds,
             },
             body_bytes: body.len(),
             body_truncated,

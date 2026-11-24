@@ -6,9 +6,11 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use url::{Host, Url};
+
+use crate::brigade::DwarfId;
 
 /// Policy governing whether private or loopback targets are permitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -55,12 +57,27 @@ pub enum TargetError {
 }
 
 /// Validated external audit target.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AuditTarget {
     url: String,
     scheme: TargetScheme,
     host: String,
     port: u16,
+}
+
+#[derive(Deserialize)]
+struct RawAuditTarget {
+    url: String,
+}
+
+impl<'de> Deserialize<'de> for AuditTarget {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = RawAuditTarget::deserialize(deserializer)?;
+        Self::parse(&raw.url, TargetPolicy::AllowPrivate).map_err(serde::de::Error::custom)
+    }
 }
 
 impl AuditTarget {
@@ -187,6 +204,8 @@ const fn is_forbidden_ipv6(v6: Ipv6Addr) -> bool {
 /// Explicit resource bounds governing an audit run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionBudget {
+    /// End-to-end deadline for the entire audit collection stage (including DNS and redirects).
+    pub audit_timeout: Duration,
     /// Per-request HTTP timeout.
     pub http_timeout: Duration,
     /// Maximum number of HTTP redirects to follow.
@@ -200,6 +219,7 @@ pub struct ExecutionBudget {
 impl Default for ExecutionBudget {
     fn default() -> Self {
         Self {
+            audit_timeout: Duration::from_secs(60),
             http_timeout: Duration::from_secs(30),
             max_redirects: 5,
             max_response_bytes: 10 * 1024 * 1024, // 10 MiB
@@ -211,6 +231,18 @@ impl Default for ExecutionBudget {
 /// Strongly typed rule identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RuleId(pub String);
+
+/// Evidence capability level required or used by an observation or rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceLevel {
+    /// Level 1: HTTP responses and original HTML without JavaScript execution.
+    Source,
+    /// Level 2: Browser-rendered DOM, computed styles, accessibility tree, and layout.
+    Rendered,
+    /// Level 3: Controlled browser interaction, keyboard navigation, and focus management.
+    Behavioural,
+}
 
 /// Epistemic classification of a finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,16 +258,18 @@ pub enum FindingKind {
     AiInterpretation,
 }
 
-/// Logical audit domain (preserving Zwerg domain ownership).
+/// Logical audit domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FindingCategory {
-    /// HTTP status, redirects, and browser network/console reliability.
+    /// HTTP status, redirects, and endpoint reliability.
     Reliability,
     /// Transport security, headers, cookies, and authorised security checks.
     Security,
     /// Load timing, Core Web Vitals, and resource efficiency.
     Performance,
+    /// Semantic HTML, heading hierarchy, and document integrity.
+    Semantics,
     /// Machine-verifiable accessibility checks (never proof of legal compliance).
     Accessibility,
     /// Search metadata, structured data, and crawl directives.
@@ -244,6 +278,8 @@ pub enum FindingCategory {
     Content,
     /// Layout overflow, broken assets, and responsive integrity.
     Visual,
+    /// Browser runtime, console errors, and failed subresource requests.
+    Browser,
 }
 
 /// Finding severity levels.
@@ -274,6 +310,18 @@ pub enum Confidence {
     High,
 }
 
+/// Typed measurement unit preventing stringly-typed unit drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeasurementUnit {
+    /// Duration in milliseconds.
+    Milliseconds,
+    /// Size in bytes.
+    Bytes,
+    /// Dimensionless integer count.
+    Count,
+}
+
 /// Explicit representation of a measurement that never conflates failure with zero.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -282,8 +330,8 @@ pub enum Measurement<T> {
     Measured {
         /// Measured value.
         value: T,
-        /// Measurement unit (for example `"ms"`, `"bytes"`, `"count"`).
-        unit: String,
+        /// Typed measurement unit.
+        unit: MeasurementUnit,
     },
     /// Measurement could not be obtained (for example missing tool or unsupported target).
     Unavailable {
@@ -302,22 +350,53 @@ pub enum Measurement<T> {
     },
 }
 
+/// Typed source location within an [`EvidenceSnapshot`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceSource {
+    /// Final HTTP status code.
+    HttpStatus,
+    /// Final resolved URL after redirects.
+    HttpFinalUrl,
+    /// HTTP redirect chain.
+    HttpRedirectChain,
+    /// HTTP response headers.
+    HttpHeaders,
+    /// HTTP exchange timing measurement.
+    HttpTiming,
+    /// Raw or parsed HTTP response body / HTML document.
+    HttpBody,
+}
+
 /// Reference linking a finding back to an artefact inside an [`EvidenceSnapshot`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvidenceRef {
-    /// Logical source within the snapshot (for example `"http.headers"`, `"http.status"`).
-    pub source: String,
+    /// Typed source within the snapshot.
+    pub source: EvidenceSource,
     /// Specific observed detail or excerpt.
     pub detail: String,
+}
+
+impl EvidenceRef {
+    /// Constructs a new [`EvidenceRef`].
+    #[must_use]
+    pub fn new(source: EvidenceSource, detail: impl Into<String>) -> Self {
+        Self {
+            source,
+            detail: detail.into(),
+        }
+    }
 }
 
 /// Normalised audit finding emitted by a deterministic or heuristic analyser.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Finding {
-    /// Stable rule identifier (for example `rel.http.status_error`).
+    /// Stable rule identifier (for example `netz.http.status_error`).
     pub rule_id: RuleId,
     /// Audit domain category.
     pub category: FindingCategory,
+    /// Evidence capability level used to produce this finding.
+    pub evidence_level: EvidenceLevel,
     /// Epistemic classification.
     pub kind: FindingKind,
     /// Impact severity.
@@ -342,16 +421,22 @@ pub enum CheckStatus {
     Passed {
         /// Rule identifier.
         rule_id: RuleId,
+        /// Evidence level evaluated.
+        evidence_level: EvidenceLevel,
     },
     /// Check ran against valid evidence and emitted one or more findings.
     Failed {
         /// Rule identifier.
         rule_id: RuleId,
+        /// Evidence level evaluated.
+        evidence_level: EvidenceLevel,
     },
     /// Check was skipped because required evidence was absent or disabled.
     Skipped {
         /// Rule identifier.
         rule_id: RuleId,
+        /// Evidence level required.
+        evidence_level: EvidenceLevel,
         /// Reason the check was skipped.
         reason: String,
     },
@@ -359,6 +444,8 @@ pub enum CheckStatus {
     Unavailable {
         /// Rule identifier.
         rule_id: RuleId,
+        /// Evidence level required.
+        evidence_level: EvidenceLevel,
         /// Reason the check was unavailable.
         reason: String,
     },
@@ -367,8 +454,8 @@ pub enum CheckStatus {
 /// Output produced by a single Zwerg analyser.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalyserResult {
-    /// Name of the Zwerg domain analyser (for example `"SicherheitsZwerg"`).
-    pub zwerg_name: String,
+    /// Stable dwarf identifier.
+    pub dwarf_id: DwarfId,
     /// Normalised findings produced by this analyser.
     pub findings: Vec<Finding>,
     /// Per-rule execution statuses.
@@ -490,6 +577,18 @@ mod tests {
     }
 
     #[test]
+    fn deserialise_rejects_invalid_audit_target() {
+        let bad_json =
+            r#"{"url":"ftp://evil.example/","scheme":"https","host":"evil.example","port":443}"#;
+        let res: Result<AuditTarget, _> = serde_json::from_str(bad_json);
+        assert!(res.is_err());
+
+        let creds_json = r#"{"url":"https://user:pw@example.com/","scheme":"https","host":"example.com","port":443}"#;
+        let res_creds: Result<AuditTarget, _> = serde_json::from_str(creds_json);
+        assert!(res_creds.is_err());
+    }
+
+    #[test]
     fn public_only_blocks_private_loopback_and_link_local_ips() {
         let forbidden = [
             "http://127.0.0.1/",
@@ -521,7 +620,7 @@ mod tests {
     fn measurement_keeps_failures_distinct_from_zero() {
         let ok: Measurement<u64> = Measurement::Measured {
             value: 0,
-            unit: "count".to_owned(),
+            unit: MeasurementUnit::Count,
         };
         let failed: Measurement<u64> = Measurement::Failed {
             error: "timeout".to_owned(),
@@ -535,5 +634,6 @@ mod tests {
         assert!(budget.max_concurrency > 0);
         assert!(budget.max_response_bytes > 0);
         assert!(budget.http_timeout > Duration::ZERO);
+        assert!(budget.audit_timeout >= budget.http_timeout);
     }
 }
