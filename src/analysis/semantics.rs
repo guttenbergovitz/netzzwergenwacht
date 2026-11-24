@@ -15,6 +15,8 @@ const RULE_HEADING_HIERARCHY: &str = "str.headings.hierarchy";
 const RULE_LANDMARKS: &str = "str.landmarks.presence";
 const RULE_INTERACTIVE_SEMANTICS: &str = "str.interactive.native_semantics";
 const RULE_CONTAINER_RATIO: &str = "str.doc.container_ratio";
+const RULE_CHARSET: &str = "str.doc.charset";
+const RULE_SKIP_LINK: &str = "str.nav.skip_link";
 
 /// All rule identifiers owned by `StrukturZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -23,6 +25,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_LANDMARKS,
     RULE_INTERACTIVE_SEMANTICS,
     RULE_CONTAINER_RATIO,
+    RULE_CHARSET,
+    RULE_SKIP_LINK,
 ];
 
 /// Evaluates semantic HTML structure and element integrity over `obs`.
@@ -36,6 +40,8 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
     check_landmarks(obs, &mut findings, &mut checks);
     check_interactive_semantics(obs, &mut findings, &mut checks);
     check_container_ratio(obs, &mut findings, &mut checks);
+    check_charset(obs, &mut findings, &mut checks);
+    check_skip_link(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Struktur,
@@ -354,6 +360,89 @@ fn check_container_ratio(
     }
 }
 
+fn check_charset(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.charset_declared {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CHARSET.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CHARSET.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Missing HTML <meta charset> declaration".to_owned(),
+            summary: "Document does not declare `<meta charset=\"utf-8\">` (or Content-Type meta)."
+                .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "meta.charset=absent",
+            )],
+            remediation: Some("Add `<meta charset=\"utf-8\">` early inside `<head>`.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CHARSET.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_skip_link(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.landmarks.nav_count == 0 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_SKIP_LINK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no <nav> landmark present".to_owned(),
+        });
+        return;
+    }
+
+    if obs.has_skip_link {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SKIP_LINK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SKIP_LINK.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: "No skip-navigation link detected".to_owned(),
+            summary:
+                "Document includes `<nav>` landmarks without an early `#main`/`#content` skip link."
+                    .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("nav_count={};has_skip_link=false", obs.landmarks.nav_count),
+            )],
+            remediation: Some(
+                "Add an early `<a href=\"#main-content\">Skip to main content</a>` link."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SKIP_LINK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +479,16 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_INTERACTIVE_SEMANTICS && f.severity == Severity::High)
         );
+    }
+
+    #[test]
+    fn flags_missing_charset_and_skip_link() {
+        let html = r#"<html><head><title>T</title></head><body>
+            <nav><a href="/home">Home</a></nav><main><h1>Hi</h1></main>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let res = analyse(&obs);
+        assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_CHARSET));
+        assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_SKIP_LINK));
     }
 }

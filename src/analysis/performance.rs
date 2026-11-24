@@ -4,6 +4,7 @@
 //! and redirect overhead without conflating network timings with browser
 //! rendering or Core Web Vitals.
 
+use crate::analysis::document::DocumentObservations;
 use crate::analysis::{header_value, require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
@@ -17,12 +18,16 @@ const RULE_PAYLOAD_SIZE: &str = "perf.http.payload_size";
 const RULE_COMPRESSION: &str = "perf.http.compression";
 const RULE_CACHE_HEADERS: &str = "perf.http.cache_headers";
 const RULE_CORE_WEB_VITALS: &str = "perf.browser.core_web_vitals";
+const RULE_RENDER_BLOCKING_SCRIPTS: &str = "perf.dom.render_blocking_scripts";
+const RULE_THIRD_PARTY_SCRIPTS: &str = "perf.dom.third_party_scripts";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
     RULE_PAYLOAD_SIZE,
     RULE_COMPRESSION,
     RULE_CACHE_HEADERS,
+    RULE_RENDER_BLOCKING_SCRIPTS,
+    RULE_THIRD_PARTY_SCRIPTS,
 ];
 
 /// Configurable thresholds for Phase 1 HTTP performance checks.
@@ -52,7 +57,16 @@ impl Default for PerformanceThresholds {
 /// Evaluates Phase 1 HTTP performance observations using default thresholds.
 #[must_use]
 pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
-    analyse_with_thresholds(snapshot, PerformanceThresholds::default())
+    analyse_with_document(snapshot, None)
+}
+
+/// Evaluates HTTP performance and optional source-DOM script delivery rules.
+#[must_use]
+pub fn analyse_with_document(
+    snapshot: &EvidenceSnapshot,
+    obs: Option<&DocumentObservations>,
+) -> AnalyserResult {
+    analyse_with_thresholds_and_document(snapshot, PerformanceThresholds::default(), obs)
 }
 
 /// Evaluates Phase 1 HTTP performance observations using `thresholds`.
@@ -60,6 +74,14 @@ pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
 pub fn analyse_with_thresholds(
     snapshot: &EvidenceSnapshot,
     thresholds: PerformanceThresholds,
+) -> AnalyserResult {
+    analyse_with_thresholds_and_document(snapshot, thresholds, None)
+}
+
+fn analyse_with_thresholds_and_document(
+    snapshot: &EvidenceSnapshot,
+    thresholds: PerformanceThresholds,
+    obs: Option<&DocumentObservations>,
 ) -> AnalyserResult {
     let http = match require_http(snapshot) {
         Ok(http) => http,
@@ -82,6 +104,10 @@ pub fn analyse_with_thresholds(
     check_payload_size(http, thresholds, &mut findings, &mut checks);
     check_compression(http, &mut findings, &mut checks);
     check_cache_headers(http, &mut findings, &mut checks);
+    if let Some(doc) = obs {
+        check_render_blocking_scripts(doc, &mut findings, &mut checks);
+        check_third_party_scripts(http, doc, &mut findings, &mut checks);
+    }
     check_core_web_vitals(&snapshot.lighthouse, &mut findings, &mut checks);
 
     AnalyserResult {
@@ -425,6 +451,123 @@ fn check_cache_headers(
     }
 }
 
+fn check_render_blocking_scripts(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let blocking = obs
+        .scripts
+        .iter()
+        .filter(|s| {
+            s.src.is_some()
+                && !s.is_async
+                && !s.is_defer
+                && s.script_type.as_deref() != Some("module")
+        })
+        .count();
+
+    if blocking == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_RENDER_BLOCKING_SCRIPTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        let severity = if blocking >= 3 {
+            Severity::Low
+        } else {
+            Severity::Info
+        };
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_RENDER_BLOCKING_SCRIPTS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity,
+            confidence: Confidence::High,
+            title: format!("Synchronous external scripts ({blocking})"),
+            summary: format!(
+                "Found {blocking} external `<script>` tag(s) without `async`, `defer`, or `type=\"module\"`."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("blocking_scripts={blocking}"),
+            )],
+            remediation: Some(
+                "Add `defer` or `async` to non-critical external scripts to avoid blocking HTML parsing."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_RENDER_BLOCKING_SCRIPTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_third_party_scripts(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let page_host = url::Url::parse(&http.final_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+
+    let third_party = obs
+        .scripts
+        .iter()
+        .filter(|s| {
+            s.src.as_deref().is_some_and(|raw| {
+                url::Url::parse(raw)
+                    .ok()
+                    .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+                    .is_some_and(|h| page_host.as_deref() != Some(h.as_str()))
+            })
+        })
+        .count();
+
+    if third_party <= 4 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_THIRD_PARTY_SCRIPTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        let severity = if third_party > 8 {
+            Severity::Medium
+        } else {
+            Severity::Low
+        };
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_THIRD_PARTY_SCRIPTS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity,
+            confidence: Confidence::High,
+            title: format!("High third-party script count ({third_party})"),
+            summary: format!(
+                "Document embeds {third_party} external third-party scripts across different origins."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("third_party_scripts={third_party}"),
+            )],
+            remediation: Some(
+                "Audit and consolidate third-party scripts to reduce main-thread work and network contention."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_THIRD_PARTY_SCRIPTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,5 +677,54 @@ mod tests {
             .unwrap();
         assert_eq!(cwv_finding.severity, Severity::High);
         assert_eq!(cwv_finding.evidence_refs.len(), 2);
+    }
+
+    #[test]
+    fn flags_render_blocking_and_excessive_third_party_scripts() {
+        let html = r#"<html><head>
+            <script src="https://cdn1.example.org/a.js"></script>
+            <script src="https://cdn2.example.org/b.js"></script>
+            <script src="https://cdn3.example.org/c.js"></script>
+            <script src="https://cdn4.example.org/d.js" defer></script>
+            <script src="https://cdn5.example.org/e.js" async></script>
+        </head><body></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let snap = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: Vec::new(),
+                    elapsed_ms: Measurement::Measured {
+                        value: 50,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: html.len(),
+                    body_truncated: false,
+                    body_text: html.to_owned(),
+                },
+            },
+            tls: CollectorOutcome::default(),
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let result = analyse_with_document(&snap, Some(&obs));
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_RENDER_BLOCKING_SCRIPTS)
+        );
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_THIRD_PARTY_SCRIPTS)
+        );
     }
 }

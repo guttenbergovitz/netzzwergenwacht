@@ -99,11 +99,13 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
         Ok((http, obs)) => {
             analysers.push(network::analyse_with_document(snapshot, Some(&obs)));
             analysers.push(security::analyse_with_document(snapshot, Some(&obs)));
-            analysers.push(performance::analyse(snapshot));
+            analysers.push(performance::analyse_with_document(snapshot, Some(&obs)));
             analysers.push(semantics::analyse(&obs));
             analysers.push(accessibility::analyse_with_axe(&obs, &snapshot.axe));
             analysers.push(seo::analyse(http, &obs));
             analysers.push(content::analyse(http, &obs));
+            analysers.push(browser::analyse(snapshot));
+            analysers.push(visual::analyse_with_document(snapshot, Some(&obs)));
         }
         Err(reason) => {
             analysers.push(network::analyse(snapshot));
@@ -128,11 +130,10 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
                 EvidenceLevel::Source,
                 &reason,
             ));
+            analysers.push(browser::analyse(snapshot));
+            analysers.push(visual::analyse_without_document(snapshot, &reason));
         }
     }
-
-    analysers.push(browser::analyse(snapshot));
-    analysers.push(visual::analyse(snapshot));
 
     populate_fingerprints(snapshot.target.as_str(), &mut analysers);
 
