@@ -1,34 +1,28 @@
 # Evidence Model
 
-> **Status**: Target Design (Phase 1 core snapshot; Phase 3 persistence).
+> **Status**: Level 1 (Source) implemented; Level 2–3 and JSONL persistence planned.
 
 The **Evidence Model** guarantees that every claim in an audit report is traceable, reproducible, and honest about uncertainty.
 
-## 1. Epistemic Distinctions
+## 1. Evidence Capability Levels
+
+1. **Level 1 (`EvidenceLevel::Source`)**: HTTP responses, headers, redirect chains, and HTML5-parsed source document observations without JavaScript execution. *(Implemented)*
+2. **Level 2 (`EvidenceLevel::Rendered`)**: Browser-rendered DOM, computed styles, accessibility tree, browser performance entries, layout, and screenshots. *(Phase 2)*
+3. **Level 3 (`EvidenceLevel::Behavioural`)**: Controlled browser interaction, keyboard navigation, focus management, and dynamic state changes. *(Phase 2+)*
+
+If a rule's required evidence level is absent, incomplete, or truncated, it emits `CheckStatus::Skipped` or `CheckStatus::Unavailable` rather than silently downgrading to an unreliable heuristic.
+
+## 2. Epistemic Distinctions
 
 NZW explicitly separates:
+- **Observed Facts** (`HttpEvidence`, `DocumentObservations`)
+- **Measured Metrics** (`Measurement<T>` with typed `MeasurementUnit`)
+- **Deterministic Findings** (`FindingKind::Deterministic`)
+- **Heuristic Findings** (`FindingKind::Heuristic`, e.g. container ratio, title length)
+- **Inferred Relationships** (`FindingKind::Inferred`)
+- **AI-Generated Interpretations** (`FindingKind::AiInterpretation`, Phase 4)
+- **Unknown / Unverified Conditions** (`Unavailable`, `Failed`, `Skipped`)
 
-1. **Observed Facts**: Raw immutable captures (e.g. HTTP status `200`, header `strict-transport-security` absent, TLS cert `not_after`).
-2. **Measured Metrics**: Typed numeric quantities with units and provenance (`Measurement<T>`, e.g. `1420 ms`, `48.2 KiB`).
-3. **Deterministic Findings**: Exact rule evaluations over facts/metrics (`FindingKind::Deterministic`).
-4. **Heuristic Findings**: Threshold or pattern indicators with documented assumptions (`FindingKind::Heuristic`).
-5. **Inferred Relationships**: Cross-domain correlations (`FindingKind::Inferred`).
-6. **AI-Generated Interpretations**: Optional LLM synthesis (`FindingKind::AiInterpretation`).
-7. **Recommendations**: Actionable remediation steps attached to findings or synthesis.
-8. **Unknown / Unverified Conditions**: Explicit `Unavailable`, `Failed`, or `Skipped` states.
+## 3. `EvidenceSnapshot` & Integrity
 
-## 2. `EvidenceSnapshot` & Provenance
-
-Each `EvidenceSnapshot` records:
-- `snapshot_id` & `captured_at` (UTC)
-- `target`: canonical `AuditTarget`
-- `http`: HTTP response, headers, redirect chain, bounded body digest/excerpt
-- `tls`: `rustls` handshake & certificate metadata
-- `browser`: rendered DOM summary, console/network events, screenshot paths (Phase 2)
-- `external_tools`: adapter name, tool version, execution status, raw output reference (Phase 2)
-
-Every `Finding` includes `evidence_refs: Vec<EvidenceRef>` pointing to the exact snapshot artifact or external tool record that produced it.
-
-## 3. Finding Fingerprints (Phase 3)
-
-Each finding computes a deterministic `FindingFingerprint` (hash of `target_host`, `rule_id`, and normalised `location`/subject) to enable stable cross-run regression diffing (`New`, `Persisting`, `Resolved`).
+Each `EvidenceSnapshot` records `target`, `captured_at_unix_secs`, and `http: CollectorOutcome<HttpEvidence>`. Every `Finding` includes non-empty `evidence_refs: Vec<EvidenceRef>` referencing a typed `EvidenceSource`.

@@ -4,13 +4,16 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `rewrite/rust`
 
+### Phase 1: Zwergenbrigade, Shared Document Model & Core Hardening (2026-11-24)
+- Added ADR 0002 (`docs/adr/0002-zwergenbrigade-domains-shared-document-and-evidence-levels.md`), `docs/architecture/zwergenbrigade.md`, and `docs/architecture/document-analysis.md`.
+- Added central `ZWERGENBRIGADE` registry (`src/brigade.rs`) separating German dwarf identities from `en-GB` ASCII technical modules.
+- Hardened `AuditTarget` deserialisation, `MeasurementUnit` enum, `EvidenceLevel` (`Source`/`Rendered`/`Behavioural`), `EvidenceSource`, `.no_proxy()` DNS-pinning protection, end-to-end `audit_timeout`, truncated-body skip guardrails, semantic security-header validation, and CLI exit codes (`0`/`1`/`2`).
+- Added single-parse `DocumentObservations` (`analysis::document`).
+- Implemented `NetzZwerg`, `SicherheitsZwerg`, `LeistungsZwerg` (HTTP), `StrukturZwerg`, `ZugänglichkeitsZwerg` (Source), `SuchZwerg`, and `DokumentationsZwerg` CLI presentation.
+
 ### Phase 0: Architectural Reorientation & Rust Project Initialisation (2026-11-24)
-- Created `rewrite/rust` branch preserving the Python reference implementation on `main`.
-- Added ADR 0001 (`docs/adr/0001-rewrite-netzzwergenwacht-in-rust.md`).
-- Audited Python codebase and documented capability inventory (`docs/migration/python-capability-inventory.md`) and rewrite strategy (`docs/migration/rewrite-strategy.md`).
-- Documented target architecture (`docs/architecture/*.md`) and incremental roadmap (`docs/roadmap.md`).
-- Added `LICENSE` (MIT), `AGENTS.md`, and `CHANGELOG.md`.
-- Initialised minimal Rust Cargo workspace/crate (`Cargo.toml`, `src/lib.rs`, `src/main.rs`) and CI quality gates (`.github/workflows/ci.yml`).
+- Created `rewrite/rust` branch preserving the Python prototype on `main` and in `legacy/`.
+- Added ADR 0001, capability inventory, rewrite strategy, target architecture specs, roadmap, `LICENSE` (MIT), `AGENTS.md`, `docs/conventions.md`, `Taskfile.yml`, and CI quality gates.
 
 ## [0.1.0-python] - `main`
 

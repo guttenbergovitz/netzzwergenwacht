@@ -1,26 +1,26 @@
-# Analysis Engine
+# Analysis Engine (`src/analysis/`)
 
-> **Status**: Target Design (Phase 1 basic deterministic rules; Phase 2 full domain analysers).
+> **Status**: Implemented for Phase 1 Level 1 (Source) deterministic analysers.
 
-The **Analysis Engine** runs independent, deterministic analysers ("Zwerge") over a shared `EvidenceSnapshot`.
+The **Analysis Engine** runs independent, deterministic analysers (**Die Zwergenbrigade**) over a shared `EvidenceSnapshot` and shared `DocumentObservations` (`src/analysis/document.rs`).
 
 ## 1. Design Rules
 
-- **No Direct Network I/O**: Analysers receive `&EvidenceSnapshot` and `&AuditConfig`; they must not spawn HTTP clients or browser processes.
-- **Single Normalised Output**: No split between `analyze()` and `analyze_detailed()`. Every analyser emits `AnalyserResult` containing `Vec<Finding>`, typed domain `Measurement`s, and `CheckStatus` records.
-- **Absence of Evidence**: If required evidence in `EvidenceSnapshot` is `Failed` or `Skipped`, the analyser emits `CheckStatus::Skipped` / `Unavailable` instead of false-positive or false-negative findings.
-- **Rule Versioning**: Every rule carries a `RuleId` and `RuleVersion` so findings remain reproducible across engine upgrades.
+- **No Direct Network I/O**: Analysers are pure functions over `&EvidenceSnapshot` (or `&DocumentObservations`) and never spawn HTTP clients or browser processes.
+- **Single Normalised Output**: Every analyser emits `AnalyserResult` (`dwarf_id`, `Vec<Finding>`, `Vec<CheckStatus>`).
+- **Absence & Truncation Guardrails**: If `snapshot.http` is `Failed`/`Skipped`, HTTP-dependent rules emit `CheckStatus::Skipped`. If `HttpEvidence::body_truncated` is `true`, full-document HTML rules emit `CheckStatus::Skipped` to avoid false absence findings.
+- **Evidence Capability Levels**: Rules declare their `EvidenceLevel` (`Source`, `Rendered`, `Behavioural`). Higher-level checks (e.g. Core Web Vitals, axe-core, keyboard navigation, `BrowserZwerg`) explicitly emit `CheckStatus::Unavailable` or `CheckStatus::Skipped` in Phase 1.
 
-## 2. Target Analyser Domains
+## 2. Phase 1 Analyser Modules
 
-| Domain | Zwerg Identity | Primary Evidence Consumed |
+| Technical Module | Zwerg Identity | Owned Rules / Scope |
 |---|---|---|
-| Web Reliability | `WebBrowserZwerg` | HTTP status, redirects, console/network errors |
-| Security Posture | `SicherheitsZwerg` | TLS metadata, HTTP security headers, cookies |
-| Performance | `LeistungsZwerg` | Lighthouse adapter output, resource sizes, compression/cache headers |
-| Accessibility | `ZugaenglichkeitsZwerg` | axe-core adapter output, semantic/ARIA/viewport evidence |
-| SEO | `SEOZwerg` | HTML/DOM head tags, canonical, robots/sitemap, JSON-LD |
-| Content Quality | `InhaltZwerg` | Extracted DOM text, headings, freshness headers |
-| Visual Integrity | `VisualZwerg` | Viewport overflow, broken images, responsive screenshots |
+| `analysis::network` | **NetzZwerg** | HTTP status errors (`4xx`/`5xx`), redirect chain length |
+| `analysis::security` | **SicherheitsZwerg** | HTTPS usage, HSTS (`max-age > 0`), CSP (`unsafe-inline`/`unsafe-eval`), `X-Content-Type-Options`, `X-Frame-Options` / `frame-ancestors`, `Referrer-Policy` |
+| `analysis::performance` | **LeistungsZwerg** | HTTP exchange duration, payload size, compression, cache headers; marks Core Web Vitals `Unavailable` |
+| `analysis::semantics` | **StrukturZwerg** | Duplicate IDs, heading hierarchy, landmarks, native interactive semantics, context-aware container ratio |
+| `analysis::accessibility` | **ZugänglichkeitsZwerg** | `<html lang>`, `img[alt]`, form labels, broken ARIA ID refs, accessible names; marks Rendered/Behavioural `Unavailable` |
+| `analysis::seo` | **SuchZwerg** | `<title>`, meta description, canonical URL, `robots` / `X-Robots-Tag` `noindex` |
+| *(Phase 2)* | **BrowserZwerg** | Explicitly emits `CheckStatus::Skipped` until Level 2 browser collection is implemented |
 
-Note: Automated accessibility checks in `ZugaenglichkeitsZwerg` report machine-verifiable issues only and never claim full WCAG or EU Accessibility Act legal compliance.
+Note: Automated accessibility checks in `ZugänglichkeitsZwerg` report machine-verifiable issues only and never claim full WCAG or EU Accessibility Act legal compliance.

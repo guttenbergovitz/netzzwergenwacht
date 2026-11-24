@@ -2,37 +2,38 @@
 
 NetzZwergenWacht is being rewritten in Rust on `rewrite/rust` using incremental vertical slices.
 
-## Phase 0: Discovery and Documentation *(Current)*
-- [x] Audit Python implementation on `main` and verify capability gaps
+## Phase 0: Discovery and Documentation *(Completed)*
+- [x] Audit Python implementation on `main` and move frozen reference into `./legacy/`
 - [x] Create `rewrite/rust` branch preserving Python on `main`
-- [x] Write ADR 0001 (`docs/adr/0001-rewrite-netzzwergenwacht-in-rust.md`)
-- [x] Document capability inventory, rewrite strategy, and target architecture (`docs/architecture/*`)
-- [x] Initialise minimal Cargo project (`Cargo.toml`, `src/lib.rs`, `src/main.rs`) with `fmt`, `clippy`, and `test` gates
-- [x] Configure CI quality gates (`.github/workflows/ci.yml`)
+- [x] Write ADR 0001 and ADR 0002 (`docs/adr/`)
+- [x] Document capability inventory, rewrite strategy, conventions, Zwergenbrigade, and target architecture (`docs/`)
+- [x] Initialise Cargo project with strict lints (`clippy.toml`, `rustfmt.toml`, `Taskfile.yml`, `.github/workflows/ci.yml`)
 
-## Phase 1: Minimal Deterministic Core
-- [ ] Implement validated `AuditTarget` (with scheme/host checks and private-IP guardrails)
-- [ ] Implement bounded HTTP + `rustls` TLS collector (`reqwest`)
-- [ ] Implement `EvidenceSnapshot` and normalised `Finding` / `Measurement` contracts
-- [ ] Implement initial deterministic rules (HTTP reliability, security headers, TLS validity, basic HTML/SEO meta)
-- [ ] Provide `nzw check` CLI and versioned JSON output (`schemars`)
-- [ ] Add offline HTTP mock fixture tests and contract tests
-- [ ] Remove legacy Python code from `rewrite/rust` once Phase 1 vertical slice is verified
+## Phase 1: Minimal Deterministic Core *(Current — Slices 1.1–1.5 Implemented)*
+- [x] Implement validated `AuditTarget` (with SSRF/IP guardrails and deserialisation validation)
+- [x] Implement bounded HTTP collector (`reqwest` + `rustls`, `.no_proxy()`, DNS pinning, redirect hop validation, end-to-end `audit_timeout`, streaming `max_response_bytes`)
+- [x] Implement `ZWERGENBRIGADE` registry (`src/brigade.rs`) and `EvidenceLevel` (`Source` / `Rendered` / `Behavioural`)
+- [x] Implement shared `DocumentObservations` single-parse HTML5 model (`analysis::document`)
+- [x] Implement initial deterministic Zwerge: `NetzZwerg`, `SicherheitsZwerg`, `LeistungsZwerg` (HTTP), `StrukturZwerg`, `ZugänglichkeitsZwerg` (Source), `SuchZwerg`
+- [x] Provide `nzw check` / `nzw validate` CLI (`DokumentationsZwerg` plain-text + versioned JSON output + exit codes `0`/`1`/`2`)
+- [ ] Add `rustls` TLS certificate metadata extraction to `CollectionEngine`
+- [ ] Add `schemars` JSON schema generation and contract tests
+- [ ] Implement initial `InhaltsZwerg` (content quality, readability, language)
 
 ## Phase 2: Browser and Analysis Capabilities
-- [ ] Evaluate and integrate controlled headless Chromium automation
-- [ ] Implement Lighthouse adapter (performance / Core Web Vitals) with version provenance
-- [ ] Implement axe-core adapter (accessibility checks) with version provenance
-- [ ] Implement remaining deterministic analysers (`InhaltZwerg`, `VisualZwerg`, full `SEOZwerg`)
+- [ ] Evaluate and integrate controlled headless Chromium automation (`BrowserZwerg`)
+- [ ] Implement Lighthouse adapter (`LeistungsZwerg` Level 2 metrics) with version provenance
+- [ ] Implement axe-core adapter (`ZugänglichkeitsZwerg` Level 2 rendered DOM checks) with version provenance
+- [ ] Implement `GestaltungsZwerg` (viewport overflow, broken images, responsive screenshots)
 - [ ] Validate all analysers against controlled offline HTML/DOM fixtures
 
 ## Phase 3: Persistence and Regression Analysis
 - [ ] Persist `AuditReport` and `EvidenceSnapshot` summaries as JSONL
 - [ ] Implement stable `FindingFingerprint` generation
 - [ ] Add `nzw diff` / regression comparison (`New`, `Persisting`, `Resolved`)
-- [ ] Support batch auditing and configurable policy quality gates (exit codes for CI)
+- [ ] Support batch auditing and configurable policy quality gates
 
-## Phase 4: Optional Intelligence
+## Phase 4: Optional Intelligence (`KommandantZwerg`)
 - [ ] Run focused technical spike for `rig-core`
 - [ ] Implement provider-independent optional LLM synthesis behind `ExecutionBudget` token/cost caps
 - [ ] Add cross-domain finding correlation and structured remediation recommendations

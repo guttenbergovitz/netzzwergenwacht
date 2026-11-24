@@ -1,29 +1,26 @@
 # Domain Model
 
-> **Status**: Target Design (initial core types established in `src/domain.rs`).
+> **Status**: Implemented in `src/domain.rs` and `src/brigade.rs` (Phase 1 core contracts).
 
 The Rust domain model replaces Python's untyped `dict` payloads and dual `Issue`/`DetailedIssue` classes with explicit algebraic types.
 
 ## 1. Core Types
 
-- **`AuditTarget`**: Validated external target (`http`/`https` URL, canonicalised host, port, scheme, and authorisation policy flag for active checks).
-- **`AuditId` / `AuditRun`**: Unique run identifier, UTC timestamp, engine version, and active `AuditProfile` (`Core`, `Standard`, `Full`).
-- **`ExecutionBudget`**: Explicit resource limits (HTTP timeout, max redirects, max response bytes, max concurrency, browser timeout, optional LLM token budget).
-- **`AuditLifecycleState`**: `Pending` -> `Collecting` -> `Analysing` -> `Persisting` -> `Synthesising` -> `Completed` | `Partial` | `Failed` | `Cancelled`.
-- **`RuleId`**: Strongly typed identifier (e.g. `RuleId("sec.headers.hsts")`) paired with `RuleVersion` for deterministic reproducibility.
-- **`FindingCategory`**: `Reliability`, `Security`, `Performance`, `Accessibility`, `Seo`, `Content`, `Visual`.
-- **`FindingKind`**:
-  - `Deterministic` (verified by exact rule over captured evidence)
-  - `Heuristic` (pattern/threshold indicator with documented assumptions)
-  - `Inferred` (cross-domain correlation)
-  - `AiInterpretation` (LLM-generated synthesis; never authoritative)
+- **`AuditTarget` & `TargetPolicy`**: Validated external target (`http`/`https`, canonicalised host, port, no embedded credentials, SSRF IP guardrails under `TargetPolicy::PublicOnly`). Custom `Deserialize` validates invariants on deserialisation.
+- **`ExecutionBudget`**: Explicit resource limits (`audit_timeout` end-to-end deadline including DNS/redirects, `http_timeout`, `max_redirects`, `max_response_bytes`, `max_concurrency`).
+- **`DwarfId` & `DwarfProfile`**: Central typed identity registry (`src/brigade.rs`) separating German display names and character descriptions from analytical logic.
+- **`EvidenceLevel`**: `Source` (Level 1), `Rendered` (Level 2), `Behavioural` (Level 3).
+- **`RuleId`**: Strongly typed identifier (e.g. `RuleId("sec.headers.hsts")`).
+- **`FindingCategory`**: `Reliability`, `Security`, `Performance`, `Semantics`, `Accessibility`, `Seo`, `Content`, `Visual`, `Browser`.
+- **`FindingKind`**: `Deterministic`, `Heuristic`, `Inferred`, `AiInterpretation`.
 - **`Severity`**: `Critical`, `High`, `Medium`, `Low`, `Info`.
 - **`Confidence`**: `High`, `Medium`, `Low`.
-- **`Finding`**: Normalised finding with `RuleId`, `FindingCategory`, `FindingKind`, `Severity`, `Confidence`, `title`, `summary`, `evidence_refs: Vec<EvidenceRef>`, `fingerprint: FindingFingerprint`, and optional `remediation`.
-- **`Measurement<T>`**: `Measured { value: T, unit: Unit, provenance: Provenance }` | `Unavailable { reason: String }` | `Failed { error: String }` | `Skipped { reason: String }`.
+- **`MeasurementUnit` & `Measurement<T>`**: Typed units (`Milliseconds`, `Bytes`, `Count`) and `Measured` | `Unavailable` | `Failed` | `Skipped` states preventing silent `0` coercion.
+- **`EvidenceSource` & `EvidenceRef`**: Typed snapshot source location (`HttpStatus`, `HttpFinalUrl`, `HttpRedirectChain`, `HttpHeaders`, `HttpTiming`, `HttpBody`) paired with observed detail.
+- **`Finding` & `CheckStatus`**: Normalised findings with mandatory `evidence_refs` and per-rule execution statuses (`Passed`, `Failed`, `Skipped`, `Unavailable`).
 
 ## 2. Invariants
 
-- An `AuditTarget` cannot be constructed from an invalid or unsupported URL scheme.
-- A `Finding` must reference at least one `EvidenceRef` or explicitly record why no evidence was required.
-- `Measurement<T>` prevents representing a failed measurement as `0`.
+- An `AuditTarget` cannot be constructed or deserialised from an invalid URL, unsupported scheme, or embedded credentials.
+- Every `Finding` emitted by an analyser references at least one `EvidenceRef` (verified by contract tests).
+- `Measurement<T>` prevents representing a failed or unavailable measurement as `0`.

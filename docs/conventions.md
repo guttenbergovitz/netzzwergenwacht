@@ -4,7 +4,8 @@ Standards for code, documentation, branching, and commits in NetzZwergenWacht.
 
 ## Language and in-code documentation
 
-- All documentation, comments, docstrings, error messages, and commit messages use **British English (`en-GB`)** — avoid Americanisms (for example: *optimise*, *behaviour*, *defence*, *colour*, *licence*, *normalise*, *artefact*, *initialise*).
+- **British English (`en-GB`)**: all source code identifiers, technical module names (ASCII-only, e.g. `analysis::accessibility`, `analysis::semantics`, `analysis::performance`, `analysis::security`), comments, docstrings, ADRs, configuration, error messages, CLI descriptions, reports, and commit messages — avoid Americanisms (for example: *optimise*, *behaviour*, *defence*, *colour*, *licence*, *normalise*, *artefact*, *initialise*).
+- **German (`de-DE`)**: dwarf display names (which may contain umlauts, e.g. *ZugänglichkeitsZwerg*), collective branding (*Die Zwergenbrigade*), motto (*Kleine Zwerge. Große Sorgfalt.*), and selected decorative presentation elements. Do not mix German and English within individual dwarf names.
 - Keep prose plain and direct.
 - In-code documentation should explain **purpose, invariants, and trade-offs** so both developers and LLMs understand *why* a piece of code exists and what guarantees it upholds. Do not narrate trivial mechanics that are already obvious from the code.
 

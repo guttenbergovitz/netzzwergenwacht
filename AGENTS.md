@@ -8,11 +8,12 @@ NetzZwergenWacht is an **evidence-driven external web quality and reliability au
 
 - **Do not translate the Python code.** Translate the lessons learned (see `docs/adr/0001-rewrite-netzzwergenwacht-in-rust.md`).
 - The legacy Python implementation in `legacy/` (and on `main`) is a frozen historical reference only. Do not add new features to Python.
-- Retain the Zwerg domain identity (`SicherheitsZwerg`, `LeistungsZwerg`, `ZugaenglichkeitsZwerg`, `SEOZwerg`, `InhaltZwerg`, `VisualZwerg`, `WebBrowserZwerg`) where it clarifies domain ownership without hurting code readability.
+- Retain the **Die Zwergenbrigade** identity (`NetzZwerg`, `SicherheitsZwerg`, `LeistungsZwerg`, `StrukturZwerg`, `ZugänglichkeitsZwerg`, `SuchZwerg`, `InhaltsZwerg`, `GestaltungsZwerg`, `BrowserZwerg`, `DokumentationsZwerg`, `KommandantZwerg`) via the central registry in `src/brigade.rs`, keeping presentation metadata separate from analytical logic.
 
 ## 2. Language and Tone
 
-- Use **British English (`en-GB`)** consistently across all documentation, in-code comments, docstrings, error messages, and commit messages (for example: *optimise*, *behaviour*, *defence*, *colour*, *licence*, *normalise*, *artefact*, *initialise*). Avoid Americanisms.
+- Use **British English (`en-GB`)** and **ASCII identifiers** consistently across all technical module names (`analysis::accessibility`, `analysis::semantics`, etc.), source code identifiers, documentation, docstrings, error messages, and commit messages (for example: *optimise*, *behaviour*, *defence*, *colour*, *licence*, *normalise*, *artefact*, *initialise*).
+- Use **German (`de-DE`)** for dwarf display names (umlauts permitted, e.g. `ZugänglichkeitsZwerg`), collective branding (`Die Zwergenbrigade`), and the motto (`Kleine Zwerge. Große Sorgfalt.`). Do not mix German and English within individual dwarf names.
 - Write in plain, direct, no-nonsense prose. Explain the **purpose** and **why** behind a module, type, or invariant so both human developers and LLMs can reason about the code without guessing. Avoid filler and restating obvious syntax.
 
 ## 3. Spec-Driven Workflow and Repository Hygiene
