@@ -4,6 +4,10 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+### Versioned Prompt Contracts, Coverage Matrix & Markdown Patrol Reports (2026-11-24)
+- Added `src/investigation/prompts.rs` (`kommandant-v1`, `specialist-v1`, `dokumentation-v1`) and wired versioned prompt contracts into `KommandantZwerg` (`src/investigation/mod.rs`).
+- Added `CoverageMatrix` and `render_patrol_markdown` (`src/patrol/mod.rs`) plus `--audience` on `nzw patrol --format markdown` (`src/main.rs`).
+
 ### Portfolio Patrols, Selective Level 2 Execution & SQLite ADR (2026-11-24)
 - Added ADR [0009](docs/adr/0009-patrol-persistence-and-sqlite-migration.md) documenting the patrol persistence evaluation and SQLite migration triggers.
 - Added `src/patrol/portfolio.rs` (`PortfolioConfig`, `ApplicationCriticality`, `run_portfolio_patrol`) with criticality ordering, `Semaphore`-bounded concurrency, and isolated per-application failure handling.
