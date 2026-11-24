@@ -32,11 +32,11 @@ NetzZwergenWacht is being rewritten in Rust on `rewrite/rust` using incremental 
 - [x] Add `nzw diff` regression comparison (`New`, `Persisting`, `Resolved`)
 - [x] Support batch auditing (`nzw batch`) and TOML configuration / policy quality gates (`src/config.rs`, `--config`, `--fail-on`)
 
-## Phase 4: Optional Intelligence (`KommandantZwerg`)
-- [ ] Run focused technical spike for `rig-core`
-- [ ] Implement provider-independent optional LLM synthesis behind `ExecutionBudget` token/cost caps
-- [ ] Add cross-domain finding correlation and structured remediation recommendations
-- [ ] Enforce untrusted-data / prompt-injection boundaries and evaluation tests
+## Phase 4: Optional Intelligence (`KommandantZwerg`) *(Completed)*
+- [x] Implement provider-independent `LlmProvider` trait and `OpenAiCompatibleProvider` (`src/intelligence/mod.rs`, opt-in `--ai`)
+- [x] Enforce `LlmBudget` (`max_tokens`, `max_requests`, `timeout`) and `FindingKind::AiInterpretation` tagging
+- [x] Add cross-domain finding correlation and prioritised remediation synthesis
+- [x] Enforce untrusted-data / prompt-injection delimiter boundaries (`<untrusted_audit_evidence>`) and offline mock tests
 
 ## Phase 5: Production Hardening
 - [ ] Benchmark memory, CPU, and concurrency behaviour under load

@@ -1,8 +1,8 @@
 # Intelligence Layer (`KommandantZwerg`)
 
-> **Status**: Planned for Phase 4 (optional; core auditing has zero AI dependencies).
+> **Status**: Implemented in `src/intelligence/mod.rs` (opt-in via `nzw check --ai`; core auditing has zero AI dependencies).
 
-The **Intelligence Layer** preserves the **KommandantZwerg** identity for optional, post-analysis AI synthesis using **Rig (`rig-core`)**, subject to a Phase 4 technical spike.
+The **Intelligence Layer** preserves the **KommandantZwerg** identity for optional, post-analysis AI synthesis via a provider-independent `LlmProvider` trait and an OpenAI-compatible HTTP client (`OpenAiCompatibleProvider`, configured via `NZW_LLM_API_KEY`, `NZW_LLM_BASE_URL`, `NZW_LLM_MODEL`), as documented in [ADR 0004](../adr/0004-optional-intelligence-kommandant.md).
 
 Meanwhile, **DokumentationsZwerg** belongs to the deterministic reporting layer (with optional AI-assisted narrative synthesis in Phase 4) and operates independently of LLMs.
 

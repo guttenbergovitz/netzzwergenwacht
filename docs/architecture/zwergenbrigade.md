@@ -18,7 +18,7 @@ NetzZwergenWacht combines evidence-first auditing with a personified German-name
 | **GestaltungsZwerg** | `gestaltungs` | `analysis::visual` | Deterministic Analyser | Visual integrity, responsive layouts, and presentation | `Rendered` | Implemented |
 | **BrowserZwerg** | `browser` | `analysis::browser` | Deterministic Analyser | Browser runtime, JavaScript, console, and network failures | `Rendered` | Implemented |
 | **DokumentationsZwerg** | `dokumentations` | `main` (presentation) | Reporting | Report generation and evidence presentation | `Source` | Implemented |
-| **KommandantZwerg** | `kommandant` | — | Optional Intelligence | Optional AI-assisted correlation, interpretation, and diagnostic planning | `Source` | Planned |
+| **KommandantZwerg** | `kommandant` | `intelligence` | Optional Intelligence | Optional AI-assisted correlation, interpretation, and diagnostic planning | `Source` | Implemented |
 
 ## Design Rules
 

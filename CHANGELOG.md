@@ -4,6 +4,11 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `rewrite/rust`
 
+### Phase 4: Optional Intelligence (`KommandantZwerg`) (2026-11-24)
+- Added ADR 0004 (`docs/adr/0004-optional-intelligence-kommandant.md`) for provider-independent optional AI synthesis.
+- Added `src/intelligence/mod.rs` (`LlmProvider`, `OpenAiCompatibleProvider`, `LlmBudget`, `build_sanitised_prompt`, `synthesise`) with prompt-injection delimiters and `FindingKind::AiInterpretation` tagging.
+- Added opt-in `--ai` flag to `nzw check` and marked `DwarfId::Kommandant` as `ImplementationStatus::Implemented`.
+
 ### Phase 2: Level 2 Analysers & Subprocess Adapters (2026-11-24)
 - Added ADR 0003 (`docs/adr/0003-browser-and-external-tool-adapters.md`) for bounded subprocess adapters and opt-in Level 2 collection.
 - Added `EvidenceSnapshot` Level 2 fields (`browser`, `lighthouse`, `axe`) with `#[serde(default)]` backward compatibility.
