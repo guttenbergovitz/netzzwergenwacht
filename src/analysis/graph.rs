@@ -9,6 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::analysis::document::HreflangObs;
+use crate::analysis::schema::SchemaEntitySummary;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
@@ -23,6 +24,8 @@ const RULE_ORPHAN_CANDIDATES: &str = "graph.crawl.orphan_candidates";
 const RULE_CANONICAL_GRAPH: &str = "graph.seo.canonical_chain_or_loop";
 const RULE_HREFLANG_RECIPROCITY: &str = "graph.i18n.hreflang_reciprocity";
 const RULE_DUPLICATE_METADATA: &str = "graph.content.duplicate_metadata";
+const RULE_ENTITY_CONFLICTS: &str = "graph.schema.entity_conflicts";
+const RULE_DANGLING_ENTITIES: &str = "graph.schema.dangling_entities";
 
 /// All rule identifiers evaluated by the Application Graph engine.
 pub const ALL_RULES: &[&str] = &[
@@ -34,6 +37,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_CANONICAL_GRAPH,
     RULE_HREFLANG_RECIPROCITY,
     RULE_DUPLICATE_METADATA,
+    RULE_ENTITY_CONFLICTS,
+    RULE_DANGLING_ENTITIES,
 ];
 
 /// Per-page input record used to construct an [`ApplicationGraph`].
@@ -67,6 +72,8 @@ pub struct GraphPageInput {
     pub same_page_fragments: Vec<String>,
     /// All element `id`s present on this page.
     pub all_ids: HashSet<String>,
+    /// Structured data entities extracted from JSON-LD blocks on this page.
+    pub entities: Vec<SchemaEntitySummary>,
 }
 
 /// Normalised application-level URL, link, canonical, and hreflang graph.
@@ -144,6 +151,7 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
     check_links_to_non_indexable(graph, &mut such_findings, &mut such_checks);
     check_canonical_graph(graph, &mut such_findings, &mut such_checks);
     check_hreflang_reciprocity(graph, &mut such_findings, &mut such_checks);
+    check_entity_graph(graph, &mut such_findings, &mut such_checks);
 
     check_broken_anchors(graph, &mut str_findings, &mut str_checks);
     check_duplicate_metadata(graph, &mut inh_findings, &mut inh_checks);
@@ -692,6 +700,166 @@ fn check_duplicate_metadata(
     }
 }
 
+fn check_entity_graph(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let any_entities = graph.pages.values().any(|p| !p.entities.is_empty());
+    if !any_entities {
+        for rule in [RULE_ENTITY_CONFLICTS, RULE_DANGLING_ENTITIES] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "no JSON-LD entities in graph".to_owned(),
+            });
+        }
+        return;
+    }
+
+    let mut by_id: BTreeMap<&str, Vec<(&str, &SchemaEntitySummary)>> = BTreeMap::new();
+    let mut defined_ids: HashSet<&str> = HashSet::new();
+
+    for page in graph.pages.values() {
+        for entity in &page.entities {
+            if let Some(id) = entity.id.as_deref() {
+                defined_ids.insert(id);
+                by_id.entry(id).or_default().push((&page.url, entity));
+            }
+        }
+    }
+
+    let mut conflicts = Vec::new();
+    for (id, entries) in &by_id {
+        if entries.len() < 2 {
+            continue;
+        }
+        let first_types = &entries[0].1.entity_types;
+        let first_name = &entries[0].1.name;
+        if entries.iter().skip(1).any(|(_, e)| {
+            &e.entity_types != first_types
+                || (first_name.is_some() && e.name.is_some() && &e.name != first_name)
+        }) {
+            conflicts.push((*id).to_owned());
+        }
+    }
+
+    if conflicts.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ENTITY_CONFLICTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_ENTITY_CONFLICTS.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Conflicting Schema.org entity definitions ({})",
+                conflicts.len()
+            ),
+            summary: format!(
+                "Shared `@id` entity/entities have conflicting `@type` or `name` across pages: {}.",
+                conflicts
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("entity_conflicts={}", conflicts.len()),
+            )],
+            remediation: Some(
+                "Keep `@type` and canonical `name` consistent wherever a shared `@id` is emitted."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_ENTITY_CONFLICTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    check_dangling_entities(graph, &defined_ids, findings, checks);
+}
+
+fn check_dangling_entities(
+    graph: &ApplicationGraph,
+    defined_ids: &HashSet<&str>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let same_host = graph
+        .pages
+        .keys()
+        .next()
+        .and_then(|u| url::Url::parse(u).ok())
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+
+    let mut dangling = Vec::new();
+    for page in graph.pages.values() {
+        for entity in &page.entities {
+            for ref_id in &entity.referenced_ids {
+                let is_internal_id = ref_id.starts_with('#')
+                    || same_host.as_deref().is_some_and(|h| {
+                        url::Url::parse(ref_id)
+                            .ok()
+                            .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+                            .is_some_and(|rh| rh == h)
+                    });
+                if is_internal_id && !defined_ids.contains(ref_id.as_str()) {
+                    dangling.push(ref_id.clone());
+                }
+            }
+        }
+    }
+
+    if dangling.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DANGLING_ENTITIES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DANGLING_ENTITIES.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: if graph.coverage_complete {
+                Confidence::High
+            } else {
+                Confidence::Low
+            },
+            title: format!("Dangling internal entity references ({})", dangling.len()),
+            summary: format!(
+                "{} internal `@id` reference(s) did not resolve to any crawled entity definition: {}.",
+                dangling.len(),
+                dangling.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("dangling_entities={}", dangling.len()),
+            )],
+            remediation: Some(
+                "Ensure referenced `@id` entities are defined in the site's JSON-LD `@graph`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DANGLING_ENTITIES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -712,6 +880,7 @@ mod tests {
             hreflangs: Vec::new(),
             same_page_fragments: Vec::new(),
             all_ids: HashSet::new(),
+            entities: Vec::new(),
         }
     }
 
@@ -786,5 +955,36 @@ mod tests {
 
         assert!(rule_ids.contains(&RULE_CANONICAL_GRAPH));
         assert!(rule_ids.contains(&RULE_HREFLANG_RECIPROCITY));
+    }
+
+    #[test]
+    fn detects_cross_page_entity_conflicts_and_dangling_entities() {
+        let mut p1 = page("https://example.com/a");
+        p1.entities = vec![SchemaEntitySummary {
+            id: Some("https://example.com/#org".to_owned()),
+            entity_types: vec!["Organization".to_owned()],
+            name: Some("Acme Corp".to_owned()),
+            same_as: Vec::new(),
+            referenced_ids: vec!["https://example.com/#missing-author".to_owned()],
+        }];
+
+        let mut p2 = page("https://example.com/b");
+        p2.entities = vec![SchemaEntitySummary {
+            id: Some("https://example.com/#org".to_owned()),
+            entity_types: vec!["Organization".to_owned()],
+            name: Some("Different Name".to_owned()),
+            same_as: Vec::new(),
+            referenced_ids: Vec::new(),
+        }];
+
+        let graph = ApplicationGraph::from_pages(&[p1, p2], true);
+        let results = analyse(&graph);
+        let rule_ids: Vec<&str> = results
+            .iter()
+            .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+
+        assert!(rule_ids.contains(&RULE_ENTITY_CONFLICTS));
+        assert!(rule_ids.contains(&RULE_DANGLING_ENTITIES));
     }
 }

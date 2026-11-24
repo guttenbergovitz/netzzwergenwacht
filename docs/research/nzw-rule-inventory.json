@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 65,
+  "total_rules": 70,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -135,7 +135,7 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -144,7 +144,7 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -153,7 +153,7 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -162,7 +162,7 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -171,7 +171,7 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -180,7 +180,7 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -189,7 +189,7 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -198,7 +198,25 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
-      "module_test_count": 2,
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.schema.entity_conflicts",
+      "constant": "RULE_ENTITY_CONFLICTS",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.schema.dangling_entities",
+      "constant": "RULE_DANGLING_ENTITIES",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "module_test_count": 3,
       "status": "native_rust"
     },
     {
@@ -307,6 +325,33 @@
       "module": "analysis::performance",
       "source_path": "src/analysis/performance.rs",
       "module_test_count": 3,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.schema.type_requirements",
+      "constant": "RULE_SCHEMA_TYPE_REQUIREMENTS",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::schema",
+      "source_path": "src/analysis/schema.rs",
+      "module_test_count": 1,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.schema.same_as",
+      "constant": "RULE_SCHEMA_SAME_AS",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::schema",
+      "source_path": "src/analysis/schema.rs",
+      "module_test_count": 1,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.schema.entity_references",
+      "constant": "RULE_SCHEMA_ENTITY_REFS",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::schema",
+      "source_path": "src/analysis/schema.rs",
+      "module_test_count": 1,
       "status": "native_rust"
     },
     {
