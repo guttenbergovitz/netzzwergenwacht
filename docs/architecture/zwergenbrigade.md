@@ -14,7 +14,7 @@ NetzZwergenWacht combines evidence-first auditing with a personified German-name
 | **StrukturZwerg** | `struktur` | `analysis::semantics` | Deterministic Analyser | Semantic HTML, document structure, and structural integrity | `Source` | Implemented |
 | **ZugänglichkeitsZwerg** | `zugaenglichkeits` | `analysis::accessibility` | Deterministic Analyser | Accessibility, WCAG, ARIA, and inclusive interaction | `Source` | Implemented (Source) |
 | **SuchZwerg** | `such` | `analysis::seo` | Deterministic Analyser | SEO, metadata, indexability, and search visibility | `Source` | Implemented |
-| **InhaltsZwerg** | `inhalts` | — | Deterministic Analyser | Content quality, readability, and language | `Source` | Planned |
+| **InhaltsZwerg** | `inhalts` | `analysis::content` | Deterministic Analyser | Content quality, readability, and language | `Source` | Implemented |
 | **GestaltungsZwerg** | `gestaltungs` | — | Deterministic Analyser | Visual integrity, responsive layouts, and presentation | `Rendered` | Planned |
 | **BrowserZwerg** | `browser` | — | Deterministic Analyser | Browser runtime, JavaScript, console, and network failures | `Rendered` | Planned |
 | **DokumentationsZwerg** | `dokumentations` | `main` (presentation) | Reporting | Report generation and evidence presentation | `Source` | Implemented |

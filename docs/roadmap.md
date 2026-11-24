@@ -9,16 +9,15 @@ NetzZwergenWacht is being rewritten in Rust on `rewrite/rust` using incremental 
 - [x] Document capability inventory, rewrite strategy, conventions, Zwergenbrigade, and target architecture (`docs/`)
 - [x] Initialise Cargo project with strict lints (`clippy.toml`, `rustfmt.toml`, `Taskfile.yml`, `.github/workflows/ci.yml`)
 
-## Phase 1: Minimal Deterministic Core *(Current — Slices 1.1–1.5 Implemented)*
+## Phase 1: Minimal Deterministic Core *(Completed)*
 - [x] Implement validated `AuditTarget` (with SSRF/IP guardrails and deserialisation validation)
 - [x] Implement bounded HTTP collector (`reqwest` + `rustls`, `.no_proxy()`, DNS pinning, redirect hop validation, end-to-end `audit_timeout`, streaming `max_response_bytes`)
 - [x] Implement `ZWERGENBRIGADE` registry (`src/brigade.rs`) and `EvidenceLevel` (`Source` / `Rendered` / `Behavioural`)
 - [x] Implement shared `DocumentObservations` single-parse HTML5 model (`analysis::document`)
-- [x] Implement initial deterministic Zwerge: `NetzZwerg`, `SicherheitsZwerg`, `LeistungsZwerg` (HTTP), `StrukturZwerg`, `ZugänglichkeitsZwerg` (Source), `SuchZwerg`
+- [x] Implement initial deterministic Zwerge: `NetzZwerg`, `SicherheitsZwerg`, `LeistungsZwerg` (HTTP), `StrukturZwerg`, `ZugänglichkeitsZwerg` (Source), `SuchZwerg`, `InhaltsZwerg`
 - [x] Provide `nzw check` / `nzw validate` CLI (`DokumentationsZwerg` plain-text + versioned JSON output + exit codes `0`/`1`/`2`)
-- [ ] Add `rustls` TLS certificate metadata extraction to `CollectionEngine`
-- [ ] Add `schemars` JSON schema generation and contract tests
-- [ ] Implement initial `InhaltsZwerg` (content quality, readability, language)
+- [x] Add `rustls` TLS peer certificate metadata extraction (`x509-parser`) to `CollectionEngine` and `SicherheitsZwerg`
+- [x] Add `schemars` JSON schema generation and contract tests (`tests/schema_contract.rs`)
 
 ## Phase 2: Browser and Analysis Capabilities
 - [ ] Evaluate and integrate controlled headless Chromium automation (`BrowserZwerg`)

@@ -5,6 +5,9 @@ All notable changes to NetzZwergenWacht are documented in this file.
 ## [Unreleased] - `rewrite/rust`
 
 ### Phase 1: Zwergenbrigade, Shared Document Model & Core Hardening (2026-11-24)
+- Added TLS peer certificate extraction (`reqwest::tls::TlsInfo` + `x509-parser`) and `sec.tls.certificate_expiry` check in `SicherheitsZwerg`.
+- Added `InhaltsZwerg` (`analysis::content`) consuming shared `DocumentObservations` visible text statistics.
+- Added `schemars` `JsonSchema` derives and `tests/schema_contract.rs` integration contract test.
 - Added ADR 0002 (`docs/adr/0002-zwergenbrigade-domains-shared-document-and-evidence-levels.md`), `docs/architecture/zwergenbrigade.md`, and `docs/architecture/document-analysis.md`.
 - Added central `ZWERGENBRIGADE` registry (`src/brigade.rs`) separating German dwarf identities from `en-GB` ASCII technical modules.
 - Hardened `AuditTarget` deserialisation, `MeasurementUnit` enum, `EvidenceLevel` (`Source`/`Rendered`/`Behavioural`), `EvidenceSource`, `.no_proxy()` DNS-pinning protection, end-to-end `audit_timeout`, truncated-body skip guardrails, semantic security-header validation, and CLI exit codes (`0`/`1`/`2`).
