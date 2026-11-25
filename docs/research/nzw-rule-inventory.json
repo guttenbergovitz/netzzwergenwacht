@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 211,
+  "total_rules": 214,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1787,6 +1787,30 @@
     {
       "rule_id": "a11y.behavioural.obscured_focus",
       "constant": "RULE_BEHAVIOURAL_OBSCURED_FOCUS",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.behavioural.focus_restoration",
+      "constant": "RULE_BEHAVIOURAL_FOCUS_RESTORATION",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.behavioural.skip_link_effectiveness",
+      "constant": "RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.behavioural.keyboard_activation",
+      "constant": "RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION",
       "dwarf": "ZugänglichkeitsZwerg",
       "module": "analysis::accessibility",
       "source_path": "src/analysis/accessibility.rs",

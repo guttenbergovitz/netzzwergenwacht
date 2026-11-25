@@ -38,6 +38,9 @@ const RULE_BEHAVIOURAL_FOCUS_INDICATOR: &str = "a11y.behavioural.missing_focus_i
 const RULE_BEHAVIOURAL_UNREACHED_CONTROLS: &str = "a11y.behavioural.unreached_interactive_controls";
 const RULE_BEHAVIOURAL_MODAL_CONTAINMENT: &str = "a11y.behavioural.modal_focus_containment";
 const RULE_BEHAVIOURAL_OBSCURED_FOCUS: &str = "a11y.behavioural.obscured_focus";
+const RULE_BEHAVIOURAL_FOCUS_RESTORATION: &str = "a11y.behavioural.focus_restoration";
+const RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE: &str = "a11y.behavioural.skip_link_effectiveness";
+const RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION: &str = "a11y.behavioural.keyboard_activation";
 
 /// Source-level rule identifiers owned by `ZugänglichkeitsZwerg`.
 pub const SOURCE_RULES: &[&str] = &[
@@ -235,6 +238,9 @@ fn check_behavioural_a11y(
             RULE_BEHAVIOURAL_UNREACHED_CONTROLS,
             RULE_BEHAVIOURAL_MODAL_CONTAINMENT,
             RULE_BEHAVIOURAL_OBSCURED_FOCUS,
+            RULE_BEHAVIOURAL_FOCUS_RESTORATION,
+            RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE,
+            RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION,
         ] {
             checks.push(CheckStatus::Unavailable {
                 rule_id: RuleId(rule.to_owned()),
@@ -368,6 +374,66 @@ fn check_modal_and_obscured_focus(
         ),
         format!("obscured_focus_count={}", obs.obscured_focus_count),
         "Add `scroll-margin-top` / `scroll-padding-top` or dismiss overlays so focused controls remain visible.",
+        findings,
+        checks,
+    );
+
+    if obs.dialog_escape_closed == Some(true) {
+        emit_behavioural_check(
+            RULE_BEHAVIOURAL_FOCUS_RESTORATION,
+            obs.focus_lost_after_dialog_close == Some(true),
+            Severity::Medium,
+            "Focus lost to document body after dismissing modal".to_owned(),
+            "Closing the open modal with `Escape` left `document.activeElement` on `<body>`/`<html>` instead of restoring focus.".to_owned(),
+            "focus_lost_after_dialog_close=true".to_owned(),
+            "Restore focus to the triggering control when a modal dialog closes.",
+            findings,
+            checks,
+        );
+    } else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_BEHAVIOURAL_FOCUS_RESTORATION.to_owned()),
+            evidence_level: EvidenceLevel::Behavioural,
+            reason: "no modal dialog was dismissed via Escape".to_owned(),
+        });
+    }
+
+    match obs.skip_link_effective {
+        Some(effective) => emit_behavioural_check(
+            RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE,
+            !effective,
+            Severity::Medium,
+            "Skip-to-content link did not move focus or scroll".to_owned(),
+            "Activating the skip-navigation link failed to move focus or viewport scroll to its target.".to_owned(),
+            "skip_link_effective=false".to_owned(),
+            "Ensure the skip link `href` matches an existing landmark `id` with `tabindex=\"-1\"` if non-interactive.",
+            findings,
+            checks,
+        ),
+        None => checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE.to_owned()),
+            evidence_level: EvidenceLevel::Behavioural,
+            reason: "no skip-navigation link detected in DOM".to_owned(),
+        }),
+    }
+
+    emit_behavioural_check(
+        RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION,
+        obs.unfocusable_aria_controls_count > 0,
+        Severity::High,
+        format!(
+            "Custom ARIA button/link controls not keyboard-focusable ({})",
+            obs.unfocusable_aria_controls_count
+        ),
+        format!(
+            "{} visible `[role=\"button\"]` or `[role=\"link\"]` element(s) lack `tabindex >= 0`.",
+            obs.unfocusable_aria_controls_count
+        ),
+        format!(
+            "unfocusable_aria_controls_count={}",
+            obs.unfocusable_aria_controls_count
+        ),
+        "Use native `<button>`/`<a href>` elements or add `tabindex=\"0\"` with Enter/Space key handlers.",
         findings,
         checks,
     );
@@ -1365,6 +1431,9 @@ mod tests {
                     tab_budget_exhausted: false,
                     modal_focus_escaped: true,
                     obscured_focus_count: 1,
+                    focus_lost_after_dialog_close: Some(true),
+                    skip_link_effective: Some(false),
+                    unfocusable_aria_controls_count: 2,
                 }),
                 ..BrowserEvidence::default()
             },
@@ -1377,5 +1446,7 @@ mod tests {
         assert!(ids.contains(&RULE_BEHAVIOURAL_UNREACHED_CONTROLS));
         assert!(ids.contains(&RULE_BEHAVIOURAL_MODAL_CONTAINMENT));
         assert!(ids.contains(&RULE_BEHAVIOURAL_OBSCURED_FOCUS));
+        assert!(ids.contains(&RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE));
+        assert!(ids.contains(&RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION));
     }
 }

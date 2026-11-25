@@ -976,9 +976,9 @@ pub struct BehaviouralA11yObs {
     pub tabbable_candidates: usize,
     /// Whether `Tab` traversal detected a keyboard focus trap outside an open modal.
     pub focus_trap_detected: bool,
-    /// Focused elements matching `:focus-visible` with no observable outline, box-shadow, or border.
+    /// Focused elements matching `:focus-visible` with no observable outline, box-shadow, or visible border.
     pub missing_focus_indicator_count: usize,
-    /// Count of open modal/dialog containers (`dialog[open]`, `[role="dialog"]`, `[aria-modal="true"]`).
+    /// Count of open modal containers (`dialog[open]`, `[aria-modal="true"]`).
     pub open_dialogs_count: usize,
     /// Whether pressing `Escape` dismissed an open dialog (`None` if no open dialog was present).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -986,15 +986,24 @@ pub struct BehaviouralA11yObs {
     /// Ordered sequence of element keys visited during `Tab` traversal (up to 25 steps).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub focus_sequence: Vec<String>,
-    /// Whether the 25-step `Tab` budget was exhausted before traversal wrapped or completed.
+    /// Whether all 25 `Tab` key presses were executed without early termination.
     #[serde(default)]
     pub tab_budget_exhausted: bool,
-    /// Whether `Tab` focus escaped outside an open modal/dialog container.
+    /// Whether `Tab` focus escaped outside an open modal container.
     #[serde(default)]
     pub modal_focus_escaped: bool,
-    /// Count of focused controls obscured at their center point by another element (e.g. sticky header).
+    /// Count of focused controls obscured at sampled points by another element (e.g. sticky header).
     #[serde(default)]
     pub obscured_focus_count: usize,
+    /// Whether focus was lost to `<body>`/`<html>` after dismissing an open modal with `Escape`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub focus_lost_after_dialog_close: Option<bool>,
+    /// Whether an existing skip-to-content link moved focus/scroll to its target (`None` if absent).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_link_effective: Option<bool>,
+    /// Count of visible `[role="button"]` / `[role="link"]` elements without keyboard focusability (`tabindex >= 0`).
+    #[serde(default)]
+    pub unfocusable_aria_controls_count: usize,
 }
 
 /// Per-resource CDP code coverage breakdown (uncompressed source offsets during initial load).
