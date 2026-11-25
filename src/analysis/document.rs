@@ -106,6 +106,8 @@ pub struct FormObs {
     pub method: Option<String>,
     /// Whether the form contains an `<input type="password">`.
     pub has_password_input: bool,
+    /// Whether the form contains a submit button or submit/image input.
+    pub has_submit_control: bool,
 }
 
 /// Observed Open Graph and Twitter Card social metadata.
@@ -268,6 +270,8 @@ pub struct DocumentObservations {
     pub title_count: usize,
     /// Total count of `<link rel="canonical">` elements in the document.
     pub canonical_count: usize,
+    /// Normalised charset declared via `<meta charset>` or `<meta http-equiv="content-type">`.
+    pub declared_charset: Option<String>,
 }
 
 impl DocumentObservations {
@@ -301,6 +305,7 @@ impl DocumentObservations {
             doctype_kind: detect_doctype(html),
             title_count: count_selector(&doc, "title"),
             canonical_count: count_selector(&doc, r#"link[rel="canonical"]"#),
+            declared_charset: extract_declared_charset(&doc),
             ..Self::default()
         };
 
@@ -315,6 +320,26 @@ impl DocumentObservations {
 
         obs
     }
+}
+
+fn extract_declared_charset(doc: &Html) -> Option<String> {
+    if let Some(cs) = first_attr(doc, "meta[charset]", "charset") {
+        return Some(cs.trim().to_ascii_lowercase());
+    }
+    let content = first_attr(doc, r#"meta[http-equiv="content-type"]"#, "content")?;
+    content
+        .split(';')
+        .skip(1)
+        .find_map(|part| {
+            let (k, v) = part.split_once('=')?;
+            k.trim().eq_ignore_ascii_case("charset").then(|| {
+                v.trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_ascii_lowercase()
+            })
+        })
+        .filter(|s| !s.is_empty())
 }
 
 fn detect_doctype(html: &str) -> Option<&'static str> {
@@ -611,14 +636,22 @@ fn extract_images_and_forms(doc: &Html, obs: &mut DocumentObservations) {
 
     if let Ok(form_sel) = Selector::parse("form") {
         let pwd_sel = Selector::parse(r#"input[type="password"]"#).ok();
+        let submit_sel = Selector::parse(
+            r#"input[type="submit"], input[type="image"], button[type="submit"], button:not([type])"#,
+        )
+        .ok();
         for el in doc.select(&form_sel) {
             let has_password_input = pwd_sel
+                .as_ref()
+                .is_some_and(|s| el.select(s).next().is_some());
+            let has_submit_control = submit_sel
                 .as_ref()
                 .is_some_and(|s| el.select(s).next().is_some());
             obs.forms.push(FormObs {
                 action: non_empty_attr(&el, "action"),
                 method: non_empty_attr(&el, "method").map(|m| m.to_ascii_lowercase()),
                 has_password_input,
+                has_submit_control,
             });
         }
     }

@@ -41,6 +41,9 @@ const RULE_HSTS_DURATION: &str = "sec.headers.hsts_duration";
 const RULE_SENSITIVE_GET_FORM: &str = "sec.forms.sensitive_get_submission";
 const RULE_PRIVACY_STORAGE: &str = "sec.privacy.storage_before_consent";
 const RULE_PRIVACY_THIRD_PARTY_FLOW: &str = "sec.privacy.third_party_data_flow";
+const RULE_CSP_FORM_ACTION: &str = "sec.csp.missing_form_action";
+const RULE_CSP_WILDCARD: &str = "sec.csp.wildcard_source";
+const RULE_STACK_TRACE_LEAK: &str = "sec.headers.server_error_stack_trace";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -73,6 +76,9 @@ const ALL_RULES: &[&str] = &[
     RULE_SENSITIVE_GET_FORM,
     RULE_PRIVACY_STORAGE,
     RULE_PRIVACY_THIRD_PARTY_FLOW,
+    RULE_CSP_FORM_ACTION,
+    RULE_CSP_WILDCARD,
+    RULE_STACK_TRACE_LEAK,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -132,6 +138,7 @@ pub fn analyse_with_document(
     check_sensitive_url_params(http, &mut findings, &mut checks);
     check_hsts_duration(http, uses_https, &mut findings, &mut checks);
     check_privacy_browser_signals(&snapshot.browser, &mut findings, &mut checks);
+    check_stack_trace_leak(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
@@ -141,6 +148,7 @@ pub fn analyse_with_document(
         check_iframe_sandbox(doc, &mut findings, &mut checks);
         check_cross_origin_forms(http, doc, &mut findings, &mut checks);
         check_sensitive_get_forms(doc, &mut findings, &mut checks);
+        check_csp_form_action(http, doc, &mut findings, &mut checks);
     } else {
         for rule in [
             RULE_MIXED_CONTENT,
@@ -150,6 +158,7 @@ pub fn analyse_with_document(
             RULE_IFRAME_SANDBOX,
             RULE_FORM_CROSS_ORIGIN,
             RULE_SENSITIVE_GET_FORM,
+            RULE_CSP_FORM_ACTION,
         ] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
@@ -1362,7 +1371,12 @@ fn check_csp_directives(
     }
 
     let Some(raw_csp) = enforced else {
-        for rule in [RULE_CSP_OBJECT, RULE_CSP_BASE_URI, RULE_CSP_UNSAFE_EVAL] {
+        for rule in [
+            RULE_CSP_OBJECT,
+            RULE_CSP_BASE_URI,
+            RULE_CSP_UNSAFE_EVAL,
+            RULE_CSP_WILDCARD,
+        ] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
                 evidence_level: EvidenceLevel::Source,
@@ -1429,6 +1443,193 @@ fn check_csp_directives(
     }
 
     check_csp_unsafe_eval(&directives, findings, checks);
+    check_csp_wildcard(&directives, findings, checks);
+}
+
+fn check_csp_wildcard(
+    directives: &std::collections::BTreeMap<String, Vec<String>>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let risky = [
+        "default-src",
+        "script-src",
+        "style-src",
+        "object-src",
+        "connect-src",
+        "frame-src",
+        "form-action",
+    ];
+    let wildcard_dirs: Vec<&str> = risky
+        .into_iter()
+        .filter(|dir| {
+            directives
+                .get(*dir)
+                .is_some_and(|vals| vals.iter().any(|t| t == "*"))
+        })
+        .collect();
+
+    if wildcard_dirs.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CSP_WILDCARD.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    let high_risk = wildcard_dirs
+        .iter()
+        .any(|d| matches!(*d, "default-src" | "script-src" | "object-src"));
+    let joined = wildcard_dirs.join(", ");
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_CSP_WILDCARD.to_owned()),
+        category: FindingCategory::Security,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: if high_risk {
+            Severity::High
+        } else {
+            Severity::Medium
+        },
+        confidence: Confidence::High,
+        title: format!("CSP uses wildcard `*` in {joined}"),
+        summary: format!(
+            "Content-Security-Policy permits wildcard `*` source in directive(s): {joined}."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
+            format!("csp_wildcard={joined}"),
+        )],
+        remediation: Some(
+            "Replace wildcard `*` CSP sources with explicit trusted origins or `'self'`."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_CSP_WILDCARD.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_csp_form_action(
+    http: &HttpEvidence,
+    doc: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if doc.forms.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CSP_FORM_ACTION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no <form> elements present".to_owned(),
+        });
+        return;
+    }
+    let Some(raw_csp) = header_value(http, "content-security-policy")
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CSP_FORM_ACTION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "Content-Security-Policy header absent".to_owned(),
+        });
+        return;
+    };
+
+    let directives = parse_csp_directives(raw_csp);
+    if directives.contains_key("form-action") {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CSP_FORM_ACTION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_CSP_FORM_ACTION.to_owned()),
+        category: FindingCategory::Security,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Low,
+        confidence: Confidence::High,
+        title: "CSP omits form-action restriction on page with forms".to_owned(),
+        summary: format!(
+            "Document contains {} <form> element(s), but Content-Security-Policy omits `form-action`.",
+            doc.forms.len()
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
+            format!("forms={};csp_missing=form-action", doc.forms.len()),
+        )],
+        remediation: Some("Add `form-action 'self'` (plus authorised destinations) to CSP.".to_owned()),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_CSP_FORM_ACTION.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_stack_trace_leak(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if http.body_truncated || http.body_text.trim().is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_STACK_TRACE_LEAK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "complete response body unavailable".to_owned(),
+        });
+        return;
+    }
+
+    let signatures = [
+        "Traceback (most recent call last):",
+        "Exception in thread ",
+        "SQLSTATE[",
+        "NullReferenceException",
+        "Werkzeug Debugger",
+        "ActionController::RoutingError",
+        "Fatal error:",
+    ];
+    let matched = signatures
+        .into_iter()
+        .find(|sig| http.body_text.contains(sig));
+
+    let Some(sig) = matched else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_STACK_TRACE_LEAK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    };
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_STACK_TRACE_LEAK.to_owned()),
+        category: FindingCategory::Security,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::High,
+        confidence: Confidence::High,
+        title: "Server stack trace or debug signature exposed in response".to_owned(),
+        summary: format!("Response body contains server debug signature `{sig}`."),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("stack_trace_signature={sig}"),
+        )],
+        remediation: Some(
+            "Disable framework debug pages in production and return generic error responses."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_STACK_TRACE_LEAK.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
 }
 
 fn check_csp_unsafe_eval(
@@ -2280,5 +2481,31 @@ mod tests {
             .collect();
         assert!(ids.contains(&RULE_PRIVACY_STORAGE));
         assert!(ids.contains(&RULE_PRIVACY_THIRD_PARTY_FLOW));
+    }
+
+    #[test]
+    fn flags_csp_wildcard_missing_form_action_and_stack_trace_leak() {
+        let mut snap = snapshot_with_headers(
+            "https://example.com/",
+            vec![(
+                "content-security-policy",
+                "default-src *; object-src 'none'",
+            )],
+        );
+        let html = "<html><body><form action=\"/go\"><input type=\"text\"></form><pre>Traceback (most recent call last):</pre></body></html>";
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let obs = DocumentObservations::from_html(html);
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_CSP_WILDCARD));
+        assert!(ids.contains(&RULE_CSP_FORM_ACTION));
+        assert!(ids.contains(&RULE_STACK_TRACE_LEAK));
     }
 }

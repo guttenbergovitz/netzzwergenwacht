@@ -23,6 +23,8 @@ const RULE_DUPLICATE_MAIN: &str = "str.landmarks.duplicate_main";
 const RULE_EMPTY_HEADING: &str = "str.headings.empty_heading";
 const RULE_INVALID_DOCTYPE: &str = "str.html.invalid_doctype";
 const RULE_INVALID_LABEL_ASSOC: &str = "str.forms.invalid_association";
+const RULE_FORM_MISSING_SUBMIT: &str = "str.forms.missing_submit_control";
+const RULE_NESTED_INTERACTIVE: &str = "str.html.nested_interactive";
 
 /// All rule identifiers owned by `StrukturZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -39,6 +41,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_EMPTY_HEADING,
     RULE_INVALID_DOCTYPE,
     RULE_INVALID_LABEL_ASSOC,
+    RULE_FORM_MISSING_SUBMIT,
+    RULE_NESTED_INTERACTIVE,
 ];
 
 /// Evaluates semantic HTML structure and element integrity over `obs`.
@@ -60,6 +64,8 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
     check_empty_headings(obs, &mut findings, &mut checks);
     check_doctype(obs, &mut findings, &mut checks);
     check_label_associations(obs, &mut findings, &mut checks);
+    check_form_submit_controls(obs, &mut findings, &mut checks);
+    check_nested_interactive(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Struktur,
@@ -703,6 +709,104 @@ fn check_label_associations(
     }
 }
 
+fn check_form_submit_controls(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.forms.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_FORM_MISSING_SUBMIT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no <form> elements present".to_owned(),
+        });
+        return;
+    }
+
+    let missing = obs
+        .forms
+        .iter()
+        .filter(|form| !form.has_submit_control)
+        .count();
+    if missing == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_FORM_MISSING_SUBMIT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_FORM_MISSING_SUBMIT.to_owned()),
+        category: FindingCategory::Semantics,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Low,
+        confidence: Confidence::Medium,
+        title: format!("{missing} <form> element(s) lack a submit control"),
+        summary: format!(
+            "{missing} form(s) contain no `<button type=\"submit\">` or `<input type=\"submit\">`."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("forms_without_submit={missing}"),
+        )],
+        remediation: Some(
+            "Provide an explicit `<button type=\"submit\">` or `<input type=\"submit\">` inside each `<form>`."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_FORM_MISSING_SUBMIT.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_nested_interactive(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.nested_interactive_count == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_NESTED_INTERACTIVE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_NESTED_INTERACTIVE.to_owned()),
+        category: FindingCategory::Semantics,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!(
+            "Nested interactive elements detected ({})",
+            obs.nested_interactive_count
+        ),
+        summary: format!(
+            "Found {} interactive element(s) nested inside `<a>` or `<button>`, which violates HTML5 content models.",
+            obs.nested_interactive_count
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("nested_interactive={}", obs.nested_interactive_count),
+        )],
+        remediation: Some(
+            "Unnest `<button>` and `<a href>` elements so each interactive control is a sibling rather than a descendant."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_NESTED_INTERACTIVE.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -785,5 +889,18 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_INVALID_DOCTYPE));
         assert!(ids.contains(&RULE_INVALID_LABEL_ASSOC));
+    }
+
+    #[test]
+    fn flags_form_missing_submit_and_nested_interactive() {
+        let html = r#"<!doctype html><html><body>
+            <form action="/search"><input type="text"></form>
+            <a href="/x"><button type="button">Nested</button></a>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let res = analyse(&obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_FORM_MISSING_SUBMIT));
+        assert!(ids.contains(&RULE_NESTED_INTERACTIVE));
     }
 }

@@ -1,17 +1,17 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 180,
+  "total_implemented_capabilities": 188,
   "by_dwarf": {
     "LeistungsZwerg": 27,
-    "SicherheitsZwerg": 30,
+    "SicherheitsZwerg": 33,
     "GestaltungsZwerg": 19,
     "SuchZwerg": 19,
     "InhaltsZwerg": 14,
     "ApplicationGraph": 16,
     "ZugänglichkeitsZwerg": 16,
-    "StrukturZwerg": 13,
-    "NetzZwerg": 15,
+    "StrukturZwerg": 15,
+    "NetzZwerg": 18,
     "BrowserZwerg": 11
   },
   "capabilities": [
@@ -1631,6 +1631,78 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.character_encoding_mismatch",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.invalid_content_encoding",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.intermediary_error_response",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.csp.missing_form_action",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.csp.wildcard_source",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.headers.server_error_stack_trace",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "str.forms.missing_submit_control",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "str.html.nested_interactive",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
       "evidence_level": "Source",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
