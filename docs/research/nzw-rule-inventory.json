@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 225,
+  "total_rules": 231,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1903,6 +1903,54 @@
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
       "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.language.mixed_paragraphs",
+      "constant": "RULE_MIXED_PARAGRAPHS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.language.untranslated_fragment",
+      "constant": "RULE_UNTRANSLATED_FRAGMENT",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.duplicate_paragraphs",
+      "constant": "RULE_DUPLICATE_PARAGRAPHS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.empty_sections",
+      "constant": "RULE_EMPTY_SECTIONS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.truncated_text",
+      "constant": "RULE_TRUNCATED_TEXT",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.boilerplate_ratio",
+      "constant": "RULE_BOILERPLATE_RATIO",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "planned"
     }
   ]
 }

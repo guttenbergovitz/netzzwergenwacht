@@ -30,6 +30,12 @@ const RULE_DOUBLE_ESCAPED_ENTITIES: &str = "inh.integrity.double_escaped_entitie
 const RULE_LANGUAGE_MISMATCH: &str = "inh.i18n.language_mismatch";
 const RULE_EXCESSIVE_LINK_DENSITY: &str = "inh.content.excessive_link_density";
 const RULE_REPEATED_HEADINGS: &str = "inh.content.repeated_headings";
+const RULE_MIXED_PARAGRAPHS: &str = "inh.language.mixed_paragraphs";
+const RULE_UNTRANSLATED_FRAGMENT: &str = "inh.language.untranslated_fragment";
+const RULE_BOILERPLATE_RATIO: &str = "inh.content.boilerplate_ratio";
+const RULE_DUPLICATE_PARAGRAPHS: &str = "inh.content.duplicate_paragraphs";
+const RULE_EMPTY_SECTIONS: &str = "inh.content.empty_sections";
+const RULE_TRUNCATED_TEXT: &str = "inh.content.truncated_text";
 
 /// All rule identifiers owned by `InhaltsZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -52,6 +58,12 @@ pub const ALL_RULES: &[&str] = &[
     RULE_LANGUAGE_MISMATCH,
     RULE_EXCESSIVE_LINK_DENSITY,
     RULE_REPEATED_HEADINGS,
+    RULE_MIXED_PARAGRAPHS,
+    RULE_UNTRANSLATED_FRAGMENT,
+    RULE_BOILERPLATE_RATIO,
+    RULE_DUPLICATE_PARAGRAPHS,
+    RULE_EMPTY_SECTIONS,
+    RULE_TRUNCATED_TEXT,
 ];
 
 /// Evaluates visible word count, freshness headers, and content quality signals over `http` and `obs`.
@@ -78,6 +90,7 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_double_escaped_entities(obs, &mut findings, &mut checks);
     check_language_mismatch(obs, &mut findings, &mut checks);
     check_link_density_and_repeated_headings(obs, &mut findings, &mut checks);
+    check_content_intelligence(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Inhalts,
@@ -1013,56 +1026,37 @@ fn check_language_mismatch(
     });
 }
 
+/// Detect dominant language using whatlang. Returns ISO 639-1 code if confident.
 fn detect_dominant_language(text: &str) -> Option<&'static str> {
-    const PROFILES: &[(&str, &[&str])] = &[
-        (
-            "en",
-            &["the", "and", "that", "with", "for", "this", "from", "are"],
-        ),
-        (
-            "de",
-            &["der", "die", "das", "und", "ist", "nicht", "mit", "für"],
-        ),
-        (
-            "pl",
-            &["jest", "nie", "oraz", "przez", "dla", "który", "się", "aby"],
-        ),
-        (
-            "fr",
-            &["les", "des", "est", "pour", "dans", "avec", "une", "sur"],
-        ),
-        (
-            "es",
-            &["los", "las", "para", "con", "una", "por", "como", "más"],
-        ),
-        (
-            "nl",
-            &["het", "een", "van", "dat", "voor", "met", "zijn", "niet"],
-        ),
-        (
-            "it",
-            &["che", "per", "con", "una", "sono", "della", "anche", "nel"],
-        ),
-    ];
-    let words: Vec<String> = text
-        .split(|c: char| !c.is_alphabetic())
-        .filter(|w| w.len() >= 2)
-        .map(str::to_ascii_lowercase)
-        .collect();
-    if words.len() < 20 {
+    if text.len() < 50 {
         return None;
     }
-    let mut scores: Vec<(&'static str, usize)> = PROFILES
-        .iter()
-        .map(|&(code, stops)| {
-            let hits = words.iter().filter(|w| stops.contains(&w.as_str())).count();
-            (code, hits)
-        })
-        .collect();
-    scores.sort_by_key(|a| std::cmp::Reverse(a.1));
-    let (best_code, best_hits) = scores[0];
-    let second_hits = scores[1].1;
-    (best_hits >= 4 && best_hits >= second_hits.saturating_mul(2)).then_some(best_code)
+    let info = whatlang::detect(text)?;
+    if !info.is_reliable() {
+        return None;
+    }
+    Some(match info.lang() {
+        whatlang::Lang::Eng => "en",
+        whatlang::Lang::Deu => "de",
+        whatlang::Lang::Pol => "pl",
+        whatlang::Lang::Fra => "fr",
+        whatlang::Lang::Spa => "es",
+        whatlang::Lang::Nld => "nl",
+        whatlang::Lang::Ita => "it",
+        whatlang::Lang::Por => "pt",
+        whatlang::Lang::Rus => "ru",
+        whatlang::Lang::Jpn => "ja",
+        whatlang::Lang::Kor => "ko",
+        whatlang::Lang::Cmn => "zh",
+        whatlang::Lang::Ara => "ar",
+        whatlang::Lang::Hin => "hi",
+        whatlang::Lang::Swe => "sv",
+        whatlang::Lang::Dan => "da",
+        whatlang::Lang::Fin => "fi",
+        whatlang::Lang::Ces => "cs",
+        whatlang::Lang::Ukr => "uk",
+        _ => return None,
+    })
 }
 
 fn check_link_density_and_repeated_headings(
@@ -1162,6 +1156,357 @@ fn check_link_density_and_repeated_headings(
     }
 }
 
+/// Advanced content intelligence scanner covering language mixing, duplicate paragraphs,
+/// truncation detection, and empty sections.
+fn check_content_intelligence(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    // Split visible text into paragraph-like chunks
+    let paragraphs: Vec<&str> = obs
+        .visible_text_sample
+        .split('\n')
+        .map(str::trim)
+        .filter(|p| p.split_whitespace().count() >= 10)
+        .collect();
+
+    // Check 1: Mixed language paragraphs
+    check_mixed_paragraphs(&paragraphs, findings, checks);
+
+    // Check 2: Untranslated fragments (if html_lang declared)
+    if let Some(ref declared_lang) = obs.html_lang {
+        check_untranslated_fragments(declared_lang, &paragraphs, findings, checks);
+    } else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no html lang declared".to_owned(),
+        });
+    }
+
+    // Check 3: Duplicate paragraphs
+    check_duplicate_paragraphs_impl(&paragraphs, findings, checks);
+
+    // Check 4: Truncated text
+    check_truncated_text(&obs.visible_text_sample, findings, checks);
+
+    // Check 5: Empty sections
+    check_empty_sections(obs, findings, checks);
+}
+
+fn check_mixed_paragraphs(
+    paragraphs: &[&str],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if paragraphs.len() < 2 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "fewer than 2 substantial paragraphs".to_owned(),
+        });
+        return;
+    }
+
+    let langs: Vec<Option<&'static str>> = paragraphs
+        .iter()
+        .map(|p| detect_dominant_language(p))
+        .collect();
+
+    let detected_langs: Vec<&'static str> = langs.iter().filter_map(|&l| l).collect();
+    if detected_langs.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no paragraphs with reliable language detection".to_owned(),
+        });
+        return;
+    }
+
+    let first_lang = detected_langs[0];
+    let mixed = detected_langs.iter().any(|&lang| lang != first_lang);
+
+    if mixed {
+        let unique_langs: std::collections::HashSet<_> = detected_langs.iter().collect();
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::Medium,
+            title: format!("Mixed language paragraphs detected ({} languages)", unique_langs.len()),
+            summary: format!(
+                "Page content contains paragraphs in multiple languages: {}. First detected: {first_lang}.",
+                unique_langs.iter().map(|&&l| l).collect::<Vec<_>>().join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("languages={}", unique_langs.len()),
+            )],
+            remediation: Some(
+                "Ensure consistent language per page or use lang attributes on mixed-language sections.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_untranslated_fragments(
+    declared_lang: &str,
+    paragraphs: &[&str],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let declared = declared_lang
+        .split(['-', '_'])
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    if paragraphs.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no substantial paragraphs".to_owned(),
+        });
+        return;
+    }
+
+    let mismatches: Vec<&str> = paragraphs
+        .iter()
+        .filter_map(|&p| {
+            detect_dominant_language(p).and_then(|detected| {
+                if detected != declared {
+                    Some(detected)
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    if mismatches.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        let unique: std::collections::HashSet<_> = mismatches.iter().collect();
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: format!("Untranslated fragments detected ({} mismatches)", mismatches.len()),
+            summary: format!(
+                "Page declares lang=\"{declared}\" but {} paragraph(s) detected in {}.",
+                mismatches.len(),
+                unique.iter().map(|&&l| l).collect::<Vec<_>>().join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("declared={declared};mismatches={}", mismatches.len()),
+            )],
+            remediation: Some(
+                "Translate untranslated fragments or wrap them with appropriate lang attributes.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_duplicate_paragraphs_impl(
+    paragraphs: &[&str],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if paragraphs.len() < 2 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_DUPLICATE_PARAGRAPHS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "fewer than 2 substantial paragraphs".to_owned(),
+        });
+        return;
+    }
+
+    let mut seen = std::collections::HashMap::new();
+    for &p in paragraphs {
+        let normalized = p.to_ascii_lowercase();
+        *seen.entry(normalized).or_insert(0) += 1;
+    }
+
+    let duplicates: Vec<_> = seen.iter().filter(|(_, count)| **count >= 2).collect();
+
+    if duplicates.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DUPLICATE_PARAGRAPHS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        let total_dupes: usize = duplicates.iter().map(|(_, count)| **count).sum();
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DUPLICATE_PARAGRAPHS.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Duplicate paragraphs detected ({} unique)", duplicates.len()),
+            summary: format!(
+                "{} paragraph(s) appear multiple times. Total duplicates: {total_dupes}.",
+                duplicates.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("duplicate_groups={};total={total_dupes}", duplicates.len()),
+            )],
+            remediation: Some(
+                "Review and consolidate duplicate content or use component-based architecture.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DUPLICATE_PARAGRAPHS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_truncated_text(
+    text: &str,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if text.len() < 100 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "insufficient text sample".to_owned(),
+        });
+        return;
+    }
+
+    // ponytail: simple truncation detection - only flag explicit ellipsis
+    // visible_text_sample is intentionally truncated, so don't flag ending position
+    let has_ellipsis = text.contains("...") || text.contains('…');
+    let suspicious = has_ellipsis;
+
+    if suspicious {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::Low,
+            title: "Potential truncated text detected".to_owned(),
+            summary: if has_ellipsis {
+                "Text contains ellipsis indicating potential truncation.".to_owned()
+            } else {
+                "Text ends mid-sentence without proper punctuation.".to_owned()
+            },
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "ellipsis=true".to_owned(),
+            )],
+            remediation: Some(
+                "Review text for unintended truncation or missing content.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_empty_sections(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    // ponytail: use landmark counts as proxy for sections
+    let total_landmarks = obs.landmarks.nav_count
+        + obs.landmarks.main_count
+        + obs.landmarks.header_count
+        + obs.landmarks.footer_count;
+
+    if total_landmarks == 0 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no landmark sections detected".to_owned(),
+        });
+        return;
+    }
+
+    // ponytail: basic heuristic - if word count very low but landmarks exist, likely empty
+    let words_per_landmark = obs.visible_word_count / total_landmarks.max(1);
+
+    if obs.visible_word_count < 50 && total_landmarks > 1 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::Low,
+            title: "Potential empty sections detected".to_owned(),
+            summary: format!(
+                "{total_landmarks} landmark(s) but only {} visible words ({words_per_landmark} words/landmark).",
+                obs.visible_word_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("landmarks={total_landmarks};words={}", obs.visible_word_count),
+            )],
+            remediation: Some(
+                "Ensure all semantic sections contain meaningful content.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    // Skipped boilerplate ratio for now - needs main content extraction
+    checks.push(CheckStatus::Skipped {
+        rule_id: RuleId(RULE_BOILERPLATE_RATIO.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+        reason: "main content extraction not yet implemented".to_owned(),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1215,15 +1560,27 @@ mod tests {
 
     #[test]
     fn passes_for_substantive_content_with_last_modified() {
-        let words = vec!["Clear sentence with readable words."; 25].join(" ");
-        let html = format!(
-            "<html><body><main><p>{words}</p></main><footer><a href=\"/privacy\">Privacy</a></footer></body></html>"
-        );
+        let html = r#"<html lang="en"><body><main>
+            <h1>Comprehensive Web Quality Audit Guide</h1>
+            <p>This is a clear and unique first paragraph with substantive content about web quality and diagnostic capabilities.
+            We explore various aspects of automated testing and verification procedures that ensure optimal user experience.</p>
+            <p>Here is another distinct paragraph discussing different diagnostic capabilities and metrics that matter most.
+            Performance monitoring helps identify bottlenecks while accessibility testing ensures inclusive design principles.</p>
+            <p>The third paragraph covers performance monitoring and accessibility considerations thoroughly with detailed examples.
+            Security headers and content policies protect users from various attack vectors and ensure data integrity.</p>
+            <p>Fourth paragraph explores security headers and privacy compliance requirements in detail with practical guidance.
+            Regular audits help maintain standards compliance and catch regressions early in the development lifecycle.</p>
+            <p>Additional content paragraph provides even more context about quality assurance methodologies and best practices.
+            Automated testing combined with manual review creates a comprehensive quality assurance strategy.</p>
+        </main><footer><a href="/privacy">Privacy</a> | <a href="/terms">Terms</a></footer></body></html>"#;
         let (http, obs) = http_with_body(
             &html,
             vec![("last-modified", "Tue, 24 Nov 2026 12:00:00 GMT")],
         );
         let res = analyse(&http, &obs);
+        for f in &res.findings {
+            eprintln!("Finding: {} - {}", f.rule_id.0, f.title);
+        }
         assert_eq!(res.findings.len(), 0);
     }
 
