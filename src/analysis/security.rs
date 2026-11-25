@@ -29,6 +29,14 @@ const RULE_EXPOSED_SECRETS: &str = "sec.dom.exposed_secrets";
 const RULE_CROSS_ORIGIN_ISOLATION: &str = "sec.headers.cross_origin_isolation";
 const RULE_SENSITIVE_CACHE: &str = "sec.headers.sensitive_cache";
 const RULE_IFRAME_SANDBOX: &str = "sec.dom.iframe_sandbox";
+const RULE_CSP_OBJECT: &str = "sec.csp.missing_object_restriction";
+const RULE_CSP_BASE_URI: &str = "sec.csp.missing_base_uri_restriction";
+const RULE_CSP_REPORT_ONLY: &str = "sec.csp.report_only_without_enforcement";
+const RULE_CSP_UNSAFE_EVAL: &str = "sec.csp.unsafe_eval";
+const RULE_COOKIE_PREFIX: &str = "sec.cookies.prefix_violation";
+const RULE_COOKIE_LIFETIME: &str = "sec.cookies.excessive_lifetime";
+const RULE_FORM_CROSS_ORIGIN: &str = "sec.forms.cross_origin_submission";
+const RULE_SENSITIVE_URL_PARAMS: &str = "sec.exposure.sensitive_url_parameters";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -49,6 +57,14 @@ const ALL_RULES: &[&str] = &[
     RULE_CROSS_ORIGIN_ISOLATION,
     RULE_SENSITIVE_CACHE,
     RULE_IFRAME_SANDBOX,
+    RULE_CSP_OBJECT,
+    RULE_CSP_BASE_URI,
+    RULE_CSP_REPORT_ONLY,
+    RULE_CSP_UNSAFE_EVAL,
+    RULE_COOKIE_PREFIX,
+    RULE_COOKIE_LIFETIME,
+    RULE_FORM_CROSS_ORIGIN,
+    RULE_SENSITIVE_URL_PARAMS,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -103,6 +119,9 @@ pub fn analyse_with_document(
     check_version_disclosure(http, obs, &mut findings, &mut checks);
     check_exposed_secrets(http, &mut findings, &mut checks);
     check_cross_origin_isolation(http, &mut findings, &mut checks);
+    check_csp_directives(http, &mut findings, &mut checks);
+    check_cookie_attributes(http, &mut findings, &mut checks);
+    check_sensitive_url_params(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
@@ -110,6 +129,7 @@ pub fn analyse_with_document(
         check_insecure_forms(uses_https, doc, &mut findings, &mut checks);
         check_sensitive_cache(http, doc, &mut findings, &mut checks);
         check_iframe_sandbox(doc, &mut findings, &mut checks);
+        check_cross_origin_forms(http, doc, &mut findings, &mut checks);
     } else {
         for rule in [
             RULE_MIXED_CONTENT,
@@ -117,6 +137,7 @@ pub fn analyse_with_document(
             RULE_INSECURE_FORMS,
             RULE_SENSITIVE_CACHE,
             RULE_IFRAME_SANDBOX,
+            RULE_FORM_CROSS_ORIGIN,
         ] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
@@ -256,11 +277,11 @@ fn check_https(
             title: "Final response served over unencrypted HTTP".to_owned(),
             summary: format!(
                 "Final URL {} does not use HTTPS, exposing traffic to interception.",
-                http.final_url
+                redacted_url(&http.final_url)
             ),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpFinalUrl,
-                http.final_url.clone(),
+                redacted_url(&http.final_url),
             )],
             remediation: Some(
                 "Serve all public traffic over HTTPS with HTTP->HTTPS redirects.".to_owned(),
@@ -332,7 +353,7 @@ fn check_hsts(
                 title: "Missing Strict-Transport-Security (HSTS) header".to_owned(),
                 summary: format!(
                     "HTTPS response from {} omitted `strict-transport-security`.",
-                    http.final_url
+                    redacted_url(&http.final_url)
                 ),
                 evidence_refs: vec![EvidenceRef::new(
                     EvidenceSource::HttpHeaders,
@@ -379,7 +400,7 @@ fn check_csp(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<
             title: "Missing Content-Security-Policy (CSP) header".to_owned(),
             summary: format!(
                 "Response from {} did not include `content-security-policy`.",
-                http.final_url
+                redacted_url(&http.final_url)
             ),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpHeaders,
@@ -558,7 +579,7 @@ fn check_referrer_policy(
                 title: "Missing Referrer-Policy header".to_owned(),
                 summary: format!(
                     "Response from {} did not include `referrer-policy`.",
-                    http.final_url
+                    redacted_url(&http.final_url)
                 ),
                 evidence_refs: vec![EvidenceRef::new(
                     EvidenceSource::HttpHeaders,
@@ -803,7 +824,7 @@ fn check_mixed_content(
             title: format!("Mixed content references ({}) on HTTPS page", insecure_urls.len()),
             summary: format!(
                 "HTTPS page `{}` references {} insecure `http://` resource(s) or form action(s).",
-                http.final_url,
+                redacted_url(&http.final_url),
                 insecure_urls.len()
             ),
             evidence_refs: vec![EvidenceRef::new(
@@ -927,7 +948,7 @@ fn check_permissions_policy(
             title: "Missing Permissions-Policy header".to_owned(),
             summary: format!(
                 "Response from {} did not include a `Permissions-Policy` header.",
-                http.final_url
+                redacted_url(&http.final_url)
             ),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpHeaders,
@@ -1278,6 +1299,424 @@ fn check_iframe_sandbox(
     }
 }
 
+fn parse_csp_directives(raw: &str) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut map = std::collections::BTreeMap::new();
+    for part in raw.split(';') {
+        let mut tokens = part.split_whitespace();
+        let Some(name) = tokens.next() else {
+            continue;
+        };
+        let key = name.to_ascii_lowercase();
+        let values: Vec<String> = tokens.map(str::to_ascii_lowercase).collect();
+        map.entry(key).or_insert(values);
+    }
+    map
+}
+
+fn check_csp_directives(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let enforced = header_value(http, "content-security-policy");
+    let report_only = header_value(http, "content-security-policy-report-only");
+
+    if enforced.is_none() && report_only.is_some() {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CSP_REPORT_ONLY.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "CSP is Report-Only without an enforced policy".to_owned(),
+            summary: "Response sends `Content-Security-Policy-Report-Only` without an enforced `Content-Security-Policy` header.".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                "csp_report_only=true;csp_enforced=false",
+            )],
+            remediation: Some("Promote tested CSP directives to `Content-Security-Policy`.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CSP_REPORT_ONLY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CSP_REPORT_ONLY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    let Some(raw_csp) = enforced else {
+        for rule in [RULE_CSP_OBJECT, RULE_CSP_BASE_URI, RULE_CSP_UNSAFE_EVAL] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "Content-Security-Policy header absent".to_owned(),
+            });
+        }
+        return;
+    };
+
+    let directives = parse_csp_directives(raw_csp);
+    let default_is_none = directives
+        .get("default-src")
+        .is_some_and(|v| v.iter().any(|t| t == "'none'"));
+
+    let object_missing = !default_is_none && !directives.contains_key("object-src");
+    if object_missing {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CSP_OBJECT.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "CSP omits object-src restriction".to_owned(),
+            summary: "Content-Security-Policy does not declare `object-src 'none'` (or `default-src 'none'`).".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(EvidenceSource::HttpHeaders, "csp_missing=object-src")],
+            remediation: Some("Add `object-src 'none'` to block legacy plugin execution.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CSP_OBJECT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CSP_OBJECT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    if directives.contains_key("base-uri") {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CSP_BASE_URI.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CSP_BASE_URI.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "CSP omits base-uri restriction".to_owned(),
+            summary: "Content-Security-Policy lacks `base-uri`, leaving relative script URLs exposed to `<base>` injection.".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(EvidenceSource::HttpHeaders, "csp_missing=base-uri")],
+            remediation: Some("Add `base-uri 'self'` or `base-uri 'none'` to Content-Security-Policy.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CSP_BASE_URI.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    check_csp_unsafe_eval(&directives, findings, checks);
+}
+
+fn check_csp_unsafe_eval(
+    directives: &std::collections::BTreeMap<String, Vec<String>>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let script_vals = directives
+        .get("script-src")
+        .or_else(|| directives.get("default-src"));
+    if script_vals.is_some_and(|v| v.iter().any(|t| t == "'unsafe-eval'")) {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CSP_UNSAFE_EVAL.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "CSP permits 'unsafe-eval'".to_owned(),
+            summary:
+                "Effective script policy allows `'unsafe-eval'`, enabling dynamic code evaluation."
+                    .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                "csp_directive='unsafe-eval'",
+            )],
+            remediation: Some("Remove `'unsafe-eval'` from `script-src`.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CSP_UNSAFE_EVAL.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CSP_UNSAFE_EVAL.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_cookie_attributes(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const MAX_COOKIE_AGE_SECS: u64 = 34_560_000; // 400 days (RFC 6265bis)
+    let cookies = http.header_values("set-cookie");
+    if cookies.is_empty() {
+        for rule in [RULE_COOKIE_PREFIX, RULE_COOKIE_LIFETIME] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "no Set-Cookie headers present".to_owned(),
+            });
+        }
+        return;
+    }
+
+    let mut prefix_violations = Vec::new();
+    let mut excessive_lifetimes = Vec::new();
+
+    for raw in &cookies {
+        let mut parts = raw.split(';').map(str::trim);
+        let Some(name_val) = parts.next() else {
+            continue;
+        };
+        let cookie_name = name_val.split('=').next().unwrap_or("").trim();
+        let attrs: Vec<String> = parts.map(str::to_ascii_lowercase).collect();
+        let has_secure = attrs.iter().any(|a| a == "secure");
+        let has_domain = attrs.iter().any(|a| a.starts_with("domain="));
+        let has_root_path = attrs.iter().any(|a| a == "path=/");
+
+        if (cookie_name.starts_with("__Host-") && (!has_secure || has_domain || !has_root_path))
+            || (cookie_name.starts_with("__Secure-") && !has_secure)
+        {
+            prefix_violations.push(cookie_name.to_owned());
+        }
+
+        for attr in &attrs {
+            if let Some(raw_age) = attr.strip_prefix("max-age=")
+                && let Ok(secs) = raw_age.trim().parse::<u64>()
+                && secs > MAX_COOKIE_AGE_SECS
+            {
+                excessive_lifetimes.push(format!("{cookie_name} ({secs}s)"));
+            }
+        }
+    }
+
+    emit_cookie_attribute_results(&prefix_violations, &excessive_lifetimes, findings, checks);
+}
+
+fn emit_cookie_attribute_results(
+    prefix_violations: &[String],
+    excessive_lifetimes: &[String],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if prefix_violations.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_COOKIE_PREFIX.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_COOKIE_PREFIX.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Cookie prefix contract violated ({})", prefix_violations.len()),
+            summary: format!(
+                "Cookies using `__Host-` or `__Secure-` prefix violate required attributes: {}.",
+                prefix_violations.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("prefix_violations={}", prefix_violations.join(",")),
+            )],
+            remediation: Some(
+                "Ensure `__Secure-` cookies set `Secure` and `__Host-` cookies set `Secure; Path=/` without `Domain`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_COOKIE_PREFIX.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    if excessive_lifetimes.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_COOKIE_LIFETIME.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_COOKIE_LIFETIME.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!(
+                "Cookies exceed 400-day Max-Age cap ({})",
+                excessive_lifetimes.len()
+            ),
+            summary: format!(
+                "Set-Cookie declares Max-Age > 400 days: {}.",
+                excessive_lifetimes.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("excessive_cookie_lifetimes={}", excessive_lifetimes.len()),
+            )],
+            remediation: Some("Cap cookie lifetimes to 400 days (34,560,000s) or less.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_COOKIE_LIFETIME.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_cross_origin_forms(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(page_host) = url::Url::parse(&http.final_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+    else {
+        return;
+    };
+
+    let cross_origin: Vec<&str> = obs
+        .forms
+        .iter()
+        .filter_map(|f| f.action.as_deref())
+        .filter(|act| {
+            url::Url::parse(act)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+                .is_some_and(|h| h != page_host)
+        })
+        .collect();
+
+    if cross_origin.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_FORM_CROSS_ORIGIN.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_FORM_CROSS_ORIGIN.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Forms submitting to external origins ({})", cross_origin.len()),
+            summary: format!(
+                "{} <form> element(s) submit to a different host than `{page_host}`.",
+                cross_origin.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("cross_origin_forms={}", cross_origin.len()),
+            )],
+            remediation: Some(
+                "Verify external form action targets are authorised and covered by CSP `form-action`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_FORM_CROSS_ORIGIN.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn redacted_url(raw: &str) -> String {
+    if let Ok(mut parsed) = url::Url::parse(raw) {
+        if parsed.query().is_some() {
+            parsed.set_query(Some("redacted"));
+        }
+        return parsed.to_string();
+    }
+    raw.split('?').next().unwrap_or(raw).to_owned()
+}
+
+fn check_sensitive_url_params(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const SENSITIVE_KEYS: &[&str] = &[
+        "token",
+        "access_token",
+        "auth",
+        "secret",
+        "api_key",
+        "apikey",
+        "password",
+        "passwd",
+        "session_id",
+        "sid",
+    ];
+    let Ok(parsed) = url::Url::parse(&http.final_url) else {
+        return;
+    };
+    let matched: Vec<String> = parsed
+        .query_pairs()
+        .filter_map(|(k, _)| {
+            let lower = k.to_ascii_lowercase();
+            SENSITIVE_KEYS.contains(&lower.as_str()).then_some(lower)
+        })
+        .collect();
+
+    if matched.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SENSITIVE_URL_PARAMS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SENSITIVE_URL_PARAMS.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Sensitive parameter names detected in URL query string".to_owned(),
+            summary: format!(
+                "Final URL contains sensitive query parameter key(s): {} (values redacted).",
+                matched.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpStatus,
+                format!("sensitive_query_keys={}", matched.join(",")),
+            )],
+            remediation: Some(
+                "Move credentials, tokens, and session identifiers out of URL query strings into headers or POST bodies."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SENSITIVE_URL_PARAMS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1339,7 +1778,10 @@ mod tests {
             "https://example.com/",
             vec![
                 ("strict-transport-security", "max-age=31536000"),
-                ("content-security-policy", "default-src 'self'"),
+                (
+                    "content-security-policy",
+                    "default-src 'self'; object-src 'none'; base-uri 'self'",
+                ),
                 ("x-content-type-options", "nosniff"),
                 ("x-frame-options", "DENY"),
                 ("referrer-policy", "no-referrer"),
@@ -1475,5 +1917,47 @@ mod tests {
         assert!(ids.contains(&RULE_CROSS_ORIGIN_ISOLATION));
         assert!(ids.contains(&RULE_SENSITIVE_CACHE));
         assert!(ids.contains(&RULE_IFRAME_SANDBOX));
+    }
+
+    #[test]
+    fn flags_csp_directives_cookie_prefixes_cross_origin_forms_and_sensitive_url_params() {
+        let mut snap = snapshot_with_headers(
+            "https://example.com/callback?access_token=REDACTED_TEST_VAL",
+            vec![
+                (
+                    "content-security-policy",
+                    "default-src 'self'; script-src 'self' 'unsafe-eval'",
+                ),
+                ("set-cookie", "__Host-sid=abc; Path=/app; Max-Age=40000000"),
+            ],
+        );
+        let html = r#"<html><body>
+            <form action="https://other.example.net/submit" method="POST"></form>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_CSP_OBJECT));
+        assert!(ids.contains(&RULE_CSP_BASE_URI));
+        assert!(ids.contains(&RULE_CSP_UNSAFE_EVAL));
+        assert!(ids.contains(&RULE_COOKIE_PREFIX));
+        assert!(ids.contains(&RULE_COOKIE_LIFETIME));
+        assert!(ids.contains(&RULE_FORM_CROSS_ORIGIN));
+        assert!(ids.contains(&RULE_SENSITIVE_URL_PARAMS));
+        // Ensure sensitive query parameter value is never reproduced in findings
+        assert!(
+            result
+                .findings
+                .iter()
+                .all(|f| !f.summary.contains("REDACTED_TEST_VAL"))
+        );
     }
 }
