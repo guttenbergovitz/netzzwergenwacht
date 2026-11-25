@@ -18,6 +18,8 @@ const RULE_FAILED_REQUESTS: &str = "browser.network.failed_requests";
 const RULE_API_FAILURES: &str = "browser.runtime.api_failures";
 const RULE_HYDRATION_ERRORS: &str = "browser.runtime.hydration_errors";
 const RULE_SOURCE_RENDERED_DIVERGENCE: &str = "browser.runtime.source_rendered_divergence";
+const RULE_ANALYTICS_BLOAT: &str = "browser.analytics.tracking_bloat";
+const RULE_EXCESSIVE_SUBRESOURCES: &str = "browser.runtime.excessive_subresources";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -26,6 +28,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_API_FAILURES,
     RULE_HYDRATION_ERRORS,
     RULE_SOURCE_RENDERED_DIVERGENCE,
+    RULE_ANALYTICS_BLOAT,
+    RULE_EXCESSIVE_SUBRESOURCES,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -58,6 +62,8 @@ pub fn analyse_with_document(
     check_api_failures(browser, &mut findings, &mut checks);
     check_hydration_errors(browser, &mut findings, &mut checks);
     check_source_rendered_divergence(browser, obs, &mut findings, &mut checks);
+    check_analytics_bloat(browser, &mut findings, &mut checks);
+    check_excessive_subresources(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -337,6 +343,108 @@ fn check_source_rendered_divergence(
     }
 }
 
+fn check_analytics_bloat(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const TRACKER_DOMAINS: &[&str] = &[
+        "googletagmanager.com",
+        "google-analytics.com",
+        "doubleclick.net",
+        "connect.facebook.net",
+        "hotjar.com",
+        "clarity.ms",
+        "segment.com",
+        "mixpanel.com",
+    ];
+    let mut matched = std::collections::BTreeSet::new();
+    for req in &browser.resources {
+        let lower = req.url.to_ascii_lowercase();
+        for domain in TRACKER_DOMAINS {
+            if lower.contains(domain) {
+                matched.insert(*domain);
+            }
+        }
+    }
+
+    if matched.len() >= 3 {
+        let list: Vec<&str> = matched.iter().copied().collect();
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_ANALYTICS_BLOAT.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Multiple analytics/tracking vendors loaded ({})", matched.len()),
+            summary: format!(
+                "Browser runtime loaded {} distinct tracking/analytics vendors: {}.",
+                matched.len(),
+                list.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("tracker_vendors={}", list.join(",")),
+            )],
+            remediation: Some(
+                "Consolidate redundant analytics tags and gate non-essential trackers behind consent."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_ANALYTICS_BLOAT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ANALYTICS_BLOAT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_excessive_subresources(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let total = browser.resources.len();
+    if total > 80 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_EXCESSIVE_SUBRESOURCES.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Excessive subresource requests ({total})"),
+            summary: format!(
+                "Initial page load triggered {total} network subresource requests (> 80 threshold)."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("network_requests={total}"),
+            )],
+            remediation: Some(
+                "Bundle small modules, remove unused assets, and lazy-load offscreen resources."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_EXCESSIVE_SUBRESOURCES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_EXCESSIVE_SUBRESOURCES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,5 +551,49 @@ mod tests {
         assert!(ids.contains(&RULE_API_FAILURES));
         assert!(ids.contains(&RULE_HYDRATION_ERRORS));
         assert!(ids.contains(&RULE_SOURCE_RENDERED_DIVERGENCE));
+    }
+
+    #[test]
+    fn flags_analytics_bloat_and_excessive_subresources() {
+        let mut requests: Vec<crate::domain::ResourceTimingObs> = [
+            "https://www.googletagmanager.com/gtm.js",
+            "https://www.google-analytics.com/analytics.js",
+            "https://connect.facebook.net/en_US/fbevents.js",
+        ]
+        .into_iter()
+        .map(|u| crate::domain::ResourceTimingObs {
+            url: u.to_owned(),
+            resource_type: "script".to_owned(),
+            mime_type: None,
+            transfer_size: Some(512),
+            duration_ms: None,
+            protocol: None,
+            cache_control: None,
+            content_encoding: None,
+        })
+        .collect();
+        for i in 0..80 {
+            requests.push(crate::domain::ResourceTimingObs {
+                url: format!("https://example.com/chunk-{i}.js"),
+                resource_type: "script".to_owned(),
+                mime_type: None,
+                transfer_size: Some(256),
+                duration_ms: None,
+                protocol: None,
+                cache_control: None,
+                content_encoding: None,
+            });
+        }
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                resources: requests,
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_ANALYTICS_BLOAT));
+        assert!(ids.contains(&RULE_EXCESSIVE_SUBRESOURCES));
     }
 }
