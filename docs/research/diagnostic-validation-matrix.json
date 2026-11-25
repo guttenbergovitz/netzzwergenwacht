@@ -16,6 +16,11 @@
       "tier": "scale_verified",
       "description": "2000-URL / 8-locale / 12-template crawl sampling benchmark",
       "scope": "tests/patrol_scale_eval.rs"
+    },
+    {
+      "tier": "browser_fixture_verified",
+      "description": "Opt-in Chromium session against a controlled loopback application, with offline protocol fixtures for edge cases",
+      "scope": "tests/browser_timeline.rs, tests/browser_timeline_protocol.cjs"
     }
   ]
 }

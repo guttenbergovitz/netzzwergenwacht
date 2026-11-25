@@ -49,3 +49,29 @@ along with retention status and the main-landmark distribution. Specialist and
 Kommandant prompts receive the first page for complete HTML up to 512 KiB.
 The prompt projection contains numeric metadata and no page text or collector
 error messages. The query derives its evidence from the captured HTML locally.
+
+## Browser runtime and network timeline
+
+The existing Chromium session records network and classified runtime events
+in collector receive order. Optional protocol timestamps preserve their
+monotonic or Unix clock domain. A request ID and redirect hop identify observed
+stages within the session. Frame and loader identifiers appear when CDP
+provides them.
+
+HTTP responses, transport failures, cancellations and browser or collector
+blocks have separate event types. A known collector policy block suppresses
+the corresponding terminal failure event. When CDP omits the network ID,
+the block remains an uncorrelated observation. Response statuses come from
+CDP response events. Wire-level cache revalidation status from additional
+protocol events is unavailable in this slice.
+
+The timeline retains up to 512 events and records truncation and the
+observation end. URL evidence is limited to HTTP(S) origins. The timeline
+omits request paths, credentials, queries, response bodies and raw runtime
+messages. Existing browser summaries retain their own evidence contracts.
+
+The Rust query pages through captured snapshot events in groups of 16.
+Kommandant can request the first page without starting a browser. The
+evaluation accepts timeline citations only when their sequence numbers appear
+on that page. The sequence records observation order and can support further
+investigation of a correlation.

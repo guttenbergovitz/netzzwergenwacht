@@ -24,8 +24,9 @@ and a fixture-verified text distribution for documents with one main landmark.
 The registry distinguishes rendered clipping, which still requires geometry evidence,
 from implemented source checks.
 
-Continue IV-A with a time-ordered browser resource and runtime record, request and
-navigation identities, explicit field availability and live Chromium fixtures.
-Use that record for bounded journey and consent scenarios. Extend the existing
+The first browser timeline records request hops and runtime events in receive
+order and exposes bounded snapshot queries. Extend it with wire response
+metadata, streaming lifecycles and detailed attribution. Use the same session
+evidence for bounded journey and consent scenarios. Extend the existing
 application graph and patrol history with comparable observation coverage before
 adding application-wide conclusions.

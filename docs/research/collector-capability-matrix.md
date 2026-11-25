@@ -12,3 +12,4 @@ Inventory of NetzZwergenWacht data collectors, evidence levels, resource budgets
 | `axe-core` Adapter | `adapters::axe` | `Rendered` | External CLI invocation bounded by timeout | `Unavailable` when Chromium/axe absent |
 | Lighthouse Adapter | `adapters::lighthouse` | `Rendered` | External CLI invocation bounded by timeout | `Unavailable` when Lighthouse absent |
 | Source Content Segmentation | `analysis::segmentation` | `Source` | Complete HTTP HTML, 32,768 nodes, depth 128, 256 paragraphs, 4 KiB per paragraph, 128 bytes per language attribute | Tree and paragraph limits explicit. A missing or ambiguous main landmark leaves word distribution unavailable. |
+| Browser Runtime and Network Timeline | `adapters::browser` | `Rendered` | Existing Chromium session, 512 events, 128-byte identifier fields, 16 events per query | Explicit event cap and load termination, optional timestamps and correlation. Older snapshots have no timeline. |

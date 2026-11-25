@@ -11,13 +11,15 @@ use tokio::process::Command;
 use crate::adapters::run_bounded_command;
 use crate::domain::{AuditTarget, BrowserEvidence, CollectorOutcome};
 
-const CDP_HARNESS_JS: &str = r"
+const CDP_HARNESS_JS: &str = concat!(
+    include_str!("browser_timeline.js"),
+    r"
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const targetUrl = process.argv[2];
+const targetUrl = process.argv[1];
 if (!targetUrl) {
   console.error('missing target URL');
   process.exit(2);
@@ -101,6 +103,7 @@ function findBrowser() {
     const reqMeta = new Map();
     const resourcesByReqId = new Map();
     const stylesheetUrls = new Map();
+    const timeline = createBrowserTimeline();
     let navStartTs = null;
     let loadResolve = null;
 
@@ -113,6 +116,7 @@ function findBrowser() {
         else resolve(msg.result);
         return;
       }
+      timeline.observe(msg.method, msg.params || {});
       if (msg.method === 'Runtime.consoleAPICalled' && (msg.params?.type === 'error' || msg.params?.type === 'warning')) {
         const text = (msg.params.args || []).map((a) => a.value ?? a.description ?? '').join(' ').trim();
         const lower = text.toLowerCase();
@@ -121,6 +125,7 @@ function findBrowser() {
         }
         if (msg.params?.type === 'error') {
           const isCsp = lower.includes('content security policy') || lower.includes('refused to ');
+          timeline.runtime(msg.params, isCsp ? 'csp_violation' : 'console_error');
           consoleErrors.push({
             level: 'error',
             text: text || 'console.error',
@@ -139,6 +144,7 @@ function findBrowser() {
           hydrationErrors.push(text);
         }
         const isRejection = (details.text || '').toLowerCase().includes('in promise') || lower.includes('unhandledrejection');
+        timeline.runtime(msg.params, isRejection ? 'unhandled_rejection' : 'uncaught_exception');
         consoleErrors.push({
           level: 'exception',
           text,
@@ -216,6 +222,7 @@ function findBrowser() {
         const reqUrl = msg.params?.request?.url || '';
         const blocked = isForbiddenSubresourceUrl(reqUrl);
         if (blocked) {
+          timeline.policyBlock(msg.params);
           failedRequests.push({ url: reqUrl, error_text: 'BlockedByPolicy', status_code: null });
           ws.send(JSON.stringify({
             id: nextId++,
@@ -306,15 +313,21 @@ function findBrowser() {
     }
 
     let loadTimedOut = false;
+    let loadTimer;
     const loaded = new Promise((resolve) => {
       loadResolve = resolve;
-      setTimeout(() => {
+      loadTimer = setTimeout(() => {
         loadTimedOut = true;
         resolve();
       }, 15000);
     });
-    await call('Page.navigate', { url: targetUrl });
-    await loaded;
+    try {
+      await call('Page.navigate', { url: targetUrl });
+      await loaded;
+    } finally {
+      clearTimeout(loadTimer);
+      loadResolve = null;
+    }
 
     const finalRes = await call('Runtime.evaluate', { expression: 'window.location.href', returnByValue: true });
     const finalUrl = finalRes?.result?.value || targetUrl;
@@ -766,6 +779,7 @@ function findBrowser() {
       final_url: finalUrl,
       browser_version: browserVersion,
       load_timed_out: loadTimedOut,
+      timeline: timeline.finish(loadTimedOut),
       console_errors: consoleErrors,
       hydration_errors: hydrationErrors,
       failed_requests: failedRequests,
@@ -793,13 +807,14 @@ function findBrowser() {
   } finally {
     if (ws && ws.readyState === WebSocket.OPEN) ws.close();
     chrome.kill('SIGKILL');
-    fs.rmSync(userDataDir, { recursive: true, force: true });
+    fs.rmSync(userDataDir, { recursive: true, force: true, maxRetries: 4 });
   }
 })().catch((err) => {
   console.error(err?.stack || String(err));
   process.exit(1);
 });
-";
+"
+);
 
 /// Runs a headless Chromium CDP session against `target` within `timeout`
 /// using [`crate::domain::TargetPolicy::PublicOnly`].
@@ -872,6 +887,14 @@ pub fn parse_browser_outcome(raw: &str) -> CollectorOutcome<BrowserEvidence> {
             "Page.loadEventFired timed out after 15000 ms; DOM metrics captured before full load"
                 .to_owned(),
         );
+    }
+    if parsed
+        .evidence
+        .timeline
+        .as_ref()
+        .is_some_and(|timeline| timeline.truncated)
+    {
+        warnings.push("Browser timeline truncated at 512 events".to_owned());
     }
     if parsed.evidence.resources_truncated {
         warnings.push(

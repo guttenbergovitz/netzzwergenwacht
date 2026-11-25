@@ -6,6 +6,7 @@
 //! emits [`InvestigationEvent`]s, and builds stakeholder-ready
 //! [`InvestigationReport`]s.
 
+pub mod browser_timeline;
 pub mod events;
 pub mod prompts;
 pub mod reporting;
@@ -422,6 +423,8 @@ struct RawHypothesisDecision {
 #[derive(Debug, Deserialize)]
 struct RawEvaluationDecision {
     status: HypothesisStatus,
+    #[serde(default)]
+    timeline_sequences: Vec<u32>,
     evaluation_summary: String,
     conclusion: String,
 }
@@ -675,6 +678,7 @@ pub async fn run_investigation_with_specialists(
         match evaluate_hypothesis(
             &new_results,
             tool_succeeded,
+            &snapshot,
             &mut hypothesis,
             llm,
             budget,
@@ -745,6 +749,10 @@ async fn propose_hypothesis(
         })
         .collect();
 
+    if !used_tools.contains("query_browser_timeline") {
+        available.push("query_browser_timeline".to_owned());
+    }
+
     // Add specialist consultation tools.
     for dwarf in &[
         "Netz",
@@ -794,14 +802,15 @@ async fn propose_hypothesis(
         .collect();
 
     let user = format!(
-        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nspecialist_contributions: {}\nfindings: {}\nsource_content_evidence: {}\n{CLOSE_TAG}",
+        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nspecialist_contributions: {}\nfindings: {}\nsource_content_evidence: {}\nbrowser_timeline: {}\n{CLOSE_TAG}",
         ctx.objective.replace(CLOSE_TAG, ""),
         ctx.target.as_str(),
         prior_hyps.join(", "),
         specialist_notes.join(" | ").replace(CLOSE_TAG, ""),
         summary.join(" | ").replace(CLOSE_TAG, ""),
         crate::analysis::segmentation::content_evidence_context(ctx.snapshot.as_ref())
-            .replace(CLOSE_TAG, "")
+            .replace(CLOSE_TAG, ""),
+        browser_timeline::timeline_context(ctx.snapshot.as_ref())
     );
 
     let raw = llm
@@ -885,6 +894,25 @@ async fn execute_rig_tool(
         }
         "query_browser_evidence" => {
             run_query_browser_tool(target, policy, timeout, backend, args, ctx).await
+        }
+        "query_browser_timeline" => {
+            let page = browser_timeline::query_browser_timeline(snapshot, 0);
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: tool_id.to_owned(),
+                dwarf_id: DwarfId::Browser,
+                authorised: true,
+                succeeded: page.as_ref().is_some_and(|page| !page.events.is_empty()),
+                summary: page.as_ref().map_or_else(
+                    || "browser timeline unavailable in snapshot".to_owned(),
+                    |page| {
+                        format!(
+                            "snapshot timeline page contains {} events",
+                            page.events.len()
+                        )
+                    },
+                ),
+            });
+            (page.is_some_and(|page| !page.events.is_empty()), Vec::new())
         }
         _ => {
             ctx.tool_trace.push(ToolInvocationRecord {
@@ -997,6 +1025,7 @@ async fn consult_specialist_during_investigation(
          Prior hypotheses: {}\n\
          Prior specialist contributions: {}\n\
          Source content evidence: {}\n\
+         Browser timeline: {}\n\
          Question: {}",
         ctx.objective,
         ctx.target.as_str(),
@@ -1005,6 +1034,7 @@ async fn consult_specialist_during_investigation(
         prior_hyp_summary.join(" | "),
         prior_specialist_summary.join(" | "),
         crate::analysis::segmentation::content_evidence_context(ctx.snapshot.as_ref()),
+        browser_timeline::timeline_context(ctx.snapshot.as_ref()),
         question
     );
 
@@ -1392,6 +1422,7 @@ async fn run_crawl_tool(
 async fn evaluate_hypothesis(
     new_results: &[AnalyserResult],
     tool_succeeded: bool,
+    snapshot: &EvidenceSnapshot,
     hypothesis: &mut DiagnosticHypothesis,
     llm: &dyn LlmProvider,
     budget: InvestigationBudget,
@@ -1416,8 +1447,17 @@ async fn evaluate_hypothesis(
         .map(|f| format!("{}: {}", f.rule_id.0, f.title))
         .collect();
 
+    let timeline_requested = matches!(
+        hypothesis.requested_tool.as_str(),
+        "query_browser_timeline" | "inspect_browser_runtime"
+    );
+    let timeline = if timeline_requested {
+        browser_timeline::timeline_context(Some(snapshot))
+    } else {
+        "not requested".to_owned()
+    };
     let user = format!(
-        "{OPEN_TAG}\nhypothesis: {}\nfollow_up_findings: {}\n{CLOSE_TAG}",
+        "{OPEN_TAG}\nhypothesis: {}\nfollow_up_findings: {}\nbrowser_timeline: {timeline}\n{CLOSE_TAG}",
         hypothesis.proposed_explanation.replace(CLOSE_TAG, ""),
         follow_up.join(" | ").replace(CLOSE_TAG, "")
     );
@@ -1436,14 +1476,32 @@ async fn evaluate_hypothesis(
     let eval: RawEvaluationDecision =
         serde_json::from_str(&raw).map_err(|e| format!("invalid evaluation JSON: {e}"))?;
 
-    hypothesis.status = eval.status;
-    hypothesis.evaluation_summary = Some(eval.evaluation_summary);
-
-    let refs: Vec<EvidenceRef> = new_results
+    let mut refs: Vec<EvidenceRef> = new_results
         .iter()
         .flat_map(|r| r.findings.iter())
         .flat_map(|f| f.evidence_refs.iter().cloned())
         .collect();
+    if timeline_requested {
+        refs.extend(browser_timeline::cited_event_refs(
+            snapshot,
+            &eval.timeline_sequences,
+        ));
+    }
+    if hypothesis.requested_tool == "query_browser_timeline"
+        && refs.is_empty()
+        && matches!(
+            eval.status,
+            HypothesisStatus::Supported | HypothesisStatus::Rejected
+        )
+    {
+        hypothesis.status = HypothesisStatus::Inconclusive;
+        let message =
+            "Timeline evaluation did not cite an event from the supplied page.".to_owned();
+        hypothesis.evaluation_summary = Some(message.clone());
+        return Ok(message);
+    }
+    hypothesis.status = eval.status;
+    hypothesis.evaluation_summary = Some(eval.evaluation_summary);
     if refs.is_empty() && eval.status == HypothesisStatus::Supported {
         hypothesis.missing_evidence.push(
             "Follow-up tool emitted no supporting findings; treat conclusion with caution."
