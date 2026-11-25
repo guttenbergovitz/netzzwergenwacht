@@ -23,3 +23,29 @@ The **Collection Engine** is solely responsible for acquiring external evidence 
 
 - Each collector returns `CollectorOutcome<T>`: `Captured(T)` | `Partial { data: T, warnings: Vec<String> }` | `Failed(CollectionError)` | `Skipped(String)`.
 - Collector failures do not crash the orchestrator; they are recorded in the `EvidenceSnapshot` so downstream analysers know which evidence is absent.
+
+## Source content segmentation
+
+The shared HTML5 parse yields content evidence for editorial integrity and
+internationalisation checks. Paragraph references are zero-based positions in
+body-subtree element order for the captured HTML. Consumers can resolve them
+within that document. Changes to the document can shift those positions.
+
+The collector records paragraph text with Unicode whitespace collapsed and
+retains local and inherited language declarations within explicit limits.
+Language checks exclude nested declarations from whole-paragraph inference.
+The collector excludes explicitly hidden HTML and non-content elements.
+Computed CSS visibility, rendered clipping and client-generated content require
+browser evidence.
+
+For a unique main landmark, the collector counts eligible source words inside
+and outside it. The existing boilerplate rule uses a majority outside-main
+threshold as a structural heuristic. Cross-page repetition and template
+membership require separate observations. Empty regions are defined narrowly
+as eligible regions without child elements or non-whitespace text.
+
+The snapshot query exposes pages of 16 paragraph references and word counts,
+along with retention status and the main-landmark distribution. Specialist and
+Kommandant prompts receive the first page for complete HTML up to 512 KiB.
+The prompt projection contains numeric metadata and no page text or collector
+error messages. The query derives its evidence from the captured HTML locally.

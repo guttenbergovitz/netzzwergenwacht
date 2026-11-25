@@ -11,3 +11,4 @@ Inventory of NetzZwergenWacht data collectors, evidence levels, resource budgets
 | Chromium CDP Harness | `adapters::browser` | `Rendered` | `resources` <= 200, `rendered_images` <= 100, `ax_tree` <= 5000 nodes, 15s load timeout | `load_timed_out` / truncation flags -> `CollectorOutcome::Partial` |
 | `axe-core` Adapter | `adapters::axe` | `Rendered` | External CLI invocation bounded by timeout | `Unavailable` when Chromium/axe absent |
 | Lighthouse Adapter | `adapters::lighthouse` | `Rendered` | External CLI invocation bounded by timeout | `Unavailable` when Lighthouse absent |
+| Source Content Segmentation | `analysis::segmentation` | `Source` | Complete HTTP HTML, 32,768 nodes, depth 128, 256 paragraphs, 4 KiB per paragraph, 128 bytes per language attribute | Tree and paragraph limits explicit. A missing or ambiguous main landmark leaves word distribution unavailable. |

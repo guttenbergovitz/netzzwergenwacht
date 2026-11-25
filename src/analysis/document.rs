@@ -162,6 +162,8 @@ pub struct AriaRefObs {
 /// Shared observations extracted from a single HTML5 parse pass.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DocumentObservations {
+    /// Bounded content blocks and source landmark measurements.
+    pub content: super::segmentation::ContentSegmentation,
     /// Trimmed `<title>` text, if present and non-empty.
     pub title: Option<String>,
     /// Trimmed `<html lang="...">` value, if present and non-empty.
@@ -282,6 +284,7 @@ impl DocumentObservations {
         let json_ld_blocks = extract_json_ld_from_doc(&doc);
         let hreflangs = extract_hreflangs(&doc);
         let mut obs = Self {
+            content: super::segmentation::ContentSegmentation::extract(&doc),
             title: first_text(&doc, "title"),
             html_lang: first_attr(&doc, "html", "lang"),
             meta_description: first_attr(&doc, r#"meta[name="description"]"#, "content"),

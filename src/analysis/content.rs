@@ -1163,40 +1163,45 @@ fn check_content_intelligence(
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    // Split visible text into paragraph-like chunks
-    let paragraphs: Vec<&str> = obs
-        .visible_text_sample
-        .split('\n')
-        .map(str::trim)
-        .filter(|p| p.split_whitespace().count() >= 10)
-        .collect();
-
-    // Check 1: Mixed language paragraphs
-    check_mixed_paragraphs(&paragraphs, findings, checks);
-
-    // Check 2: Untranslated fragments (if html_lang declared)
-    if let Some(ref declared_lang) = obs.html_lang {
-        check_untranslated_fragments(declared_lang, &paragraphs, findings, checks);
+    let content = &obs.content;
+    if content.paragraphs_truncated {
+        for rule in [
+            RULE_MIXED_PARAGRAPHS,
+            RULE_UNTRANSLATED_FRAGMENT,
+            RULE_DUPLICATE_PARAGRAPHS,
+        ] {
+            skip_content_check(checks, rule, "source paragraph retention limit reached");
+        }
     } else {
-        checks.push(CheckStatus::Skipped {
-            rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-            reason: "no html lang declared".to_owned(),
-        });
+        let paragraphs: Vec<_> = content
+            .paragraphs
+            .iter()
+            .filter(|paragraph| paragraph.text.split_whitespace().count() >= 10)
+            .collect();
+        let document_language = obs.html_lang.as_deref().map(primary_language);
+        let mixing_sample: Vec<_> = paragraphs
+            .iter()
+            .filter(|paragraph| {
+                !paragraph.has_nested_language
+                    && paragraph.language().map(primary_language) == document_language
+            })
+            .copied()
+            .collect();
+        check_mixed_paragraphs(&mixing_sample, findings, checks);
+        check_untranslated_fragments(&paragraphs, findings, checks);
+        check_duplicate_paragraphs_impl(&paragraphs, findings, checks);
     }
-
-    // Check 3: Duplicate paragraphs
-    check_duplicate_paragraphs_impl(&paragraphs, findings, checks);
-
-    // Check 4: Truncated text
-    check_truncated_text(&obs.visible_text_sample, findings, checks);
-
-    // Check 5: Empty sections
+    skip_content_check(
+        checks,
+        RULE_TRUNCATED_TEXT,
+        "visible clipping requires rendered geometry",
+    );
     check_empty_sections(obs, findings, checks);
+    check_boilerplate(obs, findings, checks);
 }
 
 fn check_mixed_paragraphs(
-    paragraphs: &[&str],
+    paragraphs: &[&super::segmentation::ParagraphObservation],
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
@@ -1209,26 +1214,16 @@ fn check_mixed_paragraphs(
         return;
     }
 
-    let langs: Vec<Option<&'static str>> = paragraphs
+    let detected: Vec<_> = paragraphs
         .iter()
-        .map(|p| detect_dominant_language(p))
+        .filter_map(|paragraph| {
+            detect_dominant_language(&paragraph.text).map(|language| (paragraph.element, language))
+        })
         .collect();
+    let unique_langs: std::collections::BTreeSet<_> =
+        detected.iter().map(|(_, language)| *language).collect();
 
-    let detected_langs: Vec<&'static str> = langs.iter().filter_map(|&l| l).collect();
-    if detected_langs.is_empty() {
-        checks.push(CheckStatus::Skipped {
-            rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-            reason: "no paragraphs with reliable language detection".to_owned(),
-        });
-        return;
-    }
-
-    let first_lang = detected_langs[0];
-    let mixed = detected_langs.iter().any(|&lang| lang != first_lang);
-
-    if mixed {
-        let unique_langs: std::collections::HashSet<_> = detected_langs.iter().collect();
+    if unique_langs.len() >= 2 {
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
@@ -1239,13 +1234,10 @@ fn check_mixed_paragraphs(
             confidence: Confidence::Medium,
             title: format!("Mixed language paragraphs detected ({} languages)", unique_langs.len()),
             summary: format!(
-                "Page content contains paragraphs in multiple languages: {}. First detected: {first_lang}.",
-                unique_langs.iter().map(|&&l| l).collect::<Vec<_>>().join(", ")
+                "Page content contains paragraphs in multiple languages: {}.",
+                unique_langs.iter().copied().collect::<Vec<_>>().join(", ")
             ),
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::HttpBody,
-                format!("languages={}", unique_langs.len()),
-            )],
+            evidence_refs: detected.iter().map(|(element, language)| EvidenceRef::new(EvidenceSource::HttpBody, format!("body-element={};detected={language}", element.0))).collect(),
             remediation: Some(
                 "Ensure consistent language per page or use lang attributes on mixed-language sections.".to_owned(),
             ),
@@ -1254,6 +1246,12 @@ fn check_mixed_paragraphs(
             rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
             evidence_level: EvidenceLevel::Source,
         });
+    } else if detected.len() < paragraphs.len() {
+        skip_content_check(
+            checks,
+            RULE_MIXED_PARAGRAPHS,
+            "reliable language detection is incomplete",
+        );
     } else {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_MIXED_PARAGRAPHS.to_owned()),
@@ -1262,47 +1260,58 @@ fn check_mixed_paragraphs(
     }
 }
 
-fn check_untranslated_fragments(
-    declared_lang: &str,
-    paragraphs: &[&str],
-    findings: &mut Vec<Finding>,
-    checks: &mut Vec<CheckStatus>,
-) {
-    let declared = declared_lang
+fn primary_language(language: &str) -> String {
+    language
         .split(['-', '_'])
         .next()
         .unwrap_or("")
-        .to_ascii_lowercase();
+        .trim()
+        .to_ascii_lowercase()
+}
 
-    if paragraphs.is_empty() {
-        checks.push(CheckStatus::Skipped {
-            rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-            reason: "no substantial paragraphs".to_owned(),
-        });
-        return;
-    }
-
-    let mismatches: Vec<&str> = paragraphs
+fn check_untranslated_fragments(
+    paragraphs: &[&super::segmentation::ParagraphObservation],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let comparisons: Vec<_> = paragraphs
         .iter()
-        .filter_map(|&p| {
-            detect_dominant_language(p).and_then(|detected| {
-                if detected != declared {
-                    Some(detected)
-                } else {
-                    None
-                }
-            })
+        .filter_map(|paragraph| {
+            if paragraph.has_nested_language {
+                return None;
+            }
+            let declared = primary_language(paragraph.language()?);
+            let detected = detect_dominant_language(&paragraph.text)?;
+            (!declared.is_empty()).then_some((paragraph.element, declared, detected))
         })
         .collect();
+    if comparisons.is_empty() {
+        skip_content_check(
+            checks,
+            RULE_UNTRANSLATED_FRAGMENT,
+            "no paragraphs with a declaration and reliable language detection",
+        );
+        return;
+    }
+    let mismatches: Vec<_> = comparisons
+        .iter()
+        .filter(|(_, declared, detected)| declared != detected)
+        .collect();
 
-    if mismatches.is_empty() {
+    if mismatches.is_empty() && comparisons.len() < paragraphs.len() {
+        skip_content_check(
+            checks,
+            RULE_UNTRANSLATED_FRAGMENT,
+            "reliable language comparison is incomplete",
+        );
+    } else if mismatches.is_empty() {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
             evidence_level: EvidenceLevel::Source,
         });
     } else {
-        let unique: std::collections::HashSet<_> = mismatches.iter().collect();
+        let unique: std::collections::BTreeSet<_> =
+            mismatches.iter().map(|(_, _, detected)| detected).collect();
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_UNTRANSLATED_FRAGMENT.to_owned()),
@@ -1313,14 +1322,11 @@ fn check_untranslated_fragments(
             confidence: Confidence::Medium,
             title: format!("Untranslated fragments detected ({} mismatches)", mismatches.len()),
             summary: format!(
-                "Page declares lang=\"{declared}\" but {} paragraph(s) detected in {}.",
+                "Detected language differs from the effective declaration in {} paragraph(s). Detected codes: {}.",
                 mismatches.len(),
                 unique.iter().map(|&&l| l).collect::<Vec<_>>().join(", ")
             ),
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::HttpBody,
-                format!("declared={declared};mismatches={}", mismatches.len()),
-            )],
+            evidence_refs: mismatches.iter().map(|(element, _, detected)| EvidenceRef::new(EvidenceSource::HttpBody, format!("body-element={};detected={detected}", element.0))).collect(),
             remediation: Some(
                 "Translate untranslated fragments or wrap them with appropriate lang attributes.".to_owned(),
             ),
@@ -1333,7 +1339,7 @@ fn check_untranslated_fragments(
 }
 
 fn check_duplicate_paragraphs_impl(
-    paragraphs: &[&str],
+    paragraphs: &[&super::segmentation::ParagraphObservation],
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
@@ -1346,13 +1352,17 @@ fn check_duplicate_paragraphs_impl(
         return;
     }
 
-    let mut seen = std::collections::HashMap::new();
+    let mut seen = std::collections::BTreeMap::<_, Vec<_>>::new();
     for &p in paragraphs {
-        let normalized = p.to_ascii_lowercase();
-        *seen.entry(normalized).or_insert(0) += 1;
+        seen.entry(p.text.to_lowercase())
+            .or_default()
+            .push(p.element);
     }
 
-    let duplicates: Vec<_> = seen.iter().filter(|(_, count)| **count >= 2).collect();
+    let duplicates: Vec<_> = seen
+        .values()
+        .filter(|elements| elements.len() >= 2)
+        .collect();
 
     if duplicates.is_empty() {
         checks.push(CheckStatus::Passed {
@@ -1360,7 +1370,7 @@ fn check_duplicate_paragraphs_impl(
             evidence_level: EvidenceLevel::Source,
         });
     } else {
-        let total_dupes: usize = duplicates.iter().map(|(_, count)| **count).sum();
+        let total_dupes: usize = duplicates.iter().map(|elements| elements.len()).sum();
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_DUPLICATE_PARAGRAPHS.to_owned()),
@@ -1369,17 +1379,27 @@ fn check_duplicate_paragraphs_impl(
             kind: FindingKind::Deterministic,
             severity: Severity::Low,
             confidence: Confidence::High,
-            title: format!("Duplicate paragraphs detected ({} unique)", duplicates.len()),
+            title: format!(
+                "Duplicate paragraphs detected ({} unique)",
+                duplicates.len()
+            ),
             summary: format!(
                 "{} paragraph(s) appear multiple times. Total duplicates: {total_dupes}.",
                 duplicates.len()
             ),
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::HttpBody,
-                format!("duplicate_groups={};total={total_dupes}", duplicates.len()),
-            )],
+            evidence_refs: duplicates
+                .iter()
+                .flat_map(|elements| elements.iter())
+                .map(|element| {
+                    EvidenceRef::new(
+                        EvidenceSource::HttpBody,
+                        format!("body-element={}", element.0),
+                    )
+                })
+                .collect(),
             remediation: Some(
-                "Review and consolidate duplicate content or use component-based architecture.".to_owned(),
+                "Review and consolidate duplicate content or use component-based architecture."
+                    .to_owned(),
             ),
         });
         checks.push(CheckStatus::Failed {
@@ -1389,58 +1409,12 @@ fn check_duplicate_paragraphs_impl(
     }
 }
 
-fn check_truncated_text(
-    text: &str,
-    findings: &mut Vec<Finding>,
-    checks: &mut Vec<CheckStatus>,
-) {
-    if text.len() < 100 {
-        checks.push(CheckStatus::Skipped {
-            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-            reason: "insufficient text sample".to_owned(),
-        });
-        return;
-    }
-
-    // ponytail: simple truncation detection - only flag explicit ellipsis
-    // visible_text_sample is intentionally truncated, so don't flag ending position
-    let has_ellipsis = text.contains("...") || text.contains('…');
-    let suspicious = has_ellipsis;
-
-    if suspicious {
-        findings.push(Finding {
-            fingerprint: FindingFingerprint::default(),
-            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
-            category: FindingCategory::Content,
-            evidence_level: EvidenceLevel::Source,
-            kind: FindingKind::Heuristic,
-            severity: Severity::Low,
-            confidence: Confidence::Low,
-            title: "Potential truncated text detected".to_owned(),
-            summary: if has_ellipsis {
-                "Text contains ellipsis indicating potential truncation.".to_owned()
-            } else {
-                "Text ends mid-sentence without proper punctuation.".to_owned()
-            },
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::HttpBody,
-                "ellipsis=true".to_owned(),
-            )],
-            remediation: Some(
-                "Review text for unintended truncation or missing content.".to_owned(),
-            ),
-        });
-        checks.push(CheckStatus::Failed {
-            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-        });
-    } else {
-        checks.push(CheckStatus::Passed {
-            rule_id: RuleId(RULE_TRUNCATED_TEXT.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-        });
-    }
+fn skip_content_check(checks: &mut Vec<CheckStatus>, rule: &str, reason: &str) {
+    checks.push(CheckStatus::Skipped {
+        rule_id: RuleId(rule.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+        reason: reason.to_owned(),
+    });
 }
 
 fn check_empty_sections(
@@ -1448,62 +1422,76 @@ fn check_empty_sections(
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    // ponytail: use landmark counts as proxy for sections
-    let total_landmarks = obs.landmarks.nav_count
-        + obs.landmarks.main_count
-        + obs.landmarks.header_count
-        + obs.landmarks.footer_count;
-
-    if total_landmarks == 0 {
-        checks.push(CheckStatus::Skipped {
-            rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-            reason: "no landmark sections detected".to_owned(),
-        });
+    if obs.content.regions_observed == 0 {
+        skip_content_check(checks, RULE_EMPTY_SECTIONS, "no eligible source regions");
         return;
     }
-
-    // ponytail: basic heuristic - if word count very low but landmarks exist, likely empty
-    let words_per_landmark = obs.visible_word_count / total_landmarks.max(1);
-
-    if obs.visible_word_count < 50 && total_landmarks > 1 {
-        findings.push(Finding {
-            fingerprint: FindingFingerprint::default(),
-            rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
-            category: FindingCategory::Content,
-            evidence_level: EvidenceLevel::Source,
-            kind: FindingKind::Heuristic,
-            severity: Severity::Low,
-            confidence: Confidence::Low,
-            title: "Potential empty sections detected".to_owned(),
-            summary: format!(
-                "{total_landmarks} landmark(s) but only {} visible words ({words_per_landmark} words/landmark).",
-                obs.visible_word_count
-            ),
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::HttpBody,
-                format!("landmarks={total_landmarks};words={}", obs.visible_word_count),
-            )],
-            remediation: Some(
-                "Ensure all semantic sections contain meaningful content.".to_owned(),
-            ),
-        });
-        checks.push(CheckStatus::Failed {
-            rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-        });
-    } else {
+    if obs.content.empty_regions.is_empty() {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
             evidence_level: EvidenceLevel::Source,
         });
+        return;
     }
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
+        category: FindingCategory::Content,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Heuristic,
+        severity: Severity::Low,
+        confidence: Confidence::Low,
+        title: "Empty regions in source HTML".to_owned(),
+        summary: "The referenced regions contain neither child elements nor substantive source text. Check whether the application populates them at runtime.".to_owned(),
+        evidence_refs: obs.content.empty_regions.iter().map(|element| EvidenceRef::new(
+            EvidenceSource::HttpBody, format!("body-element={}", element.0),
+        )).collect(),
+        remediation: Some("Inspect the rendered regions and remove unused landmarks.".to_owned()),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_EMPTY_SECTIONS.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
 
-    // Skipped boilerplate ratio for now - needs main content extraction
-    checks.push(CheckStatus::Skipped {
+fn check_boilerplate(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(words) = obs.content.main_words else {
+        skip_content_check(
+            checks,
+            RULE_BOILERPLATE_RATIO,
+            "requires a unique main landmark and eligible source text",
+        );
+        return;
+    };
+    if words.outside_main <= words.total / 2 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_BOILERPLATE_RATIO.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_BOILERPLATE_RATIO.to_owned()),
+        category: FindingCategory::Content,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Heuristic,
+        severity: Severity::Low,
+        confidence: Confidence::Low,
+        title: "Most eligible source words are outside the main landmark".to_owned(),
+        summary: format!("{} of {} words are outside the unique main landmark. Review the placement of substantive content.", words.outside_main, words.total),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpBody, format!("outside_main_words={};total_words={}", words.outside_main, words.total),
+        )],
+        remediation: Some("Check whether the main landmark encloses the primary content.".to_owned()),
+    });
+    checks.push(CheckStatus::Failed {
         rule_id: RuleId(RULE_BOILERPLATE_RATIO.to_owned()),
         evidence_level: EvidenceLevel::Source,
-        reason: "main content extraction not yet implemented".to_owned(),
     });
 }
 
@@ -1559,6 +1547,20 @@ mod tests {
     }
 
     #[test]
+    fn detects_duplicate_paragraphs_without_source_newlines() {
+        let paragraph =
+            "This paragraph contains enough words to be considered substantial during the audit.";
+        let html = format!("<main><p>{paragraph}</p><p>{paragraph}</p></main>");
+        let (http, obs) = http_with_body(&html, vec![]);
+        assert!(
+            analyse(&http, &obs)
+                .findings
+                .iter()
+                .any(|finding| finding.rule_id.0 == RULE_DUPLICATE_PARAGRAPHS)
+        );
+    }
+
+    #[test]
     fn passes_for_substantive_content_with_last_modified() {
         let html = r#"<html lang="en"><body><main>
             <h1>Comprehensive Web Quality Audit Guide</h1>
@@ -1574,7 +1576,7 @@ mod tests {
             Automated testing combined with manual review creates a comprehensive quality assurance strategy.</p>
         </main><footer><a href="/privacy">Privacy</a> | <a href="/terms">Terms</a></footer></body></html>"#;
         let (http, obs) = http_with_body(
-            &html,
+            html,
             vec![("last-modified", "Tue, 24 Nov 2026 12:00:00 GMT")],
         );
         let res = analyse(&http, &obs);

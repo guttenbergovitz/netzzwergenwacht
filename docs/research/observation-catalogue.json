@@ -20,6 +20,12 @@
       "evidence_level": "Source"
     },
     {
+      "family": "ContentSegmentation",
+      "source": "src/analysis/segmentation.rs",
+      "collector": "analysis::document (shared HTML5 source parse)",
+      "evidence_level": "Source"
+    },
+    {
       "family": "BrowserEvidence",
       "source": "src/domain.rs",
       "collector": "adapters::browser (Chromium CDP)",

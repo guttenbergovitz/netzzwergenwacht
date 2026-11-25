@@ -40,6 +40,10 @@ fn fixture_body(path: &str) -> (&'static str, &'static str) {
             "200 OK",
             include_str!("../fixtures/zwergenpruefstand/fixed/a11y.html"),
         ),
+        "/segmentation.html" => (
+            "200 OK",
+            "<html lang=en><body><nav>Home Offers About Contact</nav><main><p>Product information</p><p lang=de>Lieferbar</p><p hidden>Hidden words</p></main><section></section></body></html>",
+        ),
         _ => ("404 Not Found", "<html><body>Not found</body></html>"),
     }
 }
@@ -368,4 +372,57 @@ fn verifies_aufrustung3_rules_with_clean_control_and_defect_fixture() {
     assert!(!clean_ids.contains(&"str.headings.empty_heading"));
     assert!(!clean_ids.contains(&"inh.integrity.unresolved_translation_key"));
     assert!(!clean_ids.contains(&"inh.integrity.placeholder_contact"));
+}
+
+#[tokio::test]
+async fn measures_source_segmentation_and_rejects_truncated_http() {
+    use netzzwergenwacht::analysis::segmentation::query_content_evidence;
+    use netzzwergenwacht::domain::CheckStatus;
+
+    let (base_url, server) = spawn_fixture_server().await;
+    let target = AuditTarget::parse(
+        &format!("{base_url}/segmentation.html"),
+        TargetPolicy::AllowPrivate,
+    )
+    .unwrap();
+    let complete = collection::collect_http(
+        &target,
+        &ExecutionBudget::default(),
+        TargetPolicy::AllowPrivate,
+    )
+    .await;
+    let budget = ExecutionBudget {
+        max_response_bytes: 64,
+        ..ExecutionBudget::default()
+    };
+    let partial = collection::collect_http(&target, &budget, TargetPolicy::AllowPrivate).await;
+    server.abort();
+
+    let page = query_content_evidence(&complete, 0).unwrap();
+    assert_eq!(page.paragraphs.len(), 2);
+    assert_eq!(page.main_words.unwrap().outside_main, 4);
+    assert_eq!(page.main_words.unwrap().total, 7);
+    let report = analysis::run_all(&complete);
+    for id in [
+        "inh.content.boilerplate_ratio",
+        "inh.content.empty_sections",
+    ] {
+        assert!(
+            report
+                .analysers
+                .iter()
+                .flat_map(|a| &a.findings)
+                .any(|f| f.rule_id.0 == id)
+        );
+    }
+
+    assert!(
+        query_content_evidence(&partial, 0)
+            .unwrap_err()
+            .contains("truncated")
+    );
+    let report = analysis::run_all(&partial);
+    assert!(report.analysers.iter().flat_map(|a| &a.checks).any(|check| {
+        matches!(check, CheckStatus::Skipped { rule_id, .. } if rule_id.0 == "inh.content.boilerplate_ratio")
+    }));
 }

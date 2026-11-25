@@ -623,12 +623,15 @@ pub async fn run_patrol_with_router(
                     .unwrap_or_default();
                 let contract = prompts::specialist_prompt(a.suggested_competency, &a.summary);
                 let user_msg = format!(
-                    "Anomaly `{}` on `{}` ({:?}): {}\nObserved deterministic findings on page: {}",
+                    "Anomaly `{}` on `{}` ({:?}): {}\nObserved deterministic findings on page: {}\nSource content evidence: {}",
                     a.id,
                     a.affected_url,
                     a.severity,
                     a.summary,
-                    page_findings.join(" | ")
+                    page_findings.join(" | "),
+                    analysis::segmentation::content_evidence_context(
+                        page_snapshots.get(&a.affected_url)
+                    )
                 );
                 let llm_budget = LlmBudget {
                     max_tokens: 512,

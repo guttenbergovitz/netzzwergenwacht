@@ -13,6 +13,7 @@ pub mod network;
 pub mod performance;
 pub mod schema;
 pub mod security;
+pub mod segmentation;
 pub mod semantics;
 pub mod seo;
 pub mod stats;
@@ -207,6 +208,11 @@ fn summarise(analysers: &[AnalyserResult]) -> AuditSummary {
 fn extract_complete_html(
     snapshot: &EvidenceSnapshot,
 ) -> Result<(&HttpEvidence, DocumentObservations), String> {
+    let http = require_complete_html(snapshot)?;
+    Ok((http, DocumentObservations::from_html(&http.body_text)))
+}
+
+pub(crate) fn require_complete_html(snapshot: &EvidenceSnapshot) -> Result<&HttpEvidence, String> {
     let http = require_http(snapshot)?;
     if http.body_truncated {
         return Err(
@@ -219,7 +225,7 @@ fn extract_complete_html(
     if !is_html {
         return Err("response is not HTML; skipping HTML document checks".to_owned());
     }
-    Ok((http, DocumentObservations::from_html(&http.body_text)))
+    Ok(http)
 }
 
 /// Extracts [`HttpEvidence`] if available, or returns a human-readable skip reason.

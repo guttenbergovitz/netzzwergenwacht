@@ -5,7 +5,7 @@
     {
       "tier": "unit_tested",
       "description": "Positive, negative, and edge-case assertions inside module #[cfg(test)] suites",
-      "scope": "All 170 implemented rules"
+      "scope": "Rules with module-level unit coverage"
     },
     {
       "tier": "fixture_verified",

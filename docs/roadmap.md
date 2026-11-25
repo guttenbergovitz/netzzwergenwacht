@@ -1,6 +1,6 @@
 # NetzZwergenWacht Roadmap
 
-Current state on `develop`: **235 implemented diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **161+ passing tests**.
+Current state on `develop`: **235 registered diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **161+ passing tests**.
 
 ## Completed under Operation Aufrüstung I–III
 
@@ -16,3 +16,16 @@ Current state on `develop`: **235 implemented diagnostic rules** across **Die Zw
 2. **Multi-State Consent & Interaction Matrix**: Automated 3-state browser sessions (fresh, explicit reject, explicit accept) and safe widget keyboard-navigation probes.
 3. **Visual Regression & Differential Benchmarks**: Screenshot perceptual-hashing baselines and automated differential comparison runs against SquirrelScan, Lighthouse, and axe-core.
 4. **Language-Aware Linguistic & Similarity Layer**: Locale-specific readability models and SimHash/MinHash near-duplicate content clustering.
+
+## Operation Aufrüstung IV
+
+Wave IV-A now includes source paragraph and region observations, language inheritance
+and a fixture-verified text distribution for documents with one main landmark.
+The registry distinguishes rendered clipping, which still requires geometry evidence,
+from implemented source checks.
+
+Continue IV-A with a time-ordered browser resource and runtime record, request and
+navigation identities, explicit field availability and live Chromium fixtures.
+Use that record for bounded journey and consent scenarios. Extend the existing
+application graph and patrol history with comparable observation coverage before
+adding application-wide conclusions.

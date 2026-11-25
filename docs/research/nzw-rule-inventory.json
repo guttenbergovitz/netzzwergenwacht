@@ -1974,7 +1974,7 @@
       "dwarf": "InhaltsZwerg",
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
+      "status": "planned"
     },
     {
       "rule_id": "inh.content.boilerplate_ratio",
@@ -1982,7 +1982,7 @@
       "dwarf": "InhaltsZwerg",
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
-      "status": "planned"
+      "status": "native_rust"
     }
   ]
 }

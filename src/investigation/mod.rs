@@ -794,12 +794,14 @@ async fn propose_hypothesis(
         .collect();
 
     let user = format!(
-        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nspecialist_contributions: {}\nfindings: {}\n{CLOSE_TAG}",
+        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nspecialist_contributions: {}\nfindings: {}\nsource_content_evidence: {}\n{CLOSE_TAG}",
         ctx.objective.replace(CLOSE_TAG, ""),
         ctx.target.as_str(),
         prior_hyps.join(", "),
         specialist_notes.join(" | ").replace(CLOSE_TAG, ""),
-        summary.join(" | ").replace(CLOSE_TAG, "")
+        summary.join(" | ").replace(CLOSE_TAG, ""),
+        crate::analysis::segmentation::content_evidence_context(ctx.snapshot.as_ref())
+            .replace(CLOSE_TAG, "")
     );
 
     let raw = llm
@@ -994,6 +996,7 @@ async fn consult_specialist_during_investigation(
          Follow-up findings: {}\n\
          Prior hypotheses: {}\n\
          Prior specialist contributions: {}\n\
+         Source content evidence: {}\n\
          Question: {}",
         ctx.objective,
         ctx.target.as_str(),
@@ -1001,6 +1004,7 @@ async fn consult_specialist_during_investigation(
         follow_up_summary.join(" | "),
         prior_hyp_summary.join(" | "),
         prior_specialist_summary.join(" | "),
+        crate::analysis::segmentation::content_evidence_context(ctx.snapshot.as_ref()),
         question
     );
 

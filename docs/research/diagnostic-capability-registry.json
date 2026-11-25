@@ -2110,7 +2110,7 @@
       "source_path": "src/analysis/content.rs",
       "evidence_level": "Source",
       "implementation_status": "implemented",
-      "validation_status": "unit_tested"
+      "validation_status": "fixture_verified"
     },
     {
       "id": "inh.content.truncated_text",
@@ -2118,8 +2118,8 @@
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
       "evidence_level": "Source",
-      "implementation_status": "implemented",
-      "validation_status": "unit_tested"
+      "implementation_status": "planned",
+      "validation_status": "pending"
     },
     {
       "id": "inh.content.boilerplate_ratio",
@@ -2127,8 +2127,8 @@
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
       "evidence_level": "Source",
-      "implementation_status": "planned",
-      "validation_status": "pending"
+      "implementation_status": "implemented",
+      "validation_status": "fixture_verified"
     }
   ]
 }

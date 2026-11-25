@@ -1757,19 +1757,14 @@ fn check_cookie_attributes(
             prefix_violations.push(cookie_name.to_owned());
         }
 
-        if let Some(secs) = max_age {
-            if secs > MAX_COOKIE_AGE_SECS {
-                excessive_lifetimes.push(format!("{cookie_name} ({secs}s)"));
-            }
+        if let Some(secs) = max_age.filter(|&secs| secs > MAX_COOKIE_AGE_SECS) {
+            excessive_lifetimes.push(format!("{cookie_name} ({secs}s)"));
         }
 
-        // New: invalid domain scope
-        if let Some(domain) = domain_val {
+        if let (Some(domain), Some(host)) = (domain_val, &page_host) {
             let domain = domain.trim_start_matches('.');
-            if let Some(ref host) = page_host {
-                if !host.ends_with(domain) && domain != host {
-                    invalid_domains.push(format!("{cookie_name} (domain={domain})"));
-                }
+            if !host.ends_with(domain) && domain != host {
+                invalid_domains.push(format!("{cookie_name} (domain={domain})"));
             }
         }
 
@@ -1790,30 +1785,27 @@ fn check_cookie_attributes(
             || cookie_name.to_ascii_lowercase().starts_with("_pk")
             || cookie_name.to_ascii_lowercase().starts_with("__utm");
 
-        if is_tracking_name && max_age.unwrap_or(0) > TRACKING_LIFETIME_SECS {
-            persistent_identifiers.push(format!("{cookie_name} ({:.0}d)", max_age.unwrap() as f64 / 86400.0));
+        if let Some(secs) =
+            max_age.filter(|&secs| is_tracking_name && secs > TRACKING_LIFETIME_SECS)
+        {
+            let rounded_days = secs / 86_400
+                + u64::from(
+                    secs % 86_400 > 43_200 || (secs % 86_400 == 43_200 && (secs / 86_400) % 2 == 1),
+                );
+            persistent_identifiers.push(format!("{cookie_name} ({rounded_days}d)"));
         }
     }
 
-    emit_cookie_attribute_results(
-        &prefix_violations,
-        &excessive_lifetimes,
-        &invalid_domains,
-        &insecure_samesite_none,
-        &inconsistent_attrs,
-        &persistent_identifiers,
-        findings,
-        checks,
-    );
+    emit_prefix_violations(&prefix_violations, findings, checks);
+    emit_excessive_lifetimes(&excessive_lifetimes, findings, checks);
+    emit_invalid_domains(&invalid_domains, findings, checks);
+    emit_insecure_samesite_none(&insecure_samesite_none, findings, checks);
+    emit_inconsistent_attrs(&inconsistent_attrs, findings, checks);
+    emit_persistent_identifiers(&persistent_identifiers, findings, checks);
 }
 
-fn emit_cookie_attribute_results(
+fn emit_prefix_violations(
     prefix_violations: &[String],
-    excessive_lifetimes: &[String],
-    invalid_domains: &[String],
-    insecure_samesite_none: &[String],
-    inconsistent_attrs: &[String],
-    persistent_identifiers: &[String],
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
@@ -1850,7 +1842,13 @@ fn emit_cookie_attribute_results(
             evidence_level: EvidenceLevel::Source,
         });
     }
+}
 
+fn emit_excessive_lifetimes(
+    excessive_lifetimes: &[String],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
     if excessive_lifetimes.is_empty() {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_COOKIE_LIFETIME.to_owned()),
@@ -1884,7 +1882,13 @@ fn emit_cookie_attribute_results(
             evidence_level: EvidenceLevel::Source,
         });
     }
+}
 
+fn emit_invalid_domains(
+    invalid_domains: &[String],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
     if invalid_domains.is_empty() {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_COOKIE_INVALID_DOMAIN.to_owned()),
@@ -1899,7 +1903,10 @@ fn emit_cookie_attribute_results(
             kind: FindingKind::Deterministic,
             severity: Severity::Medium,
             confidence: Confidence::High,
-            title: format!("Cookies with invalid domain scope ({})", invalid_domains.len()),
+            title: format!(
+                "Cookies with invalid domain scope ({})",
+                invalid_domains.len()
+            ),
             summary: format!(
                 "Set-Cookie declares Domain attribute not matching page host: {}.",
                 invalid_domains.join(", ")
@@ -1908,14 +1915,22 @@ fn emit_cookie_attribute_results(
                 EvidenceSource::HttpHeaders,
                 format!("invalid_domain_scopes={}", invalid_domains.len()),
             )],
-            remediation: Some("Ensure cookie Domain attribute matches or is a parent of page host.".to_owned()),
+            remediation: Some(
+                "Ensure cookie Domain attribute matches or is a parent of page host.".to_owned(),
+            ),
         });
         checks.push(CheckStatus::Failed {
             rule_id: RuleId(RULE_COOKIE_INVALID_DOMAIN.to_owned()),
             evidence_level: EvidenceLevel::Source,
         });
     }
+}
 
+fn emit_insecure_samesite_none(
+    insecure_samesite_none: &[String],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
     if insecure_samesite_none.is_empty() {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_COOKIE_INSECURE_SAMESITE.to_owned()),
@@ -1930,14 +1945,20 @@ fn emit_cookie_attribute_results(
             kind: FindingKind::Deterministic,
             severity: Severity::Medium,
             confidence: Confidence::High,
-            title: format!("SameSite=None cookies without Secure ({})", insecure_samesite_none.len()),
+            title: format!(
+                "SameSite=None cookies without Secure ({})",
+                insecure_samesite_none.len()
+            ),
             summary: format!(
                 "Cookies with SameSite=None must set Secure attribute: {}.",
                 insecure_samesite_none.join(", ")
             ),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpHeaders,
-                format!("insecure_samesite_none={}", insecure_samesite_none.join(",")),
+                format!(
+                    "insecure_samesite_none={}",
+                    insecure_samesite_none.join(",")
+                ),
             )],
             remediation: Some("Add Secure attribute to all SameSite=None cookies.".to_owned()),
         });
@@ -1946,7 +1967,13 @@ fn emit_cookie_attribute_results(
             evidence_level: EvidenceLevel::Source,
         });
     }
+}
 
+fn emit_inconsistent_attrs(
+    inconsistent_attrs: &[String],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
     if inconsistent_attrs.is_empty() {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_COOKIE_INCONSISTENT_ATTRS.to_owned()),
@@ -1961,7 +1988,10 @@ fn emit_cookie_attribute_results(
             kind: FindingKind::Heuristic,
             severity: Severity::Low,
             confidence: Confidence::High,
-            title: format!("Cookies with inconsistent attributes ({})", inconsistent_attrs.len()),
+            title: format!(
+                "Cookies with inconsistent attributes ({})",
+                inconsistent_attrs.len()
+            ),
             summary: format!(
                 "Cookies declare contradictory attributes: {}.",
                 inconsistent_attrs.join(", ")
@@ -1970,14 +2000,22 @@ fn emit_cookie_attribute_results(
                 EvidenceSource::HttpHeaders,
                 format!("inconsistent_attrs={}", inconsistent_attrs.len()),
             )],
-            remediation: Some("Add Secure to SameSite=Strict cookies for consistent security.".to_owned()),
+            remediation: Some(
+                "Add Secure to SameSite=Strict cookies for consistent security.".to_owned(),
+            ),
         });
         checks.push(CheckStatus::Failed {
             rule_id: RuleId(RULE_COOKIE_INCONSISTENT_ATTRS.to_owned()),
             evidence_level: EvidenceLevel::Source,
         });
     }
+}
 
+fn emit_persistent_identifiers(
+    persistent_identifiers: &[String],
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
     if persistent_identifiers.is_empty() {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_PERSISTENT_IDENTIFIERS.to_owned()),
@@ -1992,7 +2030,10 @@ fn emit_cookie_attribute_results(
             kind: FindingKind::Heuristic,
             severity: Severity::Low,
             confidence: Confidence::High,
-            title: format!("Persistent tracking identifiers detected ({})", persistent_identifiers.len()),
+            title: format!(
+                "Persistent tracking identifiers detected ({})",
+                persistent_identifiers.len()
+            ),
             summary: format!(
                 "Cookies with tracking name patterns and long lifetimes (>30d): {}.",
                 persistent_identifiers.join(", ")
@@ -2001,7 +2042,9 @@ fn emit_cookie_attribute_results(
                 EvidenceSource::HttpHeaders,
                 format!("persistent_trackers={}", persistent_identifiers.len()),
             )],
-            remediation: Some("Reduce tracking cookie lifetimes or disclose tracking practices.".to_owned()),
+            remediation: Some(
+                "Reduce tracking cookie lifetimes or disclose tracking practices.".to_owned(),
+            ),
         });
         checks.push(CheckStatus::Failed {
             rule_id: RuleId(RULE_PERSISTENT_IDENTIFIERS.to_owned()),
