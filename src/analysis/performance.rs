@@ -37,6 +37,9 @@ const RULE_LCP_SLOW_TTFB: &str = "perf.lcp.slow_ttfb";
 const RULE_JS_LONG_TASKS: &str = "perf.js.long_tasks";
 const RULE_WATERFALL_REDIRECTS: &str = "perf.waterfall.redirect_overhead";
 const RULE_CACHE_ZERO_MAX_AGE: &str = "perf.cache.zero_max_age";
+const RULE_RUNTIME_CLS: &str = "perf.cls.layout_shift_observed";
+const RULE_RUNTIME_LCP: &str = "perf.lcp.slow_element_render";
+const RULE_FONT_LEGACY_FORMAT: &str = "perf.font.legacy_format";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -146,6 +149,7 @@ fn analyse_with_thresholds_and_document(
     check_runtime_third_party(&snapshot.browser, &mut findings, &mut checks);
     check_runtime_perf_metrics(&snapshot.browser, &mut findings, &mut checks);
     check_waterfall_and_cache_semantics(&snapshot.browser, &mut findings, &mut checks);
+    check_runtime_cls_lcp_and_fonts(&snapshot.browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -1507,6 +1511,151 @@ fn check_waterfall_and_cache_semantics(
     }
 }
 
+fn check_runtime_cls_lcp_and_fonts(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) = browser
+    else {
+        return;
+    };
+
+    if let Some(perf) = &data.performance {
+        if let Some(cls_milli) = perf.cls_thousandths {
+            if cls_milli > 100 {
+                findings.push(Finding {
+                    fingerprint: FindingFingerprint::default(),
+                    rule_id: RuleId(RULE_RUNTIME_CLS.to_owned()),
+                    category: FindingCategory::Performance,
+                    evidence_level: EvidenceLevel::Rendered,
+                    kind: FindingKind::Deterministic,
+                    severity: if cls_milli > 250 {
+                        Severity::High
+                    } else {
+                        Severity::Medium
+                    },
+                    confidence: Confidence::High,
+                    title: format!("Browser CLS exceeds 0.10 ({cls_milli} thousandths)"),
+                    summary: format!(
+                        "PerformanceObserver measured CLS = 0.{cls_milli:03} across {} layout shift(s).",
+                        perf.layout_shift_count
+                    ),
+                    evidence_refs: vec![EvidenceRef::new(
+                        EvidenceSource::BrowserRuntime,
+                        format!("cls_thousandths={cls_milli};shifts={}", perf.layout_shift_count),
+                    )],
+                    remediation: Some(
+                        "Reserve explicit dimensions on images, embeds, and dynamic containers."
+                            .to_owned(),
+                    ),
+                });
+                checks.push(CheckStatus::Failed {
+                    rule_id: RuleId(RULE_RUNTIME_CLS.to_owned()),
+                    evidence_level: EvidenceLevel::Rendered,
+                });
+            } else {
+                checks.push(CheckStatus::Passed {
+                    rule_id: RuleId(RULE_RUNTIME_CLS.to_owned()),
+                    evidence_level: EvidenceLevel::Rendered,
+                });
+            }
+        }
+
+        if let Some(lcp_ms) = perf.lcp_ms {
+            if lcp_ms > 2_500 {
+                findings.push(Finding {
+                    fingerprint: FindingFingerprint::default(),
+                    rule_id: RuleId(RULE_RUNTIME_LCP.to_owned()),
+                    category: FindingCategory::Performance,
+                    evidence_level: EvidenceLevel::Rendered,
+                    kind: FindingKind::Deterministic,
+                    severity: if lcp_ms > 4_000 {
+                        Severity::High
+                    } else {
+                        Severity::Medium
+                    },
+                    confidence: Confidence::High,
+                    title: format!("Slow browser LCP ({lcp_ms} ms)"),
+                    summary: format!(
+                        "PerformanceObserver measured LCP of {lcp_ms} ms (element={}).",
+                        perf.lcp_element.as_deref().unwrap_or("unknown")
+                    ),
+                    evidence_refs: vec![EvidenceRef::new(
+                        EvidenceSource::BrowserRuntime,
+                        format!("lcp_ms={lcp_ms}"),
+                    )],
+                    remediation: Some(
+                        "Prioritise the LCP resource (`fetchpriority=\"high\"`), reduce TTFB, and remove render-blocking dependencies."
+                            .to_owned(),
+                    ),
+                });
+                checks.push(CheckStatus::Failed {
+                    rule_id: RuleId(RULE_RUNTIME_LCP.to_owned()),
+                    evidence_level: EvidenceLevel::Rendered,
+                });
+            } else {
+                checks.push(CheckStatus::Passed {
+                    rule_id: RuleId(RULE_RUNTIME_LCP.to_owned()),
+                    evidence_level: EvidenceLevel::Rendered,
+                });
+            }
+        }
+    }
+
+    check_runtime_legacy_fonts(data, findings, checks);
+}
+
+fn check_runtime_legacy_fonts(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let legacy_fonts: Vec<&str> = data
+        .resources
+        .iter()
+        .filter(|r| r.resource_type == "font")
+        .map(|r| r.url.as_str())
+        .filter(|u| {
+            let path = u.split('?').next().unwrap_or(u).to_ascii_lowercase();
+            std::path::Path::new(&path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|ext| matches!(ext, "ttf" | "otf" | "eot" | "woff"))
+        })
+        .collect();
+    if legacy_fonts.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_FONT_LEGACY_FORMAT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_FONT_LEGACY_FORMAT.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Legacy font format(s) loaded ({})", legacy_fonts.len()),
+            summary: format!(
+                "{} webfont(s) delivered in non-WOFF2 format (.ttf/.otf/.eot/.woff).",
+                legacy_fonts.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("legacy_fonts={}", legacy_fonts.len()),
+            )],
+            remediation: Some("Serve modern WOFF2 fonts with Brotli compression.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_FONT_LEGACY_FORMAT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1891,5 +2040,59 @@ mod tests {
         assert!(ids.contains(&RULE_JS_LONG_TASKS));
         assert!(ids.contains(&RULE_WATERFALL_REDIRECTS));
         assert!(ids.contains(&RULE_CACHE_ZERO_MAX_AGE));
+    }
+
+    #[test]
+    fn flags_runtime_cls_lcp_and_legacy_fonts() {
+        let snap = EvidenceSnapshot {
+            target: AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "content-encoding".to_owned(),
+                        value: "br".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 512,
+                    body_truncated: false,
+                    body_text: "<html></html>".to_owned(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    resources: vec![crate::domain::ResourceTimingObs {
+                        url: "https://example.com/fonts/body.ttf".to_owned(),
+                        resource_type: "font".to_owned(),
+                        ..crate::domain::ResourceTimingObs::default()
+                    }],
+                    performance: Some(crate::domain::PerformanceRuntimeObs {
+                        lcp_ms: Some(3_100),
+                        lcp_element: Some("img#hero".to_owned()),
+                        cls_thousandths: Some(180),
+                        layout_shift_count: 2,
+                        ..crate::domain::PerformanceRuntimeObs::default()
+                    }),
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_RUNTIME_CLS));
+        assert!(ids.contains(&RULE_RUNTIME_LCP));
+        assert!(ids.contains(&RULE_FONT_LEGACY_FORMAT));
     }
 }

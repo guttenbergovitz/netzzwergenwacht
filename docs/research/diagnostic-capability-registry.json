@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 163,
+  "total_implemented_capabilities": 170,
   "by_dwarf": {
-    "LeistungsZwerg": 24,
-    "SicherheitsZwerg": 26,
+    "LeistungsZwerg": 27,
+    "SicherheitsZwerg": 28,
     "GestaltungsZwerg": 19,
-    "SuchZwerg": 14,
+    "SuchZwerg": 16,
     "InhaltsZwerg": 14,
     "ApplicationGraph": 16,
     "ZugänglichkeitsZwerg": 16,
@@ -1479,6 +1479,69 @@
       "module": "analysis::semantics",
       "source_path": "src/analysis/semantics.rs",
       "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.headers.hsts_duration",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.forms.sensitive_get_submission",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "such.i18n.missing_self_reference",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "such.social.missing_preview_image",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.cls.layout_shift_observed",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.lcp.slow_element_render",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.font.legacy_format",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
     }

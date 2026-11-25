@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 163,
+  "total_rules": 170,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1406,6 +1406,62 @@
       "dwarf": "StrukturZwerg",
       "module": "analysis::semantics",
       "source_path": "src/analysis/semantics.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.hsts_duration",
+      "constant": "RULE_HSTS_DURATION",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.forms.sensitive_get_submission",
+      "constant": "RULE_SENSITIVE_GET_FORM",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.i18n.missing_self_reference",
+      "constant": "RULE_HREFLANG_SELF_REF",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.social.missing_preview_image",
+      "constant": "RULE_SOCIAL_IMAGE",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.cls.layout_shift_observed",
+      "constant": "RULE_RUNTIME_CLS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.lcp.slow_element_render",
+      "constant": "RULE_RUNTIME_LCP",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.font.legacy_format",
+      "constant": "RULE_FONT_LEGACY_FORMAT",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
       "status": "native_rust"
     }
   ]
