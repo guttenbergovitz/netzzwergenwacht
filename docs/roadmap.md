@@ -31,7 +31,7 @@ Rule-count expansion is frozen at **235 rules** while sensory depth, element-lev
 ### Wave IV-A2 — Complete Sensory Foundations & Evidence Query Core (P0)
 
 - **Runtime & Network Timeline Expansion**: normalised and redacted endpoint paths, request initiator and top stack frame, interaction correlation, full per-request timing phases (DNS, TCP, TLS, queueing, TTFB, download), encoded vs decoded transfer sizes, wire-level status (`304` revalidation), cache source (`memory`, `disk`, `service_worker`), priority transitions, block and CORS failure classifications, WebSocket/SSE lifecycles, frame lifecycle, and SPA route transitions.
-- **Evidence Query Engine (Timeline & Dependencies)**: typed offline operations over `EvidenceSnapshot` (`query_network_events`, `query_failed_dependencies`, `query_request_chain`, `query_content_blocks`) with filtering by event kind, resource type, failure class, and interaction, replacing fixed first-page-only reads.
+- **Evidence Query Engine (Timeline & Dependencies)**: typed offline operations over `EvidenceSnapshot` (`investigation::evidence_query`: `query_rendered_content`, `query_network_resources`, `query_runtime_errors`, `query_browser_evidence_from_snapshot`, plus upcoming `query_network_events`, `query_failed_dependencies`, `query_request_chain`) with explicit `EvidenceQueryStatus` (`Captured`, `Partial`, `Failed`, `Skipped`, `Unavailable`), bounded 16-item pagination, snapshot reuse in `query_browser_evidence`, and citation-checked `query_rendered_content` evaluation without exposing raw rendered text excerpts.
 
 ### Wave IV-B — Functional Intelligence (P0)
 

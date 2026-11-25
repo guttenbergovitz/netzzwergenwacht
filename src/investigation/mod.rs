@@ -8,6 +8,7 @@
 
 pub mod browser_timeline;
 pub mod events;
+pub mod evidence_query;
 pub mod prompts;
 pub mod reporting;
 pub mod tools;
@@ -36,6 +37,12 @@ use crate::domain::{
 use crate::intelligence::{LlmBudget, LlmProvider};
 
 pub use self::events::InvestigationEvent;
+pub use self::evidence_query::{
+    EvidenceQueryStatus, NetworkResourceFilter, NetworkResourcesQueryPage, RenderedBlockFilter,
+    RenderedBlockSummary, RenderedContentQueryPage, RuntimeErrorFilter, RuntimeErrorsQueryPage,
+    query_browser_evidence_from_snapshot, query_network_resources, query_rendered_content,
+    query_runtime_errors,
+};
 pub use self::reporting::{
     ExecutiveBrief, ReleaseReadinessAssessment, ReleaseReadinessState, RemediationTask,
     RolePerspective, render_markdown_report, render_role_perspective_markdown,
@@ -425,6 +432,8 @@ struct RawEvaluationDecision {
     status: HypothesisStatus,
     #[serde(default)]
     timeline_sequences: Vec<u32>,
+    #[serde(default)]
+    rendered_block_nodes: Vec<u32>,
     evaluation_summary: String,
     conclusion: String,
 }
@@ -752,6 +761,9 @@ async fn propose_hypothesis(
     if !used_tools.contains("query_browser_timeline") {
         available.push("query_browser_timeline".to_owned());
     }
+    if !used_tools.contains("query_rendered_content") {
+        available.push("query_rendered_content".to_owned());
+    }
 
     // Add specialist consultation tools.
     for dwarf in &[
@@ -802,7 +814,7 @@ async fn propose_hypothesis(
         .collect();
 
     let user = format!(
-        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nspecialist_contributions: {}\nfindings: {}\nsource_content_evidence: {}\nbrowser_timeline: {}\n{CLOSE_TAG}",
+        "{OPEN_TAG}\nobjective: {}\ntarget: {}\nprior_hypotheses: {}\nspecialist_contributions: {}\nfindings: {}\nsource_content_evidence: {}\nbrowser_timeline: {}\nrendered_content_evidence: {}\n{CLOSE_TAG}",
         ctx.objective.replace(CLOSE_TAG, ""),
         ctx.target.as_str(),
         prior_hyps.join(", "),
@@ -810,7 +822,8 @@ async fn propose_hypothesis(
         summary.join(" | ").replace(CLOSE_TAG, ""),
         crate::analysis::segmentation::content_evidence_context(ctx.snapshot.as_ref())
             .replace(CLOSE_TAG, ""),
-        browser_timeline::timeline_context(ctx.snapshot.as_ref())
+        browser_timeline::timeline_context(ctx.snapshot.as_ref()),
+        evidence_query::rendered_content_context(ctx.snapshot.as_ref())
     );
 
     let raw = llm
@@ -893,7 +906,7 @@ async fn execute_rig_tool(
             run_crawl_tool(target, policy, timeout, backend, args, ctx).await
         }
         "query_browser_evidence" => {
-            run_query_browser_tool(target, policy, timeout, backend, args, ctx).await
+            run_query_browser_tool(target, policy, timeout, backend, args, snapshot, ctx).await
         }
         "query_browser_timeline" => {
             let page = browser_timeline::query_browser_timeline(snapshot, 0);
@@ -914,6 +927,26 @@ async fn execute_rig_tool(
             });
             (page.is_some_and(|page| !page.events.is_empty()), Vec::new())
         }
+        "query_rendered_content" => {
+            let page = evidence_query::query_rendered_content(
+                snapshot,
+                &RenderedBlockFilter::default(),
+                0,
+            );
+            let succeeded = !page.blocks.is_empty();
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: tool_id.to_owned(),
+                dwarf_id: DwarfId::Inhalts,
+                authorised: true,
+                succeeded,
+                summary: format!(
+                    "snapshot rendered content page contains {} block(s) (total matching: {})",
+                    page.blocks.len(),
+                    page.total_matching
+                ),
+            });
+            (succeeded, Vec::new())
+        }
         _ => {
             ctx.tool_trace.push(ToolInvocationRecord {
                 tool_id: tool_id.to_owned(),
@@ -933,8 +966,26 @@ async fn run_query_browser_tool(
     timeout: Duration,
     backend: Arc<dyn DiagnosticBackend>,
     args: TargetToolArgs,
+    snapshot: &EvidenceSnapshot,
     ctx: &mut InvestigationContext,
 ) -> (bool, Vec<AnalyserResult>) {
+    if let Some(out) = evidence_query::query_browser_evidence_from_snapshot(snapshot) {
+        let succeeded = out.collection_status != "failed" && out.collection_status != "skipped";
+        ctx.tool_trace.push(ToolInvocationRecord {
+            tool_id: "query_browser_evidence".to_owned(),
+            dwarf_id: DwarfId::Browser,
+            authorised: true,
+            succeeded,
+            summary: format!(
+                "snapshot: status={}, resources={}, third_party_hosts={}, error_kinds={}",
+                out.collection_status,
+                out.resource_count,
+                out.third_party_hosts.len(),
+                out.runtime_error_counts.len()
+            ),
+        });
+        return (succeeded, Vec::new());
+    }
     let tool = QueryBrowserEvidenceTool::new(target.clone(), policy, timeout, backend);
     match tool.call(args).await {
         Ok(out) => {
@@ -1456,8 +1507,17 @@ async fn evaluate_hypothesis(
     } else {
         "not requested".to_owned()
     };
+    let rendered_content_requested = matches!(
+        hypothesis.requested_tool.as_str(),
+        "query_rendered_content" | "inspect_browser_runtime"
+    );
+    let rendered_content = if rendered_content_requested {
+        evidence_query::rendered_content_context(Some(snapshot))
+    } else {
+        "not requested".to_owned()
+    };
     let user = format!(
-        "{OPEN_TAG}\nhypothesis: {}\nfollow_up_findings: {}\nbrowser_timeline: {timeline}\n{CLOSE_TAG}",
+        "{OPEN_TAG}\nhypothesis: {}\nfollow_up_findings: {}\nbrowser_timeline: {timeline}\nrendered_content_evidence: {rendered_content}\n{CLOSE_TAG}",
         hypothesis.proposed_explanation.replace(CLOSE_TAG, ""),
         follow_up.join(" | ").replace(CLOSE_TAG, "")
     );
@@ -1487,18 +1547,18 @@ async fn evaluate_hypothesis(
             &eval.timeline_sequences,
         ));
     }
-    if hypothesis.requested_tool == "query_browser_timeline"
-        && refs.is_empty()
-        && matches!(
-            eval.status,
-            HypothesisStatus::Supported | HypothesisStatus::Rejected
-        )
+    if rendered_content_requested {
+        refs.extend(evidence_query::cited_rendered_block_refs(
+            snapshot,
+            &eval.rendered_block_nodes,
+        ));
+    }
+    if let Some(missing_citation) =
+        uncited_query_reason(&hypothesis.requested_tool, eval.status, refs.is_empty())
     {
         hypothesis.status = HypothesisStatus::Inconclusive;
-        let message =
-            "Timeline evaluation did not cite an event from the supplied page.".to_owned();
-        hypothesis.evaluation_summary = Some(message.clone());
-        return Ok(message);
+        hypothesis.evaluation_summary = Some(missing_citation.clone());
+        return Ok(missing_citation);
     }
     hypothesis.status = eval.status;
     hypothesis.evaluation_summary = Some(eval.evaluation_summary);
@@ -1514,6 +1574,31 @@ async fn evaluate_hypothesis(
         HypothesisStatus::Proposed | HypothesisStatus::Inconclusive => {}
     }
     Ok(eval.conclusion)
+}
+
+fn uncited_query_reason(
+    requested_tool: &str,
+    status: HypothesisStatus,
+    refs_empty: bool,
+) -> Option<String> {
+    if !refs_empty
+        || !matches!(
+            status,
+            HypothesisStatus::Supported | HypothesisStatus::Rejected
+        )
+    {
+        return None;
+    }
+    match requested_tool {
+        "query_browser_timeline" => {
+            Some("Timeline evaluation did not cite an event from the supplied page.".to_owned())
+        }
+        "query_rendered_content" => Some(
+            "Rendered content evaluation did not cite a block node from the supplied page."
+                .to_owned(),
+        ),
+        _ => None,
+    }
 }
 
 fn finish_budget_exhausted(mut ctx: InvestigationContext, reason: String) -> InvestigationReport {
@@ -2019,5 +2104,229 @@ mod tests {
         assert_eq!(report.state, InvestigationState::Completed);
         assert_ne!(report.hypotheses.len(), 0);
         assert_eq!(report.hypotheses[0].status, HypothesisStatus::Supported);
+    }
+
+    struct CountingBrowserBackend {
+        browser: CollectorOutcome<BrowserEvidence>,
+        browser_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl DiagnosticBackend for CountingBrowserBackend {
+        fn collect_http<'a>(
+            &'a self,
+            target: &'a AuditTarget,
+            _budget: ExecutionBudget,
+            _policy: TargetPolicy,
+        ) -> CollectFuture<'a, EvidenceSnapshot> {
+            let snap = EvidenceSnapshot {
+                target: target.clone(),
+                captured_at_unix_secs: 1_700_000_000,
+                http: CollectorOutcome::Captured {
+                    data: HttpEvidence {
+                        final_url: target.as_str().to_owned(),
+                        status_code: 200,
+                        redirect_chain: Vec::new(),
+                        headers: vec![HttpHeader {
+                            name: "content-type".to_owned(),
+                            value: "text/html".to_owned(),
+                        }],
+                        elapsed_ms: Measurement::Measured {
+                            value: 1_800,
+                            unit: MeasurementUnit::Milliseconds,
+                        },
+                        body_bytes: 120,
+                        body_truncated: false,
+                        body_text: "<html><body><main id='main'>Hello</main></body></html>"
+                            .to_owned(),
+                    },
+                },
+                tls: CollectorOutcome::default(),
+                browser: CollectorOutcome::default(),
+                lighthouse: CollectorOutcome::default(),
+                axe: CollectorOutcome::default(),
+            };
+            Box::pin(async move { snap })
+        }
+
+        fn collect_browser<'a>(
+            &'a self,
+            _target: &'a AuditTarget,
+            _timeout: Duration,
+        ) -> CollectFuture<'a, CollectorOutcome<BrowserEvidence>> {
+            self.browser_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let b = self.browser.clone();
+            Box::pin(async move { b })
+        }
+
+        fn collect_axe<'a>(
+            &'a self,
+            _target: &'a AuditTarget,
+            _timeout: Duration,
+        ) -> CollectFuture<'a, CollectorOutcome<AxeEvidence>> {
+            Box::pin(async move { CollectorOutcome::default() })
+        }
+
+        fn collect_lighthouse<'a>(
+            &'a self,
+            _target: &'a AuditTarget,
+            _timeout: Duration,
+        ) -> CollectFuture<'a, CollectorOutcome<LighthouseMetrics>> {
+            Box::pin(async move { CollectorOutcome::default() })
+        }
+
+        fn collect_crawl<'a>(
+            &'a self,
+            target: &'a AuditTarget,
+            _crawl_budget: CrawlBudget,
+            _exec_budget: ExecutionBudget,
+            _policy: TargetPolicy,
+        ) -> CollectFuture<'a, CrawlSummary> {
+            let seed = target.clone();
+            Box::pin(async move {
+                CrawlSummary {
+                    seed,
+                    pages: Vec::new(),
+                    systemic_issues: Vec::new(),
+                    budget_exhausted: false,
+                    graph_results: Vec::new(),
+                }
+            })
+        }
+    }
+
+    fn browser_with_rendered_block() -> BrowserEvidence {
+        use crate::domain::{
+            RenderedBlockId, RenderedBlockIdentity, RenderedBlockKind, RenderedContentBlock,
+            RenderedContentLimits, RenderedContentSegmentation, RenderedCssVisibility,
+            RenderedTextFingerprint,
+        };
+        BrowserEvidence {
+            final_url: "https://example.org/".to_owned(),
+            rendered_content: Some(RenderedContentSegmentation {
+                viewport_width: 1280,
+                viewport_height: 800,
+                blocks: vec![RenderedContentBlock {
+                    node: 7,
+                    kind: RenderedBlockKind::Main,
+                    visibility: RenderedCssVisibility::Visible,
+                    visible_text: "DO_NOT_LEAK sequence matching".to_owned(),
+                    text_truncated: false,
+                    identity: Some(RenderedBlockIdentity {
+                        path: Some(vec!["main".to_owned()]),
+                        id: RenderedBlockId::Unique {
+                            key: "id-digest-7".to_owned(),
+                        },
+                    }),
+                    text_fingerprint: Some(RenderedTextFingerprint {
+                        version: 1,
+                        digest: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                            .to_owned(),
+                    }),
+                }],
+                limits: RenderedContentLimits {
+                    nodes: false,
+                    depth: false,
+                    blocks: false,
+                },
+                id_census_complete: Some(true),
+                page_key: None,
+            }),
+            ..BrowserEvidence::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn query_rendered_content_and_query_browser_evidence_reuse_snapshot_without_recollection()
+    {
+        let target = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let browser_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let backend = Arc::new(CountingBrowserBackend {
+            browser: CollectorOutcome::Captured {
+                data: browser_with_rendered_block(),
+            },
+            browser_calls: Arc::clone(&browser_calls),
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Capture browser runtime","requested_tool":"inspect_browser_runtime"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Browser runtime captured","conclusion":"Captured."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Inspect rendered main block","requested_tool":"query_rendered_content"}"#.to_owned(),
+                r#"{"status":"supported","rendered_block_nodes":[7],"evaluation_summary":"Main block node 7 is visible with 14 words","conclusion":"Rendered main content verified."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Summarise browser evidence","requested_tool":"query_browser_evidence"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Browser summary queried from snapshot","conclusion":"Rendered main content and browser summary verified."}"#.to_owned(),
+                r#"{"ready_to_conclude":true,"conclusion":"Rendered main content and browser summary verified."}"#.to_owned(),
+            ])),
+        };
+
+        let budget = InvestigationBudget {
+            max_tool_calls: 5,
+            max_llm_turns: 8,
+            ..InvestigationBudget::default()
+        };
+        let report = run_investigation(
+            target,
+            "Verify rendered content and snapshot reuse".to_owned(),
+            TargetPolicy::PublicOnly,
+            budget,
+            backend,
+            &llm,
+        )
+        .await;
+
+        assert_eq!(
+            browser_calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "Browser collection must only run once during inspect_browser_runtime"
+        );
+        assert_eq!(report.hypotheses.len(), 3);
+        assert_eq!(report.hypotheses[1].status, HypothesisStatus::Supported);
+        assert!(
+            report.hypotheses[1]
+                .supporting_evidence
+                .iter()
+                .any(|r| r.detail == "rendered-block-node=7:kind=main:visibility=visible")
+        );
+        assert_eq!(report.hypotheses[2].status, HypothesisStatus::Supported);
+    }
+
+    #[tokio::test]
+    async fn query_rendered_content_without_cited_node_forces_inconclusive() {
+        let target = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let browser_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let backend = Arc::new(CountingBrowserBackend {
+            browser: CollectorOutcome::Captured {
+                data: browser_with_rendered_block(),
+            },
+            browser_calls,
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Capture browser runtime","requested_tool":"inspect_browser_runtime"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Browser runtime captured","conclusion":"Captured."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Inspect rendered main block","requested_tool":"query_rendered_content"}"#.to_owned(),
+                r#"{"status":"supported","rendered_block_nodes":[999],"evaluation_summary":"Uncited node","conclusion":"Should become inconclusive."}"#.to_owned(),
+                r#"{"ready_to_conclude":true,"conclusion":"Done."}"#.to_owned(),
+            ])),
+        };
+
+        let budget = InvestigationBudget {
+            max_tool_calls: 4,
+            max_llm_turns: 6,
+            ..InvestigationBudget::default()
+        };
+        let report = run_investigation(
+            target,
+            "Verify rendered content citation requirement".to_owned(),
+            TargetPolicy::PublicOnly,
+            budget,
+            backend,
+            &llm,
+        )
+        .await;
+
+        assert_eq!(report.hypotheses.len(), 2);
+        assert_eq!(report.hypotheses[1].status, HypothesisStatus::Inconclusive);
+        assert_eq!(report.hypotheses[1].supporting_evidence.len(), 0);
     }
 }

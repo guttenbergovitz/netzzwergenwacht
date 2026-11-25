@@ -935,62 +935,6 @@ errors, and collection completeness flags without returning unbounded raw arrays
         }
 
         let outcome = self.backend.collect_browser(&parsed, self.timeout).await;
-        let (status, detail) = outcome.status_summary();
-        let warnings = detail.into_iter().collect();
-
-        let Some(data) = (match &outcome {
-            CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
-                Some(data)
-            }
-            CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => None,
-        }) else {
-            return Ok(QueryBrowserEvidenceOutput {
-                collection_status: status.to_owned(),
-                warnings,
-                resource_count: 0,
-                resources_truncated: false,
-                total_transfer_bytes: 0,
-                third_party_hosts: Vec::new(),
-                runtime_error_counts: std::collections::BTreeMap::new(),
-                slowest_resources: Vec::new(),
-            });
-        };
-
-        let page_host = url::Url::parse(&data.final_url)
-            .ok()
-            .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
-        let mut third_party_hosts = std::collections::BTreeSet::new();
-        let mut total_transfer_bytes = 0_u64;
-        for res in &data.resources {
-            total_transfer_bytes =
-                total_transfer_bytes.saturating_add(res.transfer_size.unwrap_or(0));
-            if let Ok(u) = url::Url::parse(&res.url)
-                && let Some(h) = u.host_str().map(str::to_ascii_lowercase)
-                && page_host.as_deref() != Some(h.as_str())
-            {
-                third_party_hosts.insert(h);
-            }
-        }
-
-        let mut runtime_error_counts = std::collections::BTreeMap::new();
-        for err in &data.console_errors {
-            let kind = err.error_kind.clone().unwrap_or_else(|| err.level.clone());
-            *runtime_error_counts.entry(kind).or_insert(0) += 1;
-        }
-
-        let mut slowest = data.resources.clone();
-        slowest.sort_by_key(|a| std::cmp::Reverse(a.duration_ms.unwrap_or(0)));
-        slowest.truncate(10);
-
-        Ok(QueryBrowserEvidenceOutput {
-            collection_status: status.to_owned(),
-            warnings,
-            resource_count: data.resources.len(),
-            resources_truncated: data.resources_truncated,
-            total_transfer_bytes,
-            third_party_hosts: third_party_hosts.into_iter().collect(),
-            runtime_error_counts,
-            slowest_resources: slowest,
-        })
+        Ok(crate::investigation::evidence_query::summarise_browser_outcome(&outcome))
     }
 }

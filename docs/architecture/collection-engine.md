@@ -96,8 +96,10 @@ The traversal stops at 16,384 node visits and skips subtrees below depth 64.
 It retains 256 blocks, normalises at most 2,048 UTF-16 units per text run,
 and retains at most 512 per block. Limit flags identify partial evidence.
 A failed probe leaves segmentation unavailable. The serialised snapshot can
-contain visible page text. Current investigation prompts receive no excerpts
-from this collector.
+contain visible page text. Investigation prompts query bounded block metadata
+(capture-local node ID, kind, CSS visibility, word/character counts, structural
+identity, and SHA-256 text fingerprint) via `investigation::evidence_query`
+without exposing raw rendered text excerpts.
 
 ### Matching rendered elements between captures
 
