@@ -106,7 +106,7 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
             analysers.push(accessibility::analyse_with_axe(&obs, &snapshot.axe));
             analysers.push(seo::analyse(http, &obs));
             analysers.push(content::analyse(http, &obs));
-            analysers.push(browser::analyse(snapshot));
+            analysers.push(browser::analyse_with_document(snapshot, Some(&obs)));
             analysers.push(visual::analyse_with_document(snapshot, Some(&obs)));
         }
         Err(reason) => {

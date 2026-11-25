@@ -24,6 +24,8 @@ const RULE_INLINE_SVG_A11Y: &str = "vis.images.inline_svg_a11y";
 const RULE_OVERSIZED_IMAGES: &str = "vis.rendered.oversized_images";
 const RULE_ASPECT_DISTORTION: &str = "vis.rendered.aspect_ratio_distortion";
 const RULE_ABOVE_FOLD_LAZY: &str = "vis.rendered.above_fold_lazy_lcp";
+const RULE_MOBILE_SMALL_FONT: &str = "vis.mobile.small_font_size";
+const RULE_MOBILE_TAP_TARGETS: &str = "vis.mobile.small_tap_targets";
 
 /// All Level 2 rules owned by `GestaltungsZwerg`.
 pub const ALL_RULES: &[&str] = &[RULE_HORIZONTAL_OVERFLOW, RULE_BROKEN_IMAGES];
@@ -132,6 +134,7 @@ pub fn analyse_with_document(
     check_horizontal_overflow(browser, &mut findings, &mut checks);
     check_broken_images(browser, &mut findings, &mut checks);
     check_rendered_image_geometry(browser, &mut findings, &mut checks);
+    check_mobile_readability_and_tap_targets(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Gestaltungs,
@@ -852,6 +855,88 @@ fn check_rendered_image_distortion_and_lazy(
     }
 }
 
+fn check_mobile_readability_and_tap_targets(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(mobile) = browser
+        .viewports
+        .iter()
+        .find(|vp| vp.viewport_name == "mobile")
+    else {
+        return;
+    };
+
+    if mobile.small_text_nodes > 0 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MOBILE_SMALL_FONT.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Small mobile font sizes (<12px) ({})", mobile.small_text_nodes),
+            summary: format!(
+                "Mobile viewport measured {} visible text element(s) with computed font-size < 12px.",
+                mobile.small_text_nodes
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("mobile_small_text_nodes={}", mobile.small_text_nodes),
+            )],
+            remediation: Some(
+                "Use a legible base font size (>= 14–16px body, >= 12px captions) on mobile viewports."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MOBILE_SMALL_FONT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MOBILE_SMALL_FONT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    if mobile.small_tap_targets > 0 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MOBILE_TAP_TARGETS.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Small mobile tap targets (<44x44px) ({})", mobile.small_tap_targets),
+            summary: format!(
+                "Mobile viewport measured {} interactive element(s) smaller than 44x44 CSS px.",
+                mobile.small_tap_targets
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("mobile_small_tap_targets={}", mobile.small_tap_targets),
+            )],
+            remediation: Some(
+                "Ensure buttons, links, and form controls meet at least 44x44 CSS px touch target size."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MOBILE_TAP_TARGETS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MOBILE_TAP_TARGETS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -899,6 +984,8 @@ mod tests {
                     height: 844,
                     has_horizontal_overflow: false,
                     broken_images: Vec::new(),
+                    small_text_nodes: 0,
+                    small_tap_targets: 0,
                     screenshot_path: None,
                 }],
                 ..BrowserEvidence::default()
@@ -906,7 +993,7 @@ mod tests {
         });
         let res = analyse(&snap);
         assert_eq!(res.findings.len(), 0);
-        assert_eq!(res.checks.len(), 2);
+        assert_eq!(res.checks.len(), 4);
         assert!(
             res.checks
                 .iter()
@@ -931,6 +1018,8 @@ mod tests {
                         src: "https://example.com/hero.webp".to_owned(),
                         natural_width: 0,
                     }],
+                    small_text_nodes: 0,
+                    small_tap_targets: 0,
                     screenshot_path: None,
                 }],
                 ..BrowserEvidence::default()
@@ -993,6 +1082,8 @@ mod tests {
                     height: 720,
                     has_horizontal_overflow: false,
                     broken_images: Vec::new(),
+                    small_text_nodes: 0,
+                    small_tap_targets: 0,
                     screenshot_path: None,
                 }],
                 rendered_images: vec![crate::domain::RenderedImageObs {
@@ -1012,5 +1103,29 @@ mod tests {
         assert!(ids.contains(&RULE_OVERSIZED_IMAGES));
         assert!(ids.contains(&RULE_ASPECT_DISTORTION));
         assert!(ids.contains(&RULE_ABOVE_FOLD_LAZY));
+    }
+
+    #[test]
+    fn flags_small_mobile_font_and_tap_targets() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                viewports: vec![ViewportLayoutObs {
+                    viewport_name: "mobile".to_owned(),
+                    width: 390,
+                    height: 844,
+                    has_horizontal_overflow: false,
+                    broken_images: Vec::new(),
+                    small_text_nodes: 4,
+                    small_tap_targets: 3,
+                    screenshot_path: None,
+                }],
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_MOBILE_SMALL_FONT));
+        assert!(ids.contains(&RULE_MOBILE_TAP_TARGETS));
     }
 }
