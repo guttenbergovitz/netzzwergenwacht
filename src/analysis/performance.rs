@@ -45,6 +45,8 @@ const RULE_UNBOUNDED_IMAGE_WEIGHT: &str = "perf.images.unbounded_image_weight";
 const RULE_HASHED_ASSET_SHORT_TTL: &str = "perf.cache.hashed_asset_short_ttl";
 const RULE_JS_UNUSED_COVERAGE: &str = "perf.js.unused_code_ratio";
 const RULE_CSS_UNUSED_COVERAGE: &str = "perf.css.unused_code_ratio";
+const RULE_JS_CPU_BUDGET: &str = "perf.js.cpu_execution_budget";
+const RULE_JS_CPU_HOTSPOT: &str = "perf.js.single_script_cpu_hotspot";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -157,6 +159,7 @@ fn analyse_with_thresholds_and_document(
     check_runtime_cls_lcp_and_fonts(&snapshot.browser, &mut findings, &mut checks);
     check_runtime_asset_budgets(&snapshot.browser, &mut findings, &mut checks);
     check_runtime_code_coverage(&snapshot.browser, &mut findings, &mut checks);
+    check_runtime_cpu_profile(&snapshot.browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -2030,6 +2033,108 @@ fn evaluate_unused_coverage(
     });
 }
 
+fn check_runtime_cpu_profile(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) = browser
+    else {
+        return;
+    };
+    let Some(cpu) = data.cpu_profile.as_ref() else {
+        for rule in [RULE_JS_CPU_BUDGET, RULE_JS_CPU_HOTSPOT] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason: "CDP CPU profile telemetry unavailable".to_owned(),
+            });
+        }
+        return;
+    };
+
+    if cpu.script_eval_ms > 1_500 {
+        let top_note = cpu
+            .top_cpu_scripts
+            .first()
+            .map(|s| format!(" Top script: `{}` ({} ms).", s.url, s.self_ms))
+            .unwrap_or_default();
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_JS_CPU_BUDGET.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: format!("High JavaScript CPU execution time ({} ms)", cpu.script_eval_ms),
+            summary: format!(
+                "CDP CPU sampler attributed {} ms to script execution during initial load (> 1,500 ms budget).{top_note}",
+                cpu.script_eval_ms
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("script_eval_ms={};total_sampled_ms={}", cpu.script_eval_ms, cpu.total_sampled_ms),
+            )],
+            remediation: Some(
+                "Reduce main-thread script execution by code-splitting, deferring non-critical JS, and offloading heavy work."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_JS_CPU_BUDGET.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_JS_CPU_BUDGET.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    let hotspots: Vec<&crate::domain::CpuScriptSample> = cpu
+        .top_cpu_scripts
+        .iter()
+        .filter(|s| s.self_ms >= 500)
+        .collect();
+    if hotspots.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_JS_CPU_HOTSPOT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        let top = hotspots[0];
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_JS_CPU_HOTSPOT.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: format!("Single-script CPU hotspot `{}` ({} ms)", top.url, top.self_ms),
+            summary: format!(
+                "{} script(s) consumed >= 500 ms of self CPU time during load (worst: `{}` at {} ms).",
+                hotspots.len(),
+                top.url,
+                top.self_ms
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("hotspot_script={};self_ms={}", top.url, top.self_ms),
+            )],
+            remediation: Some(
+                "Profile and optimise hot functions or split heavy third-party/application bundles."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_JS_CPU_HOTSPOT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 fn is_versioned_static_url(url: &str) -> bool {
     let low = url.to_ascii_lowercase();
     let is_static = [".js", ".css", ".woff2"]
@@ -2628,5 +2733,55 @@ mod tests {
         // Outer [0, 1000) count=1, inner [200, 500) count=0 (hole), inner [600, 700) count=5 (no double-count)
         let used = disjoint_used_bytes(&[(0, 1000, 1), (200, 500, 0), (600, 700, 5)]);
         assert_eq!(used, 700);
+    }
+
+    #[test]
+    fn flags_js_cpu_execution_budget_and_hotspot() {
+        let snap = EvidenceSnapshot {
+            target: AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "content-encoding".to_owned(),
+                        value: "br".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 512,
+                    body_truncated: false,
+                    body_text: "<html></html>".to_owned(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    cpu_profile: Some(crate::domain::CpuProfileSummary {
+                        script_eval_ms: 1_800,
+                        total_sampled_ms: 2_100,
+                        top_cpu_scripts: vec![crate::domain::CpuScriptSample {
+                            url: "https://example.com/heavy.js".to_owned(),
+                            self_ms: 920,
+                            hit_count: 920,
+                        }],
+                    }),
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_JS_CPU_BUDGET));
+        assert!(ids.contains(&RULE_JS_CPU_HOTSPOT));
     }
 }
