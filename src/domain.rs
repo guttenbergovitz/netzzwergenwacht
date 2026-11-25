@@ -744,6 +744,12 @@ pub struct ViewportLayoutObs {
     pub has_horizontal_overflow: bool,
     /// Images that failed to decode or load in this viewport.
     pub broken_images: Vec<BrokenImageObs>,
+    /// Count of sampled visible text nodes with computed `font-size < 12px`.
+    #[serde(default)]
+    pub small_text_nodes: usize,
+    /// Count of visible interactive elements smaller than `44x44` CSS px.
+    #[serde(default)]
+    pub small_tap_targets: usize,
     /// Optional path to a captured screenshot artefact.
     pub screenshot_path: Option<String>,
 }
@@ -817,6 +823,12 @@ pub struct BrowserEvidence {
     /// Total element count in the rendered DOM (`document.querySelectorAll('*').length`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rendered_dom_elements: Option<usize>,
+    /// Hydration mismatch errors/warnings captured from the browser console.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hydration_errors: Vec<String>,
+    /// Visible word count extracted from rendered `document.body.innerText`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_word_count: Option<usize>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,

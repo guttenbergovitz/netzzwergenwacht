@@ -95,6 +95,7 @@ function findBrowser() {
     let nextId = 1;
     const pending = new Map();
     const consoleErrors = [];
+    const hydrationErrors = [];
     const failedRequests = [];
     const reqUrls = new Map();
     const resourcesByReqId = new Map();
@@ -109,11 +110,20 @@ function findBrowser() {
         else resolve(msg.result);
         return;
       }
-      if (msg.method === 'Runtime.consoleAPICalled' && msg.params?.type === 'error') {
+      if (msg.method === 'Runtime.consoleAPICalled' && (msg.params?.type === 'error' || msg.params?.type === 'warning')) {
         const text = (msg.params.args || []).map((a) => a.value ?? a.description ?? '').join(' ').trim();
-        consoleErrors.push({ level: 'error', text: text || 'console.error' });
+        const lower = text.toLowerCase();
+        if (lower.includes('hydration') || lower.includes('did not match')) {
+          hydrationErrors.push(text || 'hydration mismatch');
+        }
+        if (msg.params?.type === 'error') {
+          consoleErrors.push({ level: 'error', text: text || 'console.error' });
+        }
       } else if (msg.method === 'Runtime.exceptionThrown') {
         const text = msg.params?.exceptionDetails?.text || 'Uncaught exception';
+        if (text.toLowerCase().includes('hydration') || text.toLowerCase().includes('did not match')) {
+          hydrationErrors.push(text);
+        }
         consoleErrors.push({ level: 'exception', text });
       } else if (msg.method === 'Network.requestWillBeSent') {
         reqUrls.set(msg.params.requestId, msg.params.request?.url || '');
@@ -232,21 +242,40 @@ function findBrowser() {
         mobile: vp.name === 'mobile',
       });
       const evalRes = await call('Runtime.evaluate', {
-        expression: `(() => ({
-          has_horizontal_overflow: document.documentElement.scrollWidth > window.innerWidth,
-          broken_images: Array.from(document.images)
-            .filter((img) => img.complete && img.naturalWidth === 0)
-            .map((img) => ({ src: img.currentSrc || img.getAttribute('src') || '', natural_width: 0 })),
-        }))()`,
+        expression: `(() => {
+          let smallText = 0;
+          for (const el of Array.from(document.querySelectorAll('p, span, a, li, td, label, button')).slice(0, 250)) {
+            if (!el.textContent || !el.textContent.trim()) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            const fs = parseFloat(getComputedStyle(el).fontSize || '16');
+            if (fs > 0 && fs < 12) smallText++;
+          }
+          let smallTap = 0;
+          for (const el of Array.from(document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea')).slice(0, 200)) {
+            const r = el.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0 && (r.width < 44 || r.height < 44)) smallTap++;
+          }
+          return {
+            has_horizontal_overflow: document.documentElement.scrollWidth > window.innerWidth,
+            broken_images: Array.from(document.images)
+              .filter((img) => img.complete && img.naturalWidth === 0)
+              .map((img) => ({ src: img.currentSrc || img.getAttribute('src') || '', natural_width: 0 })),
+            small_text_nodes: smallText,
+            small_tap_targets: smallTap,
+          };
+        })()`,
         returnByValue: true,
       });
-      const val = evalRes?.result?.value || { has_horizontal_overflow: false, broken_images: [] };
+      const val = evalRes?.result?.value || { has_horizontal_overflow: false, broken_images: [], small_text_nodes: 0, small_tap_targets: 0 };
       viewports.push({
         viewport_name: vp.name,
         width: vp.width,
         height: vp.height,
         has_horizontal_overflow: Boolean(val.has_horizontal_overflow),
         broken_images: Array.isArray(val.broken_images) ? val.broken_images : [],
+        small_text_nodes: Number(val.small_text_nodes || 0),
+        small_tap_targets: Number(val.small_tap_targets || 0),
         screenshot_path: null,
       });
     }
@@ -268,9 +297,12 @@ function findBrowser() {
             loading: img.getAttribute('loading') || null,
           };
         });
+        const renderedText = (document.body?.innerText || '').trim();
+        const renderedWords = renderedText ? renderedText.split(/\s+/).length : 0;
         return {
           rendered_dom_elements: document.querySelectorAll('*').length,
           rendered_images: imgs,
+          rendered_word_count: renderedWords,
         };
       })()`,
       returnByValue: true,
@@ -283,11 +315,13 @@ function findBrowser() {
       browser_version: browserVersion,
       load_timed_out: loadTimedOut,
       console_errors: consoleErrors,
+      hydration_errors: hydrationErrors,
       failed_requests: failedRequests,
       viewports,
       resources,
       rendered_images: Array.isArray(domAndImages.rendered_images) ? domAndImages.rendered_images : [],
       rendered_dom_elements: typeof domAndImages.rendered_dom_elements === 'number' ? domAndImages.rendered_dom_elements : null,
+      rendered_word_count: typeof domAndImages.rendered_word_count === 'number' ? domAndImages.rendered_word_count : null,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',

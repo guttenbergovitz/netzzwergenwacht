@@ -108,7 +108,7 @@ pub(crate) fn build_stakeholder_outputs(
         .collect();
     all_findings.sort_by_key(|(_, f)| std::cmp::Reverse(f.severity));
     let mut seen_findings = std::collections::HashSet::new();
-    all_findings.retain(|(_, f)| seen_findings.insert((f.rule_id.0.clone(), f.title.clone())));
+    all_findings.retain(|(_, f)| seen_findings.insert((f.rule_id.0.as_str(), f.title.as_str())));
 
     let immediate_actions: Vec<String> = all_findings
         .iter()

@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 96,
+  "total_rules": 101,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -72,7 +72,7 @@
       "dwarf": "BrowserZwerg",
       "module": "analysis::browser",
       "source_path": "src/analysis/browser.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -81,7 +81,34 @@
       "dwarf": "BrowserZwerg",
       "module": "analysis::browser",
       "source_path": "src/analysis/browser.rs",
-      "module_test_count": 3,
+      "module_test_count": 4,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.runtime.api_failures",
+      "constant": "RULE_API_FAILURES",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "module_test_count": 4,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.runtime.hydration_errors",
+      "constant": "RULE_HYDRATION_ERRORS",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "module_test_count": 4,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.runtime.source_rendered_divergence",
+      "constant": "RULE_SOURCE_RENDERED_DIVERGENCE",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "module_test_count": 4,
       "status": "native_rust"
     },
     {
@@ -765,7 +792,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -774,7 +801,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -783,7 +810,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -792,7 +819,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -801,7 +828,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -810,7 +837,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -819,7 +846,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -828,7 +855,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -837,7 +864,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -846,7 +873,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -855,7 +882,7 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
       "status": "native_rust"
     },
     {
@@ -864,7 +891,25 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
-      "module_test_count": 6,
+      "module_test_count": 7,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.mobile.small_font_size",
+      "constant": "RULE_MOBILE_SMALL_FONT",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "module_test_count": 7,
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.mobile.small_tap_targets",
+      "constant": "RULE_MOBILE_TAP_TARGETS",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "module_test_count": 7,
       "status": "native_rust"
     }
   ]

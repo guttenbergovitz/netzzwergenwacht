@@ -158,7 +158,11 @@ pub fn discover_same_origin_links(
     seen.insert(base.as_str().to_owned());
 
     let mut out = Vec::new();
-    for raw_href in &obs.link_hrefs {
+    for raw_href in obs
+        .link_hrefs
+        .iter()
+        .chain(obs.hreflangs.iter().map(|h| &h.href))
+    {
         let lower = raw_href.to_ascii_lowercase();
         if lower.starts_with('#')
             || lower.starts_with("mailto:")
