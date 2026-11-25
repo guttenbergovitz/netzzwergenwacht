@@ -571,6 +571,9 @@ function findBrowser() {
       tab_budget_exhausted: false,
       modal_focus_escaped: false,
       obscured_focus_count: 0,
+      focus_lost_after_dialog_close: null,
+      skip_link_effective: null,
+      unfocusable_aria_controls_count: 0,
     };
     let hasBeh = false;
     try {
@@ -578,18 +581,29 @@ function findBrowser() {
         expression: `(() => {
           const vis = (el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
           const candidates = Array.from(document.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]')).filter((el) => el.getAttribute('tabindex') !== '-1' && vis(el)).length;
-          const dialogs = Array.from(document.querySelectorAll('dialog[open], [role=dialog], [aria-modal=true]')).filter(vis).length;
-          return { candidates, dialogs };
+          const dialogs = Array.from(document.querySelectorAll('dialog[open], [aria-modal=true]')).filter(vis).length;
+          const unfocusableAria = Array.from(document.querySelectorAll('[role=button], [role=link]')).filter((el) => {
+            if (!vis(el)) return false;
+            const tag = el.tagName.toLowerCase();
+            if (tag === 'button' || (tag === 'a' && el.hasAttribute('href')) || tag === 'input' || tag === 'summary') return false;
+            const ti = el.getAttribute('tabindex');
+            return ti === null || Number(ti) < 0;
+          }).length;
+          return { candidates, dialogs, unfocusableAria };
         })()`,
         returnByValue: true,
       });
       const preBeh = preBehRes?.result?.value || {};
       behObs.tabbable_candidates = Number(preBeh.candidates || 0);
       behObs.open_dialogs_count = Number(preBeh.dialogs || 0);
+      behObs.unfocusable_aria_controls_count = Number(preBeh.unfocusableAria || 0);
       const seenStops = new Set();
       const seq = [];
       let trappedInModalOnly = true;
+      let tabPresses = 0;
+      let brokeEarly = false;
       for (let step = 0; step < 25; step++) {
+        tabPresses++;
         await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
         await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
         const focusRes = await call('Runtime.evaluate', {
@@ -603,15 +617,25 @@ function findBrowser() {
             const focusVis = el.matches(':focus-visible');
             const noOutline = st.outlineStyle === 'none' || parseFloat(st.outlineWidth || '0') === 0;
             const noShadow = !st.boxShadow || st.boxShadow === 'none';
-            const inDialog = Boolean(el.closest('dialog[open], [role=dialog], [aria-modal=true]'));
+            const noBorder = st.borderTopStyle === 'none' || parseFloat(st.borderTopWidth || '0') === 0 || st.borderTopColor === 'rgba(0, 0, 0, 0)';
+            const inDialog = Boolean(el.closest('dialog[open], [aria-modal=true]'));
             let obscured = false;
-            if (rect.width > 0 && rect.height > 0) {
-              const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
-              const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
-              const hit = document.elementFromPoint(cx, cy);
-              if (hit && !el.contains(hit) && !hit.contains(el)) obscured = true;
+            if (rect.width > 2 && rect.height > 2) {
+              const pts = [
+                [rect.left + rect.width / 2, rect.top + rect.height / 2],
+                [rect.left + 2, rect.top + 2],
+                [rect.right - 2, rect.bottom - 2],
+              ];
+              let blocked = 0;
+              for (const [px, py] of pts) {
+                const cx = Math.min(Math.max(px, 0), window.innerWidth - 1);
+                const cy = Math.min(Math.max(py, 0), window.innerHeight - 1);
+                const hit = document.elementFromPoint(cx, cy);
+                if (hit && !el.contains(hit) && !hit.contains(el)) blocked++;
+              }
+              if (blocked >= 2) obscured = true;
             }
-            return { key, missingIndicator: Boolean(focusVis && noOutline && noShadow), inDialog, obscured };
+            return { key, missingIndicator: Boolean(focusVis && noOutline && noShadow && noBorder), inDialog, obscured };
           })()`,
           returnByValue: true,
         });
@@ -629,25 +653,54 @@ function findBrowser() {
           seq.push(info.key);
           if (seq.length >= 4 && seq.slice(-3).every((k) => k === info.key)) {
             if (!(behObs.open_dialogs_count > 0 && trappedInModalOnly)) behObs.focus_trap_detected = true;
+            brokeEarly = true;
             break;
           }
           if (seq.length >= 6 && new Set(seq.slice(-6)).size <= 2 && behObs.tabbable_candidates > 3) {
             if (!(behObs.open_dialogs_count > 0 && trappedInModalOnly)) behObs.focus_trap_detected = true;
+            brokeEarly = true;
             break;
           }
         }
       }
       behObs.focus_sequence = seq;
-      behObs.tab_budget_exhausted = seq.length === 25 && !behObs.focus_trap_detected;
+      behObs.tab_budget_exhausted = tabPresses === 25 && !brokeEarly;
       behObs.tab_stops_observed = seenStops.size;
       if (behObs.open_dialogs_count > 0) {
         await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
         await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
         const afterEsc = await call('Runtime.evaluate', {
-          expression: `Array.from(document.querySelectorAll('dialog[open], [role=dialog], [aria-modal=true]')).filter((el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; }).length`,
+          expression: `(() => {
+            const openCount = Array.from(document.querySelectorAll('dialog[open], [aria-modal=true]')).filter((el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; }).length;
+            const ae = document.activeElement;
+            const lostFocus = !ae || ae === document.body || ae === document.documentElement;
+            return { openCount, lostFocus };
+          })()`,
           returnByValue: true,
         });
-        behObs.dialog_escape_closed = Number(afterEsc?.result?.value || 0) < behObs.open_dialogs_count;
+        const escInfo = afterEsc?.result?.value || {};
+        behObs.dialog_escape_closed = Number(escInfo.openCount || 0) < behObs.open_dialogs_count;
+        if (behObs.dialog_escape_closed) {
+          behObs.focus_lost_after_dialog_close = Boolean(escInfo.lostFocus);
+        }
+      }
+      const skipRes = await call('Runtime.evaluate', {
+        expression: `(() => {
+          const links = Array.from(document.querySelectorAll('a[href]')).filter((a) => (a.getAttribute('href') || '').startsWith('#')).slice(0, 5);
+          const skip = links.find((a) => /skip|main|content|sprung|inhalt/i.test((a.textContent || '') + ' ' + (a.getAttribute('aria-label') || '')));
+          if (!skip) return null;
+          const targetId = (skip.getAttribute('href') || '').slice(1);
+          const target = targetId ? document.getElementById(targetId) : null;
+          if (!target) return false;
+          const prevY = window.scrollY;
+          skip.click();
+          const ae = document.activeElement;
+          return target === ae || target.contains(ae) || window.scrollY !== prevY;
+        })()`,
+        returnByValue: true,
+      });
+      if (typeof skipRes?.result?.value === 'boolean') {
+        behObs.skip_link_effective = skipRes.result.value;
       }
       hasBeh = true;
     } catch {}
