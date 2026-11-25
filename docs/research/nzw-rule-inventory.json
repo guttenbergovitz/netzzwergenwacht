@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 172,
+  "total_rules": 180,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1478,6 +1478,70 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.content_type_mismatch",
+      "constant": "RULE_CONTENT_TYPE_MISMATCH",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.invalid_content_length",
+      "constant": "RULE_INVALID_CONTENT_LENGTH",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.range_request_support",
+      "constant": "RULE_RANGE_REQUEST_SUPPORT",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.html.invalid_doctype",
+      "constant": "RULE_INVALID_DOCTYPE",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.forms.invalid_association",
+      "constant": "RULE_INVALID_LABEL_ASSOC",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.meta.multiple_titles",
+      "constant": "RULE_MULTIPLE_TITLES",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.canonical.multiple_declarations",
+      "constant": "RULE_MULTIPLE_CANONICALS",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.ax.rendering_dependency",
+      "constant": "RULE_AX_RENDERING_DEP",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
       "status": "native_rust"
     }
   ]
