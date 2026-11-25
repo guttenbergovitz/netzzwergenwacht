@@ -42,7 +42,7 @@ pub use self::reporting::{
 use self::tools::{
     CrawlAndClusterTool, InspectBrowserRuntimeTool, InspectDocumentStructureTool,
     InspectPagePerformanceTool, InspectRenderedAccessibilityTool, InspectSecurityPostureTool,
-    TargetToolArgs, registered_tool_definitions,
+    QueryBrowserEvidenceTool, TargetToolArgs, registered_tool_definitions,
 };
 
 const OPEN_TAG: &str = "<untrusted_audit_evidence>";
@@ -881,6 +881,9 @@ async fn execute_rig_tool(
         "crawl_and_cluster_site" => {
             run_crawl_tool(target, policy, timeout, backend, args, ctx).await
         }
+        "query_browser_evidence" => {
+            run_query_browser_tool(target, policy, timeout, backend, args, ctx).await
+        }
         _ => {
             ctx.tool_trace.push(ToolInvocationRecord {
                 tool_id: tool_id.to_owned(),
@@ -888,6 +891,46 @@ async fn execute_rig_tool(
                 authorised: false,
                 succeeded: false,
                 summary: "rejected unrecognised or unauthorised tool request".to_owned(),
+            });
+            (false, Vec::new())
+        }
+    }
+}
+
+async fn run_query_browser_tool(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+    args: TargetToolArgs,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let tool = QueryBrowserEvidenceTool::new(target.clone(), policy, timeout, backend);
+    match tool.call(args).await {
+        Ok(out) => {
+            let succeeded = out.collection_status != "failed" && out.collection_status != "skipped";
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "query_browser_evidence".to_owned(),
+                dwarf_id: DwarfId::Browser,
+                authorised: true,
+                succeeded,
+                summary: format!(
+                    "status={}, resources={}, third_party_hosts={}, error_kinds={}",
+                    out.collection_status,
+                    out.resource_count,
+                    out.third_party_hosts.len(),
+                    out.runtime_error_counts.len()
+                ),
+            });
+            (succeeded, Vec::new())
+        }
+        Err(err) => {
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: "query_browser_evidence".to_owned(),
+                dwarf_id: DwarfId::Browser,
+                authorised: false,
+                succeeded: false,
+                summary: err.to_string(),
             });
             (false, Vec::new())
         }
@@ -1870,5 +1913,49 @@ mod tests {
                 task.title
             );
         }
+    }
+
+    #[tokio::test]
+    async fn cross_domain_csp_and_runtime_failure_scenario_correlates_browser_and_security() {
+        let target = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let backend = Arc::new(MockBackend {
+            browser: CollectorOutcome::Captured {
+                data: BrowserEvidence {
+                    final_url: "https://example.org/".to_owned(),
+                    console_errors: vec![ConsoleErrorEvent {
+                        level: "error".to_owned(),
+                        text: "CSP violation (script-src): blocked https://cdn.example.net/app.js"
+                            .to_owned(),
+                        error_kind: Some("csp_violation".to_owned()),
+                        source_url: Some("https://example.org/".to_owned()),
+                        line_number: Some(12),
+                    }],
+                    ..BrowserEvidence::default()
+                },
+            },
+            axe: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                r#"{"ready_to_conclude":false,"originating_rule":"browser.js.csp_violation","proposed_explanation":"CSP blocks critical app bundle","requested_tool":"query_browser_evidence"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Confirmed CSP violation blocking script-src","conclusion":"Confirmed."}"#.to_owned(),
+                r#"{"ready_to_conclude":true,"conclusion":"CSP script-src blocks the application bundle, explaining missing interactive rendering."}"#.to_owned(),
+            ])),
+        };
+
+        let report = run_investigation(
+            target,
+            "Investigate CSP-induced runtime failure".to_owned(),
+            TargetPolicy::PublicOnly,
+            InvestigationBudget::default(),
+            backend,
+            &llm,
+        )
+        .await;
+
+        assert_eq!(report.state, InvestigationState::Completed);
+        assert_ne!(report.hypotheses.len(), 0);
+        assert_eq!(report.hypotheses[0].status, HypothesisStatus::Supported);
     }
 }

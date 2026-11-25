@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 170,
+  "total_rules": 172,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1462,6 +1462,22 @@
       "dwarf": "LeistungsZwerg",
       "module": "analysis::performance",
       "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.privacy.storage_before_consent",
+      "constant": "RULE_PRIVACY_STORAGE",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.privacy.third_party_data_flow",
+      "constant": "RULE_PRIVACY_THIRD_PARTY_FLOW",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
       "status": "native_rust"
     }
   ]
