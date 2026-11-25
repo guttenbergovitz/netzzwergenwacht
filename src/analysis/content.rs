@@ -16,6 +16,10 @@ const RULE_FRESHNESS_HEADERS: &str = "inh.content.freshness_headers";
 const RULE_PLACEHOLDER: &str = "inh.content.placeholder_text";
 const RULE_TITLE_H1_MATCH: &str = "inh.content.title_h1_duplication";
 const RULE_LEGAL_LINKS: &str = "inh.trust.legal_links";
+const RULE_MOJIBAKE: &str = "inh.content.mojibake";
+const RULE_UNRENDERED_MARKUP: &str = "inh.content.unrendered_markup";
+const RULE_STALE_COPYRIGHT: &str = "inh.content.stale_copyright";
+const RULE_READABILITY: &str = "inh.content.readability";
 
 /// All rule identifiers owned by `InhaltsZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -24,6 +28,10 @@ pub const ALL_RULES: &[&str] = &[
     RULE_PLACEHOLDER,
     RULE_TITLE_H1_MATCH,
     RULE_LEGAL_LINKS,
+    RULE_MOJIBAKE,
+    RULE_UNRENDERED_MARKUP,
+    RULE_STALE_COPYRIGHT,
+    RULE_READABILITY,
 ];
 
 /// Evaluates visible word count, freshness headers, and content quality signals over `http` and `obs`.
@@ -37,6 +45,10 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_placeholder_text(obs, &mut findings, &mut checks);
     check_title_h1_duplication(obs, &mut findings, &mut checks);
     check_legal_links(obs, &mut findings, &mut checks);
+    check_mojibake(obs, &mut findings, &mut checks);
+    check_unrendered_markup(obs, &mut findings, &mut checks);
+    check_stale_copyright(obs, &mut findings, &mut checks);
+    check_readability(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Inhalts,
@@ -323,6 +335,218 @@ fn check_legal_links(
     }
 }
 
+fn check_mojibake(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let sample = &obs.visible_text_sample;
+    let markers = ["Ã¤", "Ã¶", "Ã¼", "ÃŸ", "Ã©", "â€™", "â€œ", "\u{FFFD}"];
+    let matched: Vec<&str> = markers
+        .iter()
+        .copied()
+        .filter(|m| sample.contains(m))
+        .collect();
+
+    if matched.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MOJIBAKE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MOJIBAKE.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Character encoding corruption (mojibake) detected".to_owned(),
+            summary: format!(
+                "Visible text contains likely UTF-8/Latin-1 decoding artefacts ({} pattern(s)).",
+                matched.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("mojibake_patterns={}", matched.len()),
+            )],
+            remediation: Some(
+                "Ensure UTF-8 encoding across database, templates, and HTTP `Content-Type` headers."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MOJIBAKE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_unrendered_markup(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let sample = &obs.visible_text_sample;
+    let markers = ["{{", "}}", "<%", "%>", "[object Object]"];
+    let matched: Vec<&str> = markers
+        .iter()
+        .copied()
+        .filter(|m| sample.contains(m))
+        .collect();
+
+    if matched.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_UNRENDERED_MARKUP.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_UNRENDERED_MARKUP.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Unrendered template syntax or JS leakage in visible text".to_owned(),
+            summary: format!("Detected raw template/runtime tokens: {}.", matched.join(", ")),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("unrendered_tokens={}", matched.len()),
+            )],
+            remediation: Some(
+                "Verify server/client template rendering and strip unresolved interpolation tokens."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_UNRENDERED_MARKUP.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_stale_copyright(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let sample = &obs.visible_text_sample;
+    let lower = sample.to_ascii_lowercase();
+    let mut years = Vec::new();
+    for marker in ["©", "copyright"] {
+        for (idx, _) in lower.match_indices(marker) {
+            let tail = &sample[idx..sample.len().min(idx + 32)];
+            for tok in tail.split(|c: char| !c.is_ascii_digit()) {
+                if tok.len() == 4
+                    && let Ok(yr) = tok.parse::<u16>()
+                    && (1995..=2030).contains(&yr)
+                {
+                    years.push(yr);
+                }
+            }
+        }
+    }
+
+    let Some(&max_year) = years.iter().max() else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_STALE_COPYRIGHT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no copyright year detected in visible sample".to_owned(),
+        });
+        return;
+    };
+
+    if max_year < 2024 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_STALE_COPYRIGHT.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: format!("Potentially stale copyright year ({max_year})"),
+            summary: format!("Latest detected copyright year in page sample is {max_year}."),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("copyright_year={max_year}"),
+            )],
+            remediation: Some(
+                "Update footer copyright notice if the site is actively maintained.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_STALE_COPYRIGHT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_STALE_COPYRIGHT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_readability(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.visible_word_count < 120 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_READABILITY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "fewer than 120 visible words for readability assessment".to_owned(),
+        });
+        return;
+    }
+
+    let sample_words = obs.visible_text_sample.split_whitespace().count();
+    let sentence_endings = obs
+        .visible_text_sample
+        .chars()
+        .filter(|&c| matches!(c, '.' | '!' | '?'))
+        .count()
+        .max(1);
+    let avg_words_per_sentence = sample_words / sentence_endings;
+
+    if avg_words_per_sentence > 32 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_READABILITY.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Low,
+            title: format!("Dense sentence structure (~{avg_words_per_sentence} words/sentence)"),
+            summary: format!(
+                "Sampled visible copy averages ~{avg_words_per_sentence} words per sentence (> 32)."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("avg_words_per_sentence={avg_words_per_sentence}"),
+            )],
+            remediation: Some(
+                "Break long paragraphs into shorter sentences and scannable headings/lists."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_READABILITY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_READABILITY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,7 +600,7 @@ mod tests {
 
     #[test]
     fn passes_for_substantive_content_with_last_modified() {
-        let words = vec!["word"; 120].join(" ");
+        let words = vec!["Clear sentence with readable words."; 25].join(" ");
         let html = format!(
             "<html><body><main><p>{words}</p></main><footer><a href=\"/privacy\">Privacy</a></footer></body></html>"
         );
@@ -406,5 +630,20 @@ mod tests {
                 .any(|f| f.rule_id.0 == RULE_TITLE_H1_MATCH)
         );
         assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_LEGAL_LINKS));
+    }
+
+    #[test]
+    fn flags_mojibake_unrendered_markup_stale_copyright_and_dense_readability() {
+        let long_sentence = vec!["word"; 130].join(" ");
+        let html = format!(
+            "<html><body><p>Broken Ã¤ {{user.name}} [object Object] {long_sentence}</p><footer>© 2021 Acme</footer></body></html>"
+        );
+        let (http, obs) = http_with_body(&html, Vec::new());
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_MOJIBAKE));
+        assert!(ids.contains(&RULE_UNRENDERED_MARKUP));
+        assert!(ids.contains(&RULE_STALE_COPYRIGHT));
+        assert!(ids.contains(&RULE_READABILITY));
     }
 }
