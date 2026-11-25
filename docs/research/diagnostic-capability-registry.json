@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 196,
+  "total_implemented_capabilities": 204,
   "by_dwarf": {
-    "LeistungsZwerg": 27,
+    "LeistungsZwerg": 30,
     "SicherheitsZwerg": 33,
-    "GestaltungsZwerg": 19,
+    "GestaltungsZwerg": 21,
     "SuchZwerg": 19,
     "InhaltsZwerg": 16,
-    "ApplicationGraph": 16,
+    "ApplicationGraph": 19,
     "ZugänglichkeitsZwerg": 19,
     "StrukturZwerg": 15,
     "NetzZwerg": 18,
@@ -1776,6 +1776,78 @@
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
       "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.font.excessive_webfonts",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.images.unbounded_image_weight",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.cache.hashed_asset_short_ttl",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "vis.rendered.hidden_downloaded_images",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "vis.mobile.viewport_zoom_locked",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.seo.trailing_slash_inconsistency",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.seo.http_https_mixed_pages",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.resources.heavy_shared_asset",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Rendered",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
     }

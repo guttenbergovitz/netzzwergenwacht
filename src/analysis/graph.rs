@@ -32,6 +32,9 @@ const RULE_EXCESSIVE_INTERNAL_REDIRECTS: &str = "graph.links.excessive_internal_
 const RULE_CRAWL_TRAP_CANDIDATE: &str = "graph.crawl.trap_candidate";
 const RULE_SHARED_FAILED_DEPENDENCY: &str = "graph.resources.shared_failed_dependency";
 const RULE_THIRD_PARTY_CONCENTRATION: &str = "graph.resources.third_party_concentration";
+const RULE_TRAILING_SLASH_INCONSISTENCY: &str = "graph.seo.trailing_slash_inconsistency";
+const RULE_HTTP_HTTPS_MIXED_PAGES: &str = "graph.seo.http_https_mixed_pages";
+const RULE_HEAVY_SHARED_ASSET: &str = "graph.resources.heavy_shared_asset";
 
 /// All rule identifiers evaluated by the Application Graph engine.
 pub const ALL_RULES: &[&str] = &[
@@ -51,6 +54,9 @@ pub const ALL_RULES: &[&str] = &[
     RULE_CRAWL_TRAP_CANDIDATE,
     RULE_SHARED_FAILED_DEPENDENCY,
     RULE_THIRD_PARTY_CONCENTRATION,
+    RULE_TRAILING_SLASH_INCONSISTENCY,
+    RULE_HTTP_HTTPS_MIXED_PAGES,
+    RULE_HEAVY_SHARED_ASSET,
 ];
 
 /// Compact subresource record attached to a [`GraphPageInput`] for `ResourceGraph` projection.
@@ -178,12 +184,14 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
     check_excessive_internal_redirects(graph, &mut netz_findings, &mut netz_checks);
     check_crawl_trap_candidates(graph, &mut netz_findings, &mut netz_checks);
     check_resource_graph_dependencies(graph, &mut netz_findings, &mut netz_checks);
+    check_heavy_shared_assets(graph, &mut netz_findings, &mut netz_checks);
 
     check_links_to_non_indexable(graph, &mut such_findings, &mut such_checks);
     check_canonical_graph(graph, &mut such_findings, &mut such_checks);
     check_hreflang_reciprocity(graph, &mut such_findings, &mut such_checks);
     check_entity_graph(graph, &mut such_findings, &mut such_checks);
     check_sitemap_non_indexable(graph, &mut such_findings, &mut such_checks);
+    check_trailing_slash_and_scheme_consistency(graph, &mut such_findings, &mut such_checks);
 
     check_broken_anchors(graph, &mut str_findings, &mut str_checks);
     check_duplicate_metadata(graph, &mut inh_findings, &mut inh_checks);
@@ -1283,6 +1291,211 @@ fn emit_third_party_concentration(
     }
 }
 
+fn check_trailing_slash_and_scheme_consistency(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mut path_variants: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    let mut host_schemes: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for url_str in graph.pages.keys() {
+        let Ok(parsed) = url::Url::parse(url_str) else {
+            continue;
+        };
+        let Some(host) = parsed.host_str().map(str::to_ascii_lowercase) else {
+            continue;
+        };
+        host_schemes
+            .entry(host.clone())
+            .or_default()
+            .insert(parsed.scheme().to_ascii_lowercase());
+
+        let path = parsed.path();
+        if path != "/" {
+            let trimmed = path.trim_end_matches('/').to_owned();
+            path_variants
+                .entry((host, trimmed))
+                .or_default()
+                .insert(path.to_owned());
+        }
+    }
+
+    report_trailing_slash_conflicts(path_variants, findings, checks);
+    report_mixed_scheme_hosts(host_schemes, findings, checks);
+}
+
+fn report_trailing_slash_conflicts(
+    path_variants: BTreeMap<(String, String), BTreeSet<String>>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let slash_conflicts: Vec<String> = path_variants
+        .into_iter()
+        .filter(|(_, variants)| variants.len() > 1)
+        .map(|((host, base), _)| format!("{host}{base}"))
+        .collect();
+    if slash_conflicts.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_TRAILING_SLASH_INCONSISTENCY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_TRAILING_SLASH_INCONSISTENCY.to_owned()),
+        category: FindingCategory::Seo,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Low,
+        confidence: Confidence::High,
+        title: format!(
+            "Trailing-slash URL inconsistencies ({})",
+            slash_conflicts.len()
+        ),
+        summary: format!(
+            "{} path(s) exist both with and without a trailing slash (for example `{}`).",
+            slash_conflicts.len(),
+            slash_conflicts[0]
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpStatus,
+            format!("trailing_slash_conflicts={}", slash_conflicts.len()),
+        )],
+        remediation: Some(
+            "Enforce a single trailing-slash convention via 301 redirects and canonical tags."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_TRAILING_SLASH_INCONSISTENCY.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn report_mixed_scheme_hosts(
+    host_schemes: BTreeMap<String, BTreeSet<String>>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mixed_hosts: Vec<String> = host_schemes
+        .into_iter()
+        .filter(|(_, schemes)| schemes.contains("http") && schemes.contains("https"))
+        .map(|(host, _)| host)
+        .collect();
+    if mixed_hosts.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_HTTP_HTTPS_MIXED_PAGES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_HTTP_HTTPS_MIXED_PAGES.to_owned()),
+        category: FindingCategory::Seo,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!(
+            "Mixed HTTP and HTTPS pages on same host ({})",
+            mixed_hosts.len()
+        ),
+        summary: format!(
+            "Application graph observed both `http://` and `https://` pages on host(s): {}.",
+            mixed_hosts.join(", ")
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpStatus,
+            format!("mixed_scheme_hosts={}", mixed_hosts.len()),
+        )],
+        remediation: Some(
+            "Redirect all `http://` URLs permanently (301) to `https://` and enable HSTS."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_HTTP_HTTPS_MIXED_PAGES.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_heavy_shared_assets(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mut asset_pages: BTreeMap<String, (BTreeSet<String>, u64)> = BTreeMap::new();
+    let mut any_resources = false;
+    for page in graph.pages.values() {
+        for res in &page.resources {
+            any_resources = true;
+            if let Some(bytes) = res.transfer_size {
+                let entry = asset_pages
+                    .entry(res.url.clone())
+                    .or_insert_with(|| (BTreeSet::new(), 0));
+                entry.0.insert(page.url.clone());
+                entry.1 = entry.1.max(bytes);
+            }
+        }
+    }
+
+    if !any_resources {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_HEAVY_SHARED_ASSET.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "no browser subresource observations in graph".to_owned(),
+        });
+        return;
+    }
+
+    let heavy: Vec<String> = asset_pages
+        .into_iter()
+        .filter(|(_, (pages, max_bytes))| pages.len() >= 2 && *max_bytes > 512_000)
+        .map(|(url, (pages, max_bytes))| {
+            format!("{url} ({} KiB, {} pages)", max_bytes / 1024, pages.len())
+        })
+        .collect();
+    if heavy.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_HEAVY_SHARED_ASSET.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_HEAVY_SHARED_ASSET.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Heavy shared subresource dependencies ({})", heavy.len()),
+            summary: format!(
+                "{} subresource(s) > 500 KiB are shared across multiple pages: {}.",
+                heavy.len(),
+                heavy[0]
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("heavy_shared_assets={}", heavy.len()),
+            )],
+            remediation: Some(
+                "Code-split or compress heavy shared bundles/media referenced across multiple routes."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_HEAVY_SHARED_ASSET.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1460,5 +1673,29 @@ mod tests {
         assert!(rule_ids.contains(&RULE_CRAWL_TRAP_CANDIDATE));
         assert!(rule_ids.contains(&RULE_SHARED_FAILED_DEPENDENCY));
         assert!(rule_ids.contains(&RULE_THIRD_PARTY_CONCENTRATION));
+    }
+
+    #[test]
+    fn detects_trailing_slash_mixed_scheme_and_heavy_shared_asset() {
+        let mut p1 = page("https://example.com/about");
+        p1.resources = vec![GraphResourceInput {
+            url: "https://example.com/vendor.js".to_owned(),
+            status_code: Some(200),
+            transfer_size: Some(700_000),
+        }];
+        let mut p2 = page("https://example.com/about/");
+        p2.resources = p1.resources.clone();
+        let p3 = page("http://example.com/legacy");
+
+        let graph = ApplicationGraph::from_pages(&[p1, p2, p3], true);
+        let results = analyse(&graph);
+        let rule_ids: Vec<&str> = results
+            .iter()
+            .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+
+        assert!(rule_ids.contains(&RULE_TRAILING_SLASH_INCONSISTENCY));
+        assert!(rule_ids.contains(&RULE_HTTP_HTTPS_MIXED_PAGES));
+        assert!(rule_ids.contains(&RULE_HEAVY_SHARED_ASSET));
     }
 }

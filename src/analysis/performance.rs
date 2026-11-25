@@ -40,6 +40,9 @@ const RULE_CACHE_ZERO_MAX_AGE: &str = "perf.cache.zero_max_age";
 const RULE_RUNTIME_CLS: &str = "perf.cls.layout_shift_observed";
 const RULE_RUNTIME_LCP: &str = "perf.lcp.slow_element_render";
 const RULE_FONT_LEGACY_FORMAT: &str = "perf.font.legacy_format";
+const RULE_EXCESSIVE_WEBFONTS: &str = "perf.font.excessive_webfonts";
+const RULE_UNBOUNDED_IMAGE_WEIGHT: &str = "perf.images.unbounded_image_weight";
+const RULE_HASHED_ASSET_SHORT_TTL: &str = "perf.cache.hashed_asset_short_ttl";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -150,6 +153,7 @@ fn analyse_with_thresholds_and_document(
     check_runtime_perf_metrics(&snapshot.browser, &mut findings, &mut checks);
     check_waterfall_and_cache_semantics(&snapshot.browser, &mut findings, &mut checks);
     check_runtime_cls_lcp_and_fonts(&snapshot.browser, &mut findings, &mut checks);
+    check_runtime_asset_budgets(&snapshot.browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -1656,6 +1660,196 @@ fn check_runtime_legacy_fonts(
     }
 }
 
+fn check_runtime_asset_budgets(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) = browser
+    else {
+        return;
+    };
+
+    check_webfont_budget(data, findings, checks);
+    check_image_weight_budget(data, findings, checks);
+    check_hashed_asset_ttl(data, findings, checks);
+}
+
+fn check_webfont_budget(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let font_count = data
+        .resources
+        .iter()
+        .filter(|r| {
+            r.resource_type == "font"
+                || [".woff2", ".woff", ".ttf", ".otf"]
+                    .iter()
+                    .any(|ext| r.url.to_ascii_lowercase().contains(ext))
+        })
+        .count();
+    if font_count <= 6 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_EXCESSIVE_WEBFONTS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_EXCESSIVE_WEBFONTS.to_owned()),
+        category: FindingCategory::Performance,
+        evidence_level: EvidenceLevel::Rendered,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!("Excessive webfont requests ({font_count} files)"),
+        summary: format!(
+            "Browser loaded {font_count} webfont resources (threshold: 6), increasing font-swap delay and transfer overhead."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!("webfont_count={font_count}"),
+        )],
+        remediation: Some(
+            "Subset fonts, consolidate weights/styles, and preload only critical above-the-fold faces."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_EXCESSIVE_WEBFONTS.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
+}
+
+fn check_image_weight_budget(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let total_img_bytes: u64 = data
+        .resources
+        .iter()
+        .filter(|r| r.resource_type == "image")
+        .filter_map(|r| r.transfer_size)
+        .sum();
+    if total_img_bytes <= 1_572_864 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_UNBOUNDED_IMAGE_WEIGHT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_UNBOUNDED_IMAGE_WEIGHT.to_owned()),
+        category: FindingCategory::Performance,
+        evidence_level: EvidenceLevel::Rendered,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!(
+            "Heavy total image transfer weight ({} KiB)",
+            total_img_bytes / 1024
+        ),
+        summary: format!(
+            "Runtime image resources transferred {total_img_bytes} bytes (> 1.5 MiB budget)."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!("image_transfer_bytes={total_img_bytes}"),
+        )],
+        remediation: Some(
+            "Serve responsive `srcset` sizes in AVIF/WebP and lazy-load below-the-fold images."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_UNBOUNDED_IMAGE_WEIGHT.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
+}
+
+fn check_hashed_asset_ttl(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let short_ttl_hashed: Vec<&str> = data
+        .resources
+        .iter()
+        .filter(|r| is_versioned_static_url(&r.url))
+        .filter(|r| {
+            r.cache_control.as_deref().is_some_and(|cc| {
+                let low = cc.to_ascii_lowercase();
+                low.contains("no-store")
+                    || low.contains("no-cache")
+                    || extract_max_age(&low).is_some_and(|age| age < 86_400)
+            })
+        })
+        .map(|r| r.url.as_str())
+        .collect();
+    if short_ttl_hashed.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_HASHED_ASSET_SHORT_TTL.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_HASHED_ASSET_SHORT_TTL.to_owned()),
+        category: FindingCategory::Performance,
+        evidence_level: EvidenceLevel::Rendered,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Low,
+        confidence: Confidence::High,
+        title: format!(
+            "Versioned static assets with short cache TTL ({})",
+            short_ttl_hashed.len()
+        ),
+        summary: format!(
+            "{} fingerprinted/versioned asset(s) use short or no-cache directives (for example `{}`).",
+            short_ttl_hashed.len(),
+            short_ttl_hashed[0]
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!("short_ttl_hashed_assets={}", short_ttl_hashed.len()),
+        )],
+        remediation: Some(
+            "Configure `Cache-Control: public, max-age=31536000, immutable` on fingerprinted assets."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_HASHED_ASSET_SHORT_TTL.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
+}
+
+fn is_versioned_static_url(url: &str) -> bool {
+    let low = url.to_ascii_lowercase();
+    let is_static = [".js", ".css", ".woff2"]
+        .iter()
+        .any(|ext| low.contains(ext));
+    is_static && (low.contains("?v=") || low.contains("?ver=") || low.contains(".chunk."))
+}
+
+fn extract_max_age(cc_lower: &str) -> Option<u64> {
+    cc_lower.split(',').find_map(|part| {
+        let trimmed = part.trim();
+        trimmed
+            .strip_prefix("max-age=")
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2094,5 +2288,69 @@ mod tests {
         assert!(ids.contains(&RULE_RUNTIME_CLS));
         assert!(ids.contains(&RULE_RUNTIME_LCP));
         assert!(ids.contains(&RULE_FONT_LEGACY_FORMAT));
+    }
+
+    #[test]
+    fn flags_excessive_webfonts_image_weight_and_short_ttl_versioned_assets() {
+        let mut resources: Vec<crate::domain::ResourceTimingObs> = (0..7)
+            .map(|i| crate::domain::ResourceTimingObs {
+                url: format!("https://example.com/fonts/f{i}.woff2"),
+                resource_type: "font".to_owned(),
+                transfer_size: Some(25_000),
+                ..crate::domain::ResourceTimingObs::default()
+            })
+            .collect();
+        resources.push(crate::domain::ResourceTimingObs {
+            url: "https://example.com/hero.png".to_owned(),
+            resource_type: "image".to_owned(),
+            transfer_size: Some(2_000_000),
+            ..crate::domain::ResourceTimingObs::default()
+        });
+        resources.push(crate::domain::ResourceTimingObs {
+            url: "https://example.com/app.chunk.js?v=123".to_owned(),
+            resource_type: "script".to_owned(),
+            cache_control: Some("public, max-age=60".to_owned()),
+            ..crate::domain::ResourceTimingObs::default()
+        });
+
+        let snap = EvidenceSnapshot {
+            target: AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "content-encoding".to_owned(),
+                        value: "br".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 512,
+                    body_truncated: false,
+                    body_text: "<html></html>".to_owned(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    resources,
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_EXCESSIVE_WEBFONTS));
+        assert!(ids.contains(&RULE_UNBOUNDED_IMAGE_WEIGHT));
+        assert!(ids.contains(&RULE_HASHED_ASSET_SHORT_TTL));
     }
 }

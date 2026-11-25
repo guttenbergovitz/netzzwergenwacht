@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 196,
+  "total_rules": 204,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1670,6 +1670,70 @@
       "dwarf": "InhaltsZwerg",
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.font.excessive_webfonts",
+      "constant": "RULE_EXCESSIVE_WEBFONTS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.images.unbounded_image_weight",
+      "constant": "RULE_UNBOUNDED_IMAGE_WEIGHT",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.cache.hashed_asset_short_ttl",
+      "constant": "RULE_HASHED_ASSET_SHORT_TTL",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.rendered.hidden_downloaded_images",
+      "constant": "RULE_HIDDEN_DOWNLOADED_IMAGES",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.mobile.viewport_zoom_locked",
+      "constant": "RULE_VIEWPORT_ZOOM_LOCKED",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.seo.trailing_slash_inconsistency",
+      "constant": "RULE_TRAILING_SLASH_INCONSISTENCY",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.seo.http_https_mixed_pages",
+      "constant": "RULE_HTTP_HTTPS_MIXED_PAGES",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.resources.heavy_shared_asset",
+      "constant": "RULE_HEAVY_SHARED_ASSET",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
       "status": "native_rust"
     }
   ]
