@@ -39,6 +39,8 @@ const RULE_FORM_CROSS_ORIGIN: &str = "sec.forms.cross_origin_submission";
 const RULE_SENSITIVE_URL_PARAMS: &str = "sec.exposure.sensitive_url_parameters";
 const RULE_HSTS_DURATION: &str = "sec.headers.hsts_duration";
 const RULE_SENSITIVE_GET_FORM: &str = "sec.forms.sensitive_get_submission";
+const RULE_PRIVACY_STORAGE: &str = "sec.privacy.storage_before_consent";
+const RULE_PRIVACY_THIRD_PARTY_FLOW: &str = "sec.privacy.third_party_data_flow";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -69,6 +71,8 @@ const ALL_RULES: &[&str] = &[
     RULE_SENSITIVE_URL_PARAMS,
     RULE_HSTS_DURATION,
     RULE_SENSITIVE_GET_FORM,
+    RULE_PRIVACY_STORAGE,
+    RULE_PRIVACY_THIRD_PARTY_FLOW,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -127,6 +131,7 @@ pub fn analyse_with_document(
     check_cookie_attributes(http, &mut findings, &mut checks);
     check_sensitive_url_params(http, &mut findings, &mut checks);
     check_hsts_duration(http, uses_https, &mut findings, &mut checks);
+    check_privacy_browser_signals(&snapshot.browser, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
@@ -1832,6 +1837,154 @@ fn check_sensitive_get_forms(
     }
 }
 
+fn check_privacy_browser_signals(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let data = match browser {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
+        CollectorOutcome::Skipped { reason } => {
+            for rule in [RULE_PRIVACY_STORAGE, RULE_PRIVACY_THIRD_PARTY_FLOW] {
+                checks.push(CheckStatus::Skipped {
+                    rule_id: RuleId((*rule).to_owned()),
+                    evidence_level: EvidenceLevel::Rendered,
+                    reason: reason.clone(),
+                });
+            }
+            return;
+        }
+        CollectorOutcome::Failed { error } => {
+            for rule in [RULE_PRIVACY_STORAGE, RULE_PRIVACY_THIRD_PARTY_FLOW] {
+                checks.push(CheckStatus::Skipped {
+                    rule_id: RuleId((*rule).to_owned()),
+                    evidence_level: EvidenceLevel::Rendered,
+                    reason: error.clone(),
+                });
+            }
+            return;
+        }
+    };
+
+    if let Some(storage) = &data.storage_summary {
+        let total = storage.local_storage_keys
+            + storage.session_storage_keys
+            + storage.document_cookie_count;
+        if total > 0 {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_PRIVACY_STORAGE.to_owned()),
+                category: FindingCategory::Security,
+                evidence_level: EvidenceLevel::Rendered,
+                kind: FindingKind::Deterministic,
+                severity: Severity::Info,
+                confidence: Confidence::High,
+                title: format!("Client-side storage/cookies populated before consent ({total})"),
+                summary: format!(
+                    "Fresh browser session observed {} localStorage key(s), {} sessionStorage key(s), and {} document.cookie entry(ies) prior to consent interaction.",
+                    storage.local_storage_keys,
+                    storage.session_storage_keys,
+                    storage.document_cookie_count
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::BrowserRuntime,
+                    format!(
+                        "local_storage={};session_storage={};doc_cookies={}",
+                        storage.local_storage_keys,
+                        storage.session_storage_keys,
+                        storage.document_cookie_count
+                    ),
+                )],
+                remediation: Some(
+                    "Verify whether observed storage keys and cookies are strictly necessary or require prior consent."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_PRIVACY_STORAGE.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        } else {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_PRIVACY_STORAGE.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        }
+    } else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_PRIVACY_STORAGE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "browser storage summary unavailable".to_owned(),
+        });
+    }
+
+    check_privacy_tracker_requests(data, findings, checks);
+}
+
+fn check_privacy_tracker_requests(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const TRACKER_HOSTS: &[&str] = &[
+        "googletagmanager.com",
+        "google-analytics.com",
+        "doubleclick.net",
+        "connect.facebook.net",
+        "hotjar.com",
+        "clarity.ms",
+        "segment.com",
+        "mixpanel.com",
+    ];
+    let tracker_hits: Vec<&str> = data
+        .resources
+        .iter()
+        .filter_map(|r| {
+            let lower = r.url.to_ascii_lowercase();
+            TRACKER_HOSTS.iter().copied().find(|h| lower.contains(h))
+        })
+        .collect();
+    if tracker_hits.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_PRIVACY_THIRD_PARTY_FLOW.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        let mut unique: Vec<&str> = tracker_hits;
+        unique.sort_unstable();
+        unique.dedup();
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_PRIVACY_THIRD_PARTY_FLOW.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!(
+                "Third-party tracking requests before consent ({})",
+                unique.len()
+            ),
+            summary: format!(
+                "Fresh browser session contacted third-party tracking/analytics origin(s): {}.",
+                unique.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("tracking_origins={}", unique.join(",")),
+            )],
+            remediation: Some(
+                "Gate non-essential third-party tracking requests behind explicit user consent."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_PRIVACY_THIRD_PARTY_FLOW.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2098,5 +2251,34 @@ mod tests {
             .collect();
         assert!(ids.contains(&RULE_HSTS_DURATION));
         assert!(ids.contains(&RULE_SENSITIVE_GET_FORM));
+    }
+
+    #[test]
+    fn flags_privacy_storage_and_third_party_tracking_before_consent() {
+        let mut snap = snapshot_with_headers("https://example.com/", Vec::new());
+        snap.browser = CollectorOutcome::Captured {
+            data: crate::domain::BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                storage_summary: Some(crate::domain::PrivacyStorageSummary {
+                    local_storage_keys: 2,
+                    session_storage_keys: 0,
+                    document_cookie_count: 1,
+                }),
+                resources: vec![crate::domain::ResourceTimingObs {
+                    url: "https://www.googletagmanager.com/gtm.js".to_owned(),
+                    resource_type: "script".to_owned(),
+                    ..crate::domain::ResourceTimingObs::default()
+                }],
+                ..crate::domain::BrowserEvidence::default()
+            },
+        };
+        let result = analyse(&snap);
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_PRIVACY_STORAGE));
+        assert!(ids.contains(&RULE_PRIVACY_THIRD_PARTY_FLOW));
     }
 }
