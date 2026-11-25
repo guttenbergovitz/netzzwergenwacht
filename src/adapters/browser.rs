@@ -257,6 +257,15 @@ function findBrowser() {
     await call('Page.enable');
     await call('Runtime.enable');
     await call('Network.enable');
+    try {
+      await call('Profiler.enable');
+      await call('Profiler.startPreciseCoverage', { callCount: false, detailed: true });
+    } catch {}
+    try {
+      await call('DOM.enable');
+      await call('CSS.enable');
+      await call('CSS.startRuleUsageTracking');
+    } catch {}
     await call('Page.addScriptToEvaluateOnNewDocument', {
       source: `window.__nzwCspViolations = [];
       window.addEventListener('securitypolicyviolation', (e) => { if (window.__nzwCspViolations.length < 50) window.__nzwCspViolations.push({ directive: e.violatedDirective || '', blocked_uri: e.blockedURI || '', source_file: e.sourceFile || null, line_number: e.lineNumber || null }); });
@@ -456,6 +465,51 @@ function findBrowser() {
         truncated: nodes.length > 5000,
       };
     } catch {}
+    let coverageSummary = {
+      js_total_bytes: 0,
+      js_used_bytes: 0,
+      css_total_bytes: 0,
+      css_used_bytes: 0,
+      js_scripts_sampled: 0,
+      css_rules_sampled: 0,
+    };
+    let hasCoverage = false;
+    try {
+      const jsCov = await call('Profiler.takePreciseCoverage');
+      const scripts = Array.isArray(jsCov?.result) ? jsCov.result : [];
+      for (const s of scripts) {
+        let maxEnd = 0;
+        let used = 0;
+        for (const fn of Array.isArray(s.functions) ? s.functions : []) {
+          for (const r of Array.isArray(fn.ranges) ? fn.ranges : []) {
+            if (typeof r.endOffset === 'number' && r.endOffset > maxEnd) maxEnd = r.endOffset;
+            if (r.count > 0 && typeof r.startOffset === 'number' && typeof r.endOffset === 'number' && r.endOffset > r.startOffset) {
+              used += (r.endOffset - r.startOffset);
+            }
+          }
+        }
+        if (maxEnd > 0) {
+          coverageSummary.js_scripts_sampled++;
+          coverageSummary.js_total_bytes += maxEnd;
+          coverageSummary.js_used_bytes += Math.min(used, maxEnd);
+        }
+      }
+      await call('Profiler.stopPreciseCoverage');
+      hasCoverage = true;
+    } catch {}
+    try {
+      const cssCov = await call('CSS.stopRuleUsageTracking');
+      const rules = Array.isArray(cssCov?.ruleUsage) ? cssCov.ruleUsage : [];
+      for (const r of rules) {
+        if (typeof r.startOffset === 'number' && typeof r.endOffset === 'number' && r.endOffset > r.startOffset) {
+          const len = r.endOffset - r.startOffset;
+          coverageSummary.css_rules_sampled++;
+          coverageSummary.css_total_bytes += len;
+          if (r.used) coverageSummary.css_used_bytes += len;
+        }
+      }
+      hasCoverage = true;
+    } catch {}
     for (const v of Array.isArray(domAndImages.csp_violations) ? domAndImages.csp_violations : []) {
       consoleErrors.push({
         level: 'error',
@@ -486,6 +540,7 @@ function findBrowser() {
       ax_tree: axTreeSummary,
       performance: domAndImages.performance || null,
       storage_summary: domAndImages.storage_summary || null,
+      coverage: hasCoverage ? coverageSummary : null,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',

@@ -174,7 +174,7 @@ async fn consecutive_patrols_reuse_healthy_memory_and_escalate_new_anomaly() {
     };
 
     // Patrol #1: healthy baseline, discovers sitemap index + en-GB & de locales.
-    let p1 = run_patrol(
+    let p1 = Box::pin(run_patrol(
         seed.clone(),
         TargetPolicy::AllowPrivate,
         exec_budget,
@@ -182,7 +182,7 @@ async fn consecutive_patrols_reuse_healthy_memory_and_escalate_new_anomaly() {
         Some(&mem_dir),
         Some(&llm_p1),
         Arc::clone(&backend),
-    )
+    ))
     .await;
     assert_eq!(p1.patrol_number, 1);
     assert!(p1.execution_succeeded);
@@ -208,7 +208,7 @@ async fn consecutive_patrols_reuse_healthy_memory_and_escalate_new_anomaly() {
         calls: Mutex::new(0),
     };
 
-    let p2 = run_patrol(
+    let p2 = Box::pin(run_patrol(
         seed,
         TargetPolicy::AllowPrivate,
         exec_budget,
@@ -216,7 +216,7 @@ async fn consecutive_patrols_reuse_healthy_memory_and_escalate_new_anomaly() {
         Some(&mem_dir),
         Some(&llm_p2),
         backend,
-    )
+    ))
     .await;
     assert_eq!(p2.patrol_number, 2);
     assert!(p2.execution_succeeded);
@@ -272,7 +272,7 @@ async fn quiet_patrol_spends_zero_llm_calls_when_unchanged() {
         responses: Mutex::new(VecDeque::new()),
         calls: Mutex::new(0),
     };
-    let _ = run_patrol(
+    let _ = Box::pin(run_patrol(
         seed.clone(),
         TargetPolicy::AllowPrivate,
         exec_budget,
@@ -280,7 +280,7 @@ async fn quiet_patrol_spends_zero_llm_calls_when_unchanged() {
         Some(&mem_dir),
         Some(&llm_p1),
         Arc::clone(&backend),
-    )
+    ))
     .await;
 
     // Patrol #2 on an unchanged application: must be quiet and spend 0 LLM calls.
@@ -288,7 +288,7 @@ async fn quiet_patrol_spends_zero_llm_calls_when_unchanged() {
         responses: Mutex::new(VecDeque::new()),
         calls: Mutex::new(0),
     };
-    let p2 = run_patrol(
+    let p2 = Box::pin(run_patrol(
         seed,
         TargetPolicy::AllowPrivate,
         exec_budget,
@@ -296,7 +296,7 @@ async fn quiet_patrol_spends_zero_llm_calls_when_unchanged() {
         Some(&mem_dir),
         Some(&llm_p2),
         backend,
-    )
+    ))
     .await;
     assert_eq!(p2.patrol_number, 2);
     assert!(p2.is_quiet_patrol);

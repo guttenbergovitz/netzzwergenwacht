@@ -1,9 +1,9 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 204,
+  "total_implemented_capabilities": 206,
   "by_dwarf": {
-    "LeistungsZwerg": 30,
+    "LeistungsZwerg": 32,
     "SicherheitsZwerg": 33,
     "GestaltungsZwerg": 21,
     "SuchZwerg": 19,
@@ -1847,6 +1847,24 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.js.unused_code_ratio",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.css.unused_code_ratio",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
       "evidence_level": "Rendered",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"

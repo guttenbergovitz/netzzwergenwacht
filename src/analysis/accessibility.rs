@@ -903,7 +903,7 @@ fn check_ax_ignored_ratio(
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    if tree.truncated || tree.total_nodes < 20 {
+    if tree.truncated || tree.total_nodes < 50 {
         checks.push(CheckStatus::Skipped {
             rule_id: RuleId(RULE_AX_HIGH_IGNORED_RATIO.to_owned()),
             evidence_level: EvidenceLevel::Rendered,
@@ -913,14 +913,14 @@ fn check_ax_ignored_ratio(
     }
 
     let pct = tree.ignored_nodes.saturating_mul(100) / tree.total_nodes;
-    if pct >= 85 {
+    if pct >= 92 {
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_AX_HIGH_IGNORED_RATIO.to_owned()),
             category: FindingCategory::Accessibility,
             evidence_level: EvidenceLevel::Rendered,
             kind: FindingKind::Deterministic,
-            severity: Severity::Low,
+            severity: Severity::Info,
             confidence: Confidence::Medium,
             title: format!("High proportion of ignored AX tree nodes ({pct}%)"),
             summary: format!(
@@ -1100,7 +1100,7 @@ mod tests {
                 final_url: "https://example.com/".to_owned(),
                 ax_tree: Some(crate::domain::AccessibilityTreeSummary {
                     total_nodes: 100,
-                    ignored_nodes: 90,
+                    ignored_nodes: 94,
                     interactive_without_name: 0,
                     hidden_focusable_count: 0,
                     truncated: false,
