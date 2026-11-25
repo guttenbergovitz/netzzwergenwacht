@@ -104,6 +104,8 @@ pub struct FormObs {
     pub action: Option<String>,
     /// Lowercased `method` attribute, if present.
     pub method: Option<String>,
+    /// Whether the form contains an `<input type="password">`.
+    pub has_password_input: bool,
 }
 
 /// Observed Open Graph and Twitter Card social metadata.
@@ -166,6 +168,8 @@ pub struct DocumentObservations {
     pub meta_description: Option<String>,
     /// Trimmed `<meta name="robots" content="...">`, if present and non-empty.
     pub meta_robots: Option<String>,
+    /// Trimmed `<meta name="generator" content="...">`, if present and non-empty.
+    pub meta_generator: Option<String>,
     /// Trimmed `<link rel="canonical" href="...">`, if present and non-empty.
     pub canonical_url: Option<String>,
     /// Count of `<link rel="alternate" hreflang="...">` elements.
@@ -252,6 +256,7 @@ impl DocumentObservations {
             html_lang: first_attr(&doc, "html", "lang"),
             meta_description: first_attr(&doc, r#"meta[name="description"]"#, "content"),
             meta_robots: first_attr(&doc, r#"meta[name="robots"]"#, "content"),
+            meta_generator: first_attr(&doc, r#"meta[name="generator"]"#, "content"),
             canonical_url: first_attr(&doc, r#"link[rel="canonical"]"#, "href"),
             hreflang_count: hreflangs.len(),
             json_ld_count: json_ld_blocks.len(),
@@ -456,10 +461,15 @@ fn extract_images_and_forms(doc: &Html, obs: &mut DocumentObservations) {
     }
 
     if let Ok(form_sel) = Selector::parse("form") {
+        let pwd_sel = Selector::parse(r#"input[type="password"]"#).ok();
         for el in doc.select(&form_sel) {
+            let has_password_input = pwd_sel
+                .as_ref()
+                .is_some_and(|s| el.select(s).next().is_some());
             obs.forms.push(FormObs {
                 action: non_empty_attr(&el, "action"),
                 method: non_empty_attr(&el, "method").map(|m| m.to_ascii_lowercase()),
+                has_password_input,
             });
         }
     }

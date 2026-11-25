@@ -22,6 +22,10 @@ const RULE_COOKIES: &str = "sec.headers.cookies";
 const RULE_CORS: &str = "sec.headers.cors";
 const RULE_MIXED_CONTENT: &str = "sec.dom.mixed_content";
 const RULE_SRI: &str = "sec.dom.subresource_integrity";
+const RULE_PERMISSIONS_POLICY: &str = "sec.headers.permissions_policy";
+const RULE_VERSION_DISCLOSURE: &str = "sec.headers.version_disclosure";
+const RULE_INSECURE_FORMS: &str = "sec.dom.insecure_forms";
+const RULE_EXPOSED_SECRETS: &str = "sec.dom.exposed_secrets";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -35,6 +39,10 @@ const ALL_RULES: &[&str] = &[
     RULE_CORS,
     RULE_MIXED_CONTENT,
     RULE_SRI,
+    RULE_PERMISSIONS_POLICY,
+    RULE_VERSION_DISCLOSURE,
+    RULE_INSECURE_FORMS,
+    RULE_EXPOSED_SECRETS,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -85,12 +93,16 @@ pub fn analyse_with_document(
     check_referrer_policy(http, &mut findings, &mut checks);
     check_cookies(http, uses_https, &mut findings, &mut checks);
     check_cors(http, &mut findings, &mut checks);
+    check_permissions_policy(http, &mut findings, &mut checks);
+    check_version_disclosure(http, obs, &mut findings, &mut checks);
+    check_exposed_secrets(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
         check_sri(http, doc, &mut findings, &mut checks);
+        check_insecure_forms(uses_https, doc, &mut findings, &mut checks);
     } else {
-        for rule in [RULE_MIXED_CONTENT, RULE_SRI] {
+        for rule in [RULE_MIXED_CONTENT, RULE_SRI, RULE_INSECURE_FORMS] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
                 evidence_level: EvidenceLevel::Source,
@@ -878,6 +890,239 @@ fn check_sri(
     }
 }
 
+fn check_permissions_policy(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if header_value(http, "permissions-policy").is_some_and(|v| !v.trim().is_empty()) {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_PERMISSIONS_POLICY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_PERMISSIONS_POLICY.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Info,
+            confidence: Confidence::High,
+            title: "Missing Permissions-Policy header".to_owned(),
+            summary: format!(
+                "Response from {} did not include a `Permissions-Policy` header.",
+                http.final_url
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                "permissions-policy=absent",
+            )],
+            remediation: Some(
+                "Add `Permissions-Policy` to restrict unused browser APIs (camera, microphone, geolocation)."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_PERMISSIONS_POLICY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_version_disclosure(
+    http: &HttpEvidence,
+    obs: Option<&DocumentObservations>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let has_version = |val: &str| {
+        val.contains('/')
+            && val
+                .split('/')
+                .nth(1)
+                .is_some_and(|rest| rest.chars().next().is_some_and(|c| c.is_ascii_digit()))
+    };
+
+    let mut exposed = Vec::new();
+    for hdr in ["server", "x-powered-by", "x-aspnet-version"] {
+        if let Some(val) = header_value(http, hdr)
+            && has_version(val)
+        {
+            exposed.push(format!("{hdr}: {val}"));
+        }
+    }
+    if let Some(gen_meta) = obs.and_then(|o| o.meta_generator.as_deref())
+        && gen_meta.chars().any(|c| c.is_ascii_digit())
+    {
+        exposed.push(format!("meta[name=generator]: {gen_meta}"));
+    }
+
+    if exposed.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_VERSION_DISCLOSURE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_VERSION_DISCLOSURE.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "Software version disclosure in headers or generator meta".to_owned(),
+            summary: format!("Exposed version indicators: {}.", exposed.join("; ")),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("version_disclosures={}", exposed.len()),
+            )],
+            remediation: Some(
+                "Strip version numbers from `Server`/`X-Powered-By` headers and `<meta name=\"generator\">`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_VERSION_DISCLOSURE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_insecure_forms(
+    uses_https: bool,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.forms.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_INSECURE_FORMS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no <form> elements present".to_owned(),
+        });
+        return;
+    }
+
+    let insecure_action = obs.forms.iter().any(|f| {
+        uses_https
+            && f.action
+                .as_deref()
+                .is_some_and(|a| a.to_ascii_lowercase().starts_with("http://"))
+    });
+    let password_get = obs.forms.iter().any(|f| {
+        f.has_password_input
+            && f.method
+                .as_deref()
+                .is_none_or(|m| m.eq_ignore_ascii_case("get"))
+    });
+
+    if !insecure_action && !password_get {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INSECURE_FORMS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_INSECURE_FORMS.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Insecure form submission configuration".to_owned(),
+            summary: format!(
+                "insecure_http_action={insecure_action}; password_form_using_get={password_get}."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("insecure_action={insecure_action};password_get={password_get}"),
+            )],
+            remediation: Some(
+                "Submit forms over `https://` and always use `method=\"POST\"` for password forms."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_INSECURE_FORMS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_exposed_secrets(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if http.body_text.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_EXPOSED_SECRETS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "empty response body".to_owned(),
+        });
+        return;
+    }
+
+    let mut matched = Vec::new();
+    let body = &http.body_text;
+    if body.contains("-----BEGIN RSA PRIVATE KEY-----")
+        || body.contains("-----BEGIN EC PRIVATE KEY-----")
+        || body.contains("-----BEGIN OPENSSH PRIVATE KEY-----")
+    {
+        matched.push("private_key_block");
+    }
+    if body.contains("sk_live_") {
+        matched.push("stripe_live_secret_prefix");
+    }
+    if body.contains("ghp_") {
+        matched.push("github_pat_prefix");
+    }
+    if let Some(idx) = body.find("AKIA") {
+        let rest = &body[idx + 4..];
+        if rest.len() >= 16
+            && rest[..16]
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+        {
+            matched.push("aws_access_key_id");
+        }
+    }
+
+    if matched.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_EXPOSED_SECRETS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_EXPOSED_SECRETS.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Critical,
+            confidence: Confidence::High,
+            title: format!("Potential exposed credential/secret patterns ({})", matched.len()),
+            summary: format!("Matched secret indicator(s): {}.", matched.join(", ")),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("secret_indicators={}", matched.join(",")),
+            )],
+            remediation: Some(
+                "Rotate any exposed credentials immediately and remove secrets from client-side responses."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_EXPOSED_SECRETS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -943,6 +1188,7 @@ mod tests {
                 ("x-content-type-options", "nosniff"),
                 ("x-frame-options", "DENY"),
                 ("referrer-policy", "no-referrer"),
+                ("permissions-policy", "geolocation=()"),
             ],
         );
         let result = analyse(&snap);
@@ -1022,5 +1268,32 @@ mod tests {
         assert!(ids.contains(&RULE_CORS));
         assert!(ids.contains(&RULE_MIXED_CONTENT));
         assert!(ids.contains(&RULE_SRI));
+    }
+
+    #[test]
+    fn flags_permissions_policy_version_disclosure_insecure_forms_and_secrets() {
+        let mut snap = snapshot_with_headers(
+            "https://example.com/",
+            vec![("server", "nginx/1.24.0"), ("x-powered-by", "PHP/8.2.0")],
+        );
+        let html = r#"<html><head><meta name="generator" content="WordPress 6.5"></head><body>
+            <form action="http://example.com/login" method="GET"><input type="password"></form>
+            <script>const k = "sk_live_TESTONLY000000000000";</script>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_PERMISSIONS_POLICY));
+        assert!(ids.contains(&RULE_VERSION_DISCLOSURE));
+        assert!(ids.contains(&RULE_INSECURE_FORMS));
+        assert!(ids.contains(&RULE_EXPOSED_SECRETS));
     }
 }
