@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 188,
+  "total_rules": 196,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1606,6 +1606,70 @@
       "dwarf": "StrukturZwerg",
       "module": "analysis::semantics",
       "source_path": "src/analysis/semantics.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.network.mixed_content_loaded",
+      "constant": "RULE_MIXED_CONTENT_LOADED",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.network.third_party_failures",
+      "constant": "RULE_THIRD_PARTY_FAILURES",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.network.redirected_subresources",
+      "constant": "RULE_REDIRECTED_SUBRESOURCES",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.doc.title_presence",
+      "constant": "RULE_DOC_TITLE_PRESENCE",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.doc.generic_page_title",
+      "constant": "RULE_GENERIC_PAGE_TITLE",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.ax.high_ignored_ratio",
+      "constant": "RULE_AX_HIGH_IGNORED_RATIO",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.all_caps_headings",
+      "constant": "RULE_ALL_CAPS_HEADINGS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.integrity.double_escaped_entities",
+      "constant": "RULE_DOUBLE_ESCAPED_ENTITIES",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
       "status": "native_rust"
     }
   ]

@@ -25,6 +25,8 @@ const RULE_TEXT_TO_HTML_RATIO: &str = "inh.content.text_to_html_ratio";
 const RULE_AX_SIGNALS: &str = "inh.ax.machine_readable_signals";
 const RULE_UNRESOLVED_I18N_KEY: &str = "inh.integrity.unresolved_translation_key";
 const RULE_PLACEHOLDER_CONTACT: &str = "inh.integrity.placeholder_contact";
+const RULE_ALL_CAPS_HEADINGS: &str = "inh.content.all_caps_headings";
+const RULE_DOUBLE_ESCAPED_ENTITIES: &str = "inh.integrity.double_escaped_entities";
 
 /// All rule identifiers owned by `InhaltsZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -42,6 +44,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_AX_SIGNALS,
     RULE_UNRESOLVED_I18N_KEY,
     RULE_PLACEHOLDER_CONTACT,
+    RULE_ALL_CAPS_HEADINGS,
+    RULE_DOUBLE_ESCAPED_ENTITIES,
 ];
 
 /// Evaluates visible word count, freshness headers, and content quality signals over `http` and `obs`.
@@ -64,6 +68,8 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_ax_signals(obs, &mut findings, &mut checks);
     check_unresolved_translation_keys(obs, &mut findings, &mut checks);
     check_placeholder_contact(obs, &mut findings, &mut checks);
+    check_all_caps_headings(obs, &mut findings, &mut checks);
+    check_double_escaped_entities(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Inhalts,
@@ -828,6 +834,111 @@ fn check_placeholder_contact(
     }
 }
 
+fn check_all_caps_headings(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.headings.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_ALL_CAPS_HEADINGS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no headings present".to_owned(),
+        });
+        return;
+    }
+
+    let shouty: Vec<&str> = obs
+        .headings
+        .iter()
+        .filter(|h| {
+            let alpha: Vec<char> = h.text.chars().filter(|c| c.is_alphabetic()).collect();
+            alpha.len() >= 8 && alpha.iter().all(|c| c.is_uppercase())
+        })
+        .map(|h| h.text.as_str())
+        .collect();
+
+    if shouty.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ALL_CAPS_HEADINGS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_ALL_CAPS_HEADINGS.to_owned()),
+        category: FindingCategory::Content,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Low,
+        confidence: Confidence::High,
+        title: format!("All-uppercase headings detected ({})", shouty.len()),
+        summary: format!(
+            "{} heading(s) use all-uppercase text in source HTML (for example `{}`), reducing scannability.",
+            shouty.len(),
+            shouty[0]
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("all_caps_headings={}", shouty.len()),
+        )],
+        remediation: Some(
+            "Write headings in natural sentence or title case and apply CSS `text-transform: uppercase` if needed."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_ALL_CAPS_HEADINGS.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_double_escaped_entities(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let artefacts = ["&amp;", "&lt;", "&gt;", "&nbsp;", "&quot;"];
+    let matched = artefacts
+        .into_iter()
+        .find(|pat| obs.visible_text_sample.contains(pat));
+
+    let Some(pat) = matched else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DOUBLE_ESCAPED_ENTITIES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    };
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_DOUBLE_ESCAPED_ENTITIES.to_owned()),
+        category: FindingCategory::Content,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: "Double-escaped HTML entities in visible text".to_owned(),
+        summary: format!(
+            "Visible text contains literal entity sequence `{pat}` after HTML decoding, indicating double-escaping."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("double_escaped_entity={pat}"),
+        )],
+        remediation: Some(
+            "Decode or normalise upstream content once before HTML template escaping.".to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_DOUBLE_ESCAPED_ENTITIES.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -971,5 +1082,18 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_UNRESOLVED_I18N_KEY));
         assert!(ids.contains(&RULE_PLACEHOLDER_CONTACT));
+    }
+
+    #[test]
+    fn flags_all_caps_headings_and_double_escaped_entities() {
+        let html = r"<html><body>
+            <h1>WELCOME TO OUR PLATFORM</h1>
+            <p>Price is &amp;amp; details &amp;nbsp; follow.</p>
+        </body></html>";
+        let (http, obs) = http_with_body(html, Vec::new());
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_ALL_CAPS_HEADINGS));
+        assert!(ids.contains(&RULE_DOUBLE_ESCAPED_ENTITIES));
     }
 }

@@ -30,6 +30,9 @@ const RULE_RENDERED_AXE: &str = "a11y.rendered.contrast_and_axe";
 const RULE_AX_MISSING_NAME: &str = "a11y.ax.missing_accessible_name";
 const RULE_AX_HIDDEN_FOCUSABLE: &str = "a11y.ax.hidden_focusable_element";
 const RULE_BEHAVIOURAL: &str = "a11y.behavioural.keyboard_and_focus";
+const RULE_DOC_TITLE_PRESENCE: &str = "a11y.doc.title_presence";
+const RULE_GENERIC_PAGE_TITLE: &str = "a11y.doc.generic_page_title";
+const RULE_AX_HIGH_IGNORED_RATIO: &str = "a11y.ax.high_ignored_ratio";
 
 /// Source-level rule identifiers owned by `ZugänglichkeitsZwerg`.
 pub const SOURCE_RULES: &[&str] = &[
@@ -45,6 +48,8 @@ pub const SOURCE_RULES: &[&str] = &[
     RULE_MEDIA_CAPTIONS,
     RULE_SUSPICIOUS_ALT,
     RULE_AMBIGUOUS_LINKS,
+    RULE_DOC_TITLE_PRESENCE,
+    RULE_GENERIC_PAGE_TITLE,
 ];
 
 /// Evaluates source-level accessibility checks and records higher-level gaps.
@@ -88,6 +93,7 @@ pub fn analyse_with_browser(
     check_media_captions(obs, &mut findings, &mut checks);
     check_suspicious_alt_text(obs, &mut findings, &mut checks);
     check_ambiguous_links(obs, &mut findings, &mut checks);
+    check_doc_title_accessibility(obs, &mut findings, &mut checks);
 
     check_axe_violations(axe, &mut findings, &mut checks);
     check_ax_tree(browser, &mut findings, &mut checks);
@@ -119,7 +125,11 @@ fn check_ax_tree(
     };
 
     let Some(tree) = ax else {
-        for rule in [RULE_AX_MISSING_NAME, RULE_AX_HIDDEN_FOCUSABLE] {
+        for rule in [
+            RULE_AX_MISSING_NAME,
+            RULE_AX_HIDDEN_FOCUSABLE,
+            RULE_AX_HIGH_IGNORED_RATIO,
+        ] {
             checks.push(CheckStatus::Unavailable {
                 rule_id: RuleId(rule.to_owned()),
                 evidence_level: EvidenceLevel::Rendered,
@@ -202,6 +212,8 @@ fn check_ax_tree(
             evidence_level: EvidenceLevel::Rendered,
         });
     }
+
+    check_ax_ignored_ratio(tree, findings, checks);
 }
 
 /// Evaluates only Level 2 `axe-core` evidence without re-running source HTML checks.
@@ -801,6 +813,144 @@ fn check_ambiguous_links(
     );
 }
 
+fn check_doc_title_accessibility(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(title) = obs
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+    else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DOC_TITLE_PRESENCE.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Document is missing a non-empty <title>".to_owned(),
+            summary: "Screen readers rely on `<title>` to announce page purpose upon navigation."
+                .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "title=absent_or_empty",
+            )],
+            remediation: Some(
+                "Provide a descriptive, unique `<title>` element in `<head>`.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DOC_TITLE_PRESENCE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_GENERIC_PAGE_TITLE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "document <title> absent".to_owned(),
+        });
+        return;
+    };
+
+    checks.push(CheckStatus::Passed {
+        rule_id: RuleId(RULE_DOC_TITLE_PRESENCE.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+
+    let lower = title.to_ascii_lowercase();
+    let generic = matches!(
+        lower.as_str(),
+        "untitled" | "untitled document" | "home" | "index" | "document" | "page" | "welcome"
+    );
+    if generic {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_GENERIC_PAGE_TITLE.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Generic page <title> `{title}`"),
+            summary: format!(
+                "Page `<title>` (`{title}`) is generic and does not distinguish the page's specific topic or purpose."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("title={title}"),
+            )],
+            remediation: Some(
+                "Use a specific `<title>` describing both the page topic and site name.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_GENERIC_PAGE_TITLE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_GENERIC_PAGE_TITLE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_ax_ignored_ratio(
+    tree: &crate::domain::AccessibilityTreeSummary,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if tree.truncated || tree.total_nodes < 20 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_AX_HIGH_IGNORED_RATIO.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "AX tree too small or truncated for ignored-node ratio".to_owned(),
+        });
+        return;
+    }
+
+    let pct = tree.ignored_nodes.saturating_mul(100) / tree.total_nodes;
+    if pct >= 85 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_AX_HIGH_IGNORED_RATIO.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::Medium,
+            title: format!("High proportion of ignored AX tree nodes ({pct}%)"),
+            summary: format!(
+                "{} of {} Chromium AX tree nodes ({pct}%) are ignored, indicating heavy non-semantic wrapper or hidden DOM bloat.",
+                tree.ignored_nodes, tree.total_nodes
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!(
+                    "ax_ignored_nodes={};ax_total_nodes={}",
+                    tree.ignored_nodes, tree.total_nodes
+                ),
+            )],
+            remediation: Some(
+                "Reduce redundant wrapper elements and ensure meaningful content is exposed to assistive technologies."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_AX_HIGH_IGNORED_RATIO.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_AX_HIGH_IGNORED_RATIO.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -938,5 +1088,29 @@ mod tests {
         assert!(ids.contains(&RULE_MEDIA_CAPTIONS));
         assert!(ids.contains(&RULE_SUSPICIOUS_ALT));
         assert!(ids.contains(&RULE_AMBIGUOUS_LINKS));
+    }
+
+    #[test]
+    fn flags_missing_or_generic_title_and_high_ax_ignored_ratio() {
+        let obs = DocumentObservations::from_html(
+            r#"<html lang="en"><head><title>Home</title></head><body></body></html>"#,
+        );
+        let browser = CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                ax_tree: Some(crate::domain::AccessibilityTreeSummary {
+                    total_nodes: 100,
+                    ignored_nodes: 90,
+                    interactive_without_name: 0,
+                    hidden_focusable_count: 0,
+                    truncated: false,
+                }),
+                ..BrowserEvidence::default()
+            },
+        };
+        let res = analyse_with_browser(&obs, &CollectorOutcome::default(), &browser);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_GENERIC_PAGE_TITLE));
+        assert!(ids.contains(&RULE_AX_HIGH_IGNORED_RATIO));
     }
 }

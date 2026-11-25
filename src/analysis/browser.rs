@@ -24,6 +24,9 @@ const RULE_UNCAUGHT_EXCEPTION: &str = "browser.js.uncaught_exception";
 const RULE_UNHANDLED_REJECTION: &str = "browser.js.unhandled_rejection";
 const RULE_CSP_VIOLATION: &str = "browser.js.csp_violation";
 const RULE_CORS_BLOCK: &str = "browser.network.cors_block";
+const RULE_MIXED_CONTENT_LOADED: &str = "browser.network.mixed_content_loaded";
+const RULE_THIRD_PARTY_FAILURES: &str = "browser.network.third_party_failures";
+const RULE_REDIRECTED_SUBRESOURCES: &str = "browser.network.redirected_subresources";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -38,6 +41,9 @@ pub const ALL_RULES: &[&str] = &[
     RULE_UNHANDLED_REJECTION,
     RULE_CSP_VIOLATION,
     RULE_CORS_BLOCK,
+    RULE_MIXED_CONTENT_LOADED,
+    RULE_THIRD_PARTY_FAILURES,
+    RULE_REDIRECTED_SUBRESOURCES,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -76,6 +82,9 @@ pub fn analyse_with_document(
     check_unhandled_rejections(browser, &mut findings, &mut checks);
     check_csp_violations(browser, &mut findings, &mut checks);
     check_cors_blocks(browser, &mut findings, &mut checks);
+    check_mixed_content_loaded(browser, &mut findings, &mut checks);
+    check_third_party_failures(browser, &mut findings, &mut checks);
+    check_redirected_subresources(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -680,6 +689,191 @@ fn check_cors_blocks(
     }
 }
 
+fn check_mixed_content_loaded(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if !browser.final_url.starts_with("https://") {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_MIXED_CONTENT_LOADED.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "page was not loaded over HTTPS".to_owned(),
+        });
+        return;
+    }
+    if browser.resources.is_empty() && browser.resources_truncated {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_MIXED_CONTENT_LOADED.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "subresource waterfall truncated before capture".to_owned(),
+        });
+        return;
+    }
+
+    let insecure: Vec<&str> = browser
+        .resources
+        .iter()
+        .filter(|r| r.url.starts_with("http://"))
+        .map(|r| r.url.as_str())
+        .collect();
+    if insecure.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MIXED_CONTENT_LOADED.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_MIXED_CONTENT_LOADED.to_owned()),
+        category: FindingCategory::Security,
+        evidence_level: EvidenceLevel::Rendered,
+        kind: FindingKind::Deterministic,
+        severity: Severity::High,
+        confidence: Confidence::High,
+        title: format!(
+            "Runtime mixed content observed ({} HTTP subresource(s))",
+            insecure.len()
+        ),
+        summary: format!(
+            "HTTPS page loaded {} subresource(s) over plain HTTP (for example `{}`).",
+            insecure.len(),
+            insecure[0]
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!("mixed_content_count={}", insecure.len()),
+        )],
+        remediation: Some(
+            "Serve all runtime subresources over HTTPS and enforce `upgrade-insecure-requests`."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_MIXED_CONTENT_LOADED.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
+}
+
+fn check_third_party_failures(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let page_host = url::Url::parse(&browser.final_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    let Some(host) = page_host else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_THIRD_PARTY_FAILURES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "final browser URL host unavailable".to_owned(),
+        });
+        return;
+    };
+
+    let third_party: Vec<&str> = browser
+        .failed_requests
+        .iter()
+        .filter(|req| {
+            url::Url::parse(&req.url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_ascii_lowercase))
+                .is_some_and(|h| h != host)
+        })
+        .map(|req| req.url.as_str())
+        .collect();
+
+    if third_party.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_THIRD_PARTY_FAILURES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_THIRD_PARTY_FAILURES.to_owned()),
+        category: FindingCategory::Reliability,
+        evidence_level: EvidenceLevel::Rendered,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!("Third-party subresource failures ({})", third_party.len()),
+        summary: format!(
+            "{} external subresource request(s) failed during browser load (for example `{}`).",
+            third_party.len(),
+            third_party[0]
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!("third_party_failed_requests={}", third_party.len()),
+        )],
+        remediation: Some(
+            "Audit third-party scripts/assets for availability, timeouts, or stale integrations."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_THIRD_PARTY_FAILURES.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
+}
+
+fn check_redirected_subresources(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let redirected: Vec<&str> = browser
+        .resources
+        .iter()
+        .filter(|r| r.status_code.is_some_and(|s| (300..400).contains(&s)))
+        .map(|r| r.url.as_str())
+        .collect();
+
+    if redirected.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_REDIRECTED_SUBRESOURCES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_REDIRECTED_SUBRESOURCES.to_owned()),
+        category: FindingCategory::Performance,
+        evidence_level: EvidenceLevel::Rendered,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Low,
+        confidence: Confidence::High,
+        title: format!(
+            "Redirected subresources detected ({})",
+            redirected.len()
+        ),
+        summary: format!(
+            "{} subresource request(s) received HTTP 3xx redirects during page load (for example `{}`).",
+            redirected.len(),
+            redirected[0]
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!("redirected_subresources={}", redirected.len()),
+        )],
+        remediation: Some(
+            "Reference canonical subresource URLs directly to avoid extra round trips.".to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_REDIRECTED_SUBRESOURCES.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -866,5 +1060,39 @@ mod tests {
         assert!(ids.contains(&RULE_UNHANDLED_REJECTION));
         assert!(ids.contains(&RULE_CSP_VIOLATION));
         assert!(ids.contains(&RULE_CORS_BLOCK));
+    }
+
+    #[test]
+    fn flags_mixed_content_third_party_failures_and_redirected_subresources() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                resources: vec![
+                    crate::domain::ResourceTimingObs {
+                        url: "http://insecure.example.org/script.js".to_owned(),
+                        resource_type: "script".to_owned(),
+                        status_code: Some(200),
+                        ..crate::domain::ResourceTimingObs::default()
+                    },
+                    crate::domain::ResourceTimingObs {
+                        url: "https://cdn.example.net/bundle.js".to_owned(),
+                        resource_type: "script".to_owned(),
+                        status_code: Some(302),
+                        ..crate::domain::ResourceTimingObs::default()
+                    },
+                ],
+                failed_requests: vec![FailedNetworkRequest {
+                    url: "https://analytics.thirdparty.test/collect".to_owned(),
+                    error_text: "net::ERR_CONNECTION_TIMED_OUT".to_owned(),
+                    status_code: Some(504),
+                }],
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_MIXED_CONTENT_LOADED));
+        assert!(ids.contains(&RULE_THIRD_PARTY_FAILURES));
+        assert!(ids.contains(&RULE_REDIRECTED_SUBRESOURCES));
     }
 }
