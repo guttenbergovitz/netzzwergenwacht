@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 225,
+  "total_implemented_capabilities": 229,
   "by_dwarf": {
     "LeistungsZwerg": 34,
     "SicherheitsZwerg": 36,
@@ -1301,6 +1301,42 @@
       "evidence_level": "Source",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.cookies.invalid_domain_scope",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "pending"
+    },
+    {
+      "id": "sec.cookies.insecure_samesite_none",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "pending"
+    },
+    {
+      "id": "sec.cookies.inconsistent_attributes",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "pending"
+    },
+    {
+      "id": "sec.privacy.persistent_identifiers",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "pending"
     },
     {
       "id": "sec.forms.cross_origin_submission",

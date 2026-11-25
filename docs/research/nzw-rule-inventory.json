@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 231,
+  "total_rules": 235,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1243,6 +1243,38 @@
     {
       "rule_id": "sec.cookies.excessive_lifetime",
       "constant": "RULE_COOKIE_LIFETIME",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.cookies.invalid_domain_scope",
+      "constant": "RULE_COOKIE_INVALID_DOMAIN",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.cookies.insecure_samesite_none",
+      "constant": "RULE_COOKIE_INSECURE_SAMESITE",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.cookies.inconsistent_attributes",
+      "constant": "RULE_COOKIE_INCONSISTENT_ATTRS",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.privacy.persistent_identifiers",
+      "constant": "RULE_PERSISTENT_IDENTIFIERS",
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
