@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 120,
+  "total_rules": 127,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1062,6 +1062,62 @@
       "dwarf": "GestaltungsZwerg",
       "module": "analysis::visual",
       "source_path": "src/analysis/visual.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.dom.excessive_stylesheets",
+      "constant": "RULE_EXCESSIVE_STYLESHEETS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.assets.font_display_swap",
+      "constant": "RULE_FONT_DISPLAY_SWAP",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.runtime.third_party_requests",
+      "constant": "RULE_RUNTIME_THIRD_PARTY_REQUESTS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.analytics.tracking_bloat",
+      "constant": "RULE_ANALYTICS_BLOAT",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.runtime.excessive_subresources",
+      "constant": "RULE_EXCESSIVE_SUBRESOURCES",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.crawl.deep_crawl_depth",
+      "constant": "RULE_DEEP_CRAWL_DEPTH",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.seo.sitemap_non_indexable",
+      "constant": "RULE_SITEMAP_NON_INDEXABLE",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
       "status": "native_rust"
     }
   ]

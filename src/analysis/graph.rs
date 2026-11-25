@@ -26,6 +26,8 @@ const RULE_HREFLANG_RECIPROCITY: &str = "graph.i18n.hreflang_reciprocity";
 const RULE_DUPLICATE_METADATA: &str = "graph.content.duplicate_metadata";
 const RULE_ENTITY_CONFLICTS: &str = "graph.schema.entity_conflicts";
 const RULE_DANGLING_ENTITIES: &str = "graph.schema.dangling_entities";
+const RULE_DEEP_CRAWL_DEPTH: &str = "graph.crawl.deep_crawl_depth";
+const RULE_SITEMAP_NON_INDEXABLE: &str = "graph.seo.sitemap_non_indexable";
 
 /// All rule identifiers evaluated by the Application Graph engine.
 pub const ALL_RULES: &[&str] = &[
@@ -39,6 +41,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_DUPLICATE_METADATA,
     RULE_ENTITY_CONFLICTS,
     RULE_DANGLING_ENTITIES,
+    RULE_DEEP_CRAWL_DEPTH,
+    RULE_SITEMAP_NON_INDEXABLE,
 ];
 
 /// Per-page input record used to construct an [`ApplicationGraph`].
@@ -149,11 +153,13 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
     check_broken_internal_links(graph, &mut netz_findings, &mut netz_checks);
     check_links_to_redirects(graph, &mut netz_findings, &mut netz_checks);
     check_orphan_candidates(graph, &mut netz_findings, &mut netz_checks);
+    check_deep_crawl_depth(graph, &mut netz_findings, &mut netz_checks);
 
     check_links_to_non_indexable(graph, &mut such_findings, &mut such_checks);
     check_canonical_graph(graph, &mut such_findings, &mut such_checks);
     check_hreflang_reciprocity(graph, &mut such_findings, &mut such_checks);
     check_entity_graph(graph, &mut such_findings, &mut such_checks);
+    check_sitemap_non_indexable(graph, &mut such_findings, &mut such_checks);
 
     check_broken_anchors(graph, &mut str_findings, &mut str_checks);
     check_duplicate_metadata(graph, &mut inh_findings, &mut inh_checks);
@@ -890,6 +896,104 @@ fn check_dangling_entities(
     }
 }
 
+fn check_deep_crawl_depth(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let deep: Vec<String> = graph
+        .pages
+        .values()
+        .filter(|p| p.depth > 3)
+        .map(|p| format!("{} (depth={})", p.url, p.depth))
+        .collect();
+
+    if deep.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DEEP_CRAWL_DEPTH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DEEP_CRAWL_DEPTH.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Pages buried at crawl depth > 3 ({})", deep.len()),
+            summary: format!(
+                "{} page(s) require more than 3 clicks from the seed URL: {}.",
+                deep.len(),
+                deep.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("deep_pages={}", deep.len()),
+            )],
+            remediation: Some(
+                "Flatten site navigation and add internal links to important deep pages."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DEEP_CRAWL_DEPTH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_sitemap_non_indexable(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let bad: Vec<String> = graph
+        .pages
+        .values()
+        .filter(|p| p.in_sitemap && (!p.indexable || p.status_code.is_some_and(|s| s >= 300)))
+        .map(|p| p.url.clone())
+        .collect();
+
+    if bad.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SITEMAP_NON_INDEXABLE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SITEMAP_NON_INDEXABLE.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Non-indexable or non-200 URLs in sitemap.xml ({})",
+                bad.len()
+            ),
+            summary: format!(
+                "{} sitemap URL(s) are marked `noindex` or return non-200 status: {}.",
+                bad.len(),
+                bad.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("sitemap_non_indexable={}", bad.len()),
+            )],
+            remediation: Some(
+                "Include only canonical, HTTP 200, indexable URLs in `sitemap.xml`.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SITEMAP_NON_INDEXABLE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1017,5 +1121,23 @@ mod tests {
 
         assert!(rule_ids.contains(&RULE_ENTITY_CONFLICTS));
         assert!(rule_ids.contains(&RULE_DANGLING_ENTITIES));
+    }
+
+    #[test]
+    fn detects_deep_crawl_depth_and_sitemap_non_indexable() {
+        let mut p1 = page("https://example.com/deep");
+        p1.depth = 4;
+        p1.in_sitemap = true;
+        p1.indexable = false;
+
+        let graph = ApplicationGraph::from_pages(&[p1], true);
+        let results = analyse(&graph);
+        let rule_ids: Vec<&str> = results
+            .iter()
+            .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+
+        assert!(rule_ids.contains(&RULE_DEEP_CRAWL_DEPTH));
+        assert!(rule_ids.contains(&RULE_SITEMAP_NON_INDEXABLE));
     }
 }

@@ -30,6 +30,9 @@ const RULE_RUNTIME_TRANSFER_WEIGHT: &str = "perf.runtime.total_transfer_weight";
 const RULE_RUNTIME_UNCOMPRESSED: &str = "perf.runtime.uncompressed_text_assets";
 const RULE_RUNTIME_UNCACHED: &str = "perf.runtime.uncached_static_assets";
 const RULE_RENDERED_DOM_SIZE: &str = "perf.runtime.rendered_dom_size";
+const RULE_EXCESSIVE_STYLESHEETS: &str = "perf.dom.excessive_stylesheets";
+const RULE_FONT_DISPLAY_SWAP: &str = "perf.assets.font_display_swap";
+const RULE_RUNTIME_THIRD_PARTY_REQUESTS: &str = "perf.runtime.third_party_requests";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -44,6 +47,8 @@ const ALL_SOURCE_RULES: &[&str] = &[
     RULE_RENDER_BLOCKING_CSS,
     RULE_PRECONNECT,
     RULE_LAZY_LOADING,
+    RULE_EXCESSIVE_STYLESHEETS,
+    RULE_FONT_DISPLAY_SWAP,
 ];
 
 /// Configurable thresholds for Phase 1 HTTP performance checks.
@@ -129,9 +134,12 @@ fn analyse_with_thresholds_and_document(
         check_render_blocking_css(doc, &mut findings, &mut checks);
         check_preconnect(http, doc, &mut findings, &mut checks);
         check_lazy_loading(doc, &mut findings, &mut checks);
+        check_excessive_stylesheets(doc, &mut findings, &mut checks);
+        check_font_display_swap(doc, &mut findings, &mut checks);
     }
     check_core_web_vitals(&snapshot.lighthouse, &mut findings, &mut checks);
     check_runtime_resources(&snapshot.browser, &mut findings, &mut checks);
+    check_runtime_third_party(&snapshot.browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -1129,6 +1137,169 @@ fn check_rendered_dom_size(
     }
 }
 
+fn check_excessive_stylesheets(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let count = obs.stylesheets.len();
+    if count > 5 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_EXCESSIVE_STYLESHEETS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Excessive external stylesheets ({count})"),
+            summary: format!(
+                "Document links {count} external stylesheets (> 5), increasing render-blocking roundtrips."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("stylesheet_count={count}"),
+            )],
+            remediation: Some(
+                "Bundle critical CSS and defer non-critical stylesheets.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_EXCESSIVE_STYLESHEETS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_EXCESSIVE_STYLESHEETS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_font_display_swap(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let google_fonts: Vec<&str> = obs
+        .stylesheets
+        .iter()
+        .map(|s| s.href.as_str())
+        .filter(|href| href.contains("fonts.googleapis.com/css"))
+        .collect();
+    if google_fonts.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_FONT_DISPLAY_SWAP.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no Google Fonts stylesheet detected".to_owned(),
+        });
+        return;
+    }
+
+    let missing_display = google_fonts
+        .iter()
+        .filter(|href| !href.contains("display="))
+        .count();
+    if missing_display > 0 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_FONT_DISPLAY_SWAP.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Google Fonts stylesheet missing display=swap ({missing_display})"),
+            summary: format!(
+                "{missing_display} Google Fonts stylesheet(s) omit `display=swap` (or fallback/optional), risking invisible text (FOIT)."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("google_fonts_missing_display={missing_display}"),
+            )],
+            remediation: Some("Append `&display=swap` to Google Fonts CSS URLs.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_FONT_DISPLAY_SWAP.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_FONT_DISPLAY_SWAP.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_runtime_third_party(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) = browser
+    else {
+        return;
+    };
+    let Ok(page_url) = url::Url::parse(&data.final_url) else {
+        return;
+    };
+    let Some(page_host) = page_url.host_str() else {
+        return;
+    };
+
+    let mut third_party_hosts = std::collections::BTreeSet::new();
+    let mut third_party_reqs = 0usize;
+    for req in &data.resources {
+        if let Ok(req_url) = url::Url::parse(&req.url)
+            && let Some(host) = req_url.host_str()
+            && !host.eq_ignore_ascii_case(page_host)
+        {
+            third_party_reqs += 1;
+            third_party_hosts.insert(host.to_ascii_lowercase());
+        }
+    }
+
+    if third_party_reqs >= 25 || third_party_hosts.len() >= 10 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_RUNTIME_THIRD_PARTY_REQUESTS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Heavy third-party network fan-out ({third_party_reqs} requests across {} hosts)",
+                third_party_hosts.len()
+            ),
+            summary: format!(
+                "Page load triggered {third_party_reqs} third-party subresource requests across {} external host(s).",
+                third_party_hosts.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!(
+                    "third_party_requests={third_party_reqs};third_party_hosts={}",
+                    third_party_hosts.len()
+                ),
+            )],
+            remediation: Some(
+                "Audit and self-host or defer non-essential third-party scripts and pixels."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_RUNTIME_THIRD_PARTY_REQUESTS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_RUNTIME_THIRD_PARTY_REQUESTS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1392,5 +1563,67 @@ mod tests {
         assert!(ids.contains(&RULE_RUNTIME_UNCOMPRESSED));
         assert!(ids.contains(&RULE_RUNTIME_UNCACHED));
         assert!(ids.contains(&RULE_RENDERED_DOM_SIZE));
+    }
+
+    #[test]
+    fn flags_excessive_stylesheets_font_display_and_runtime_third_party() {
+        let html = r#"<html><head>
+            <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">
+            <link rel="stylesheet" href="/1.css"><link rel="stylesheet" href="/2.css">
+            <link rel="stylesheet" href="/3.css"><link rel="stylesheet" href="/4.css">
+            <link rel="stylesheet" href="/5.css">
+        </head><body></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let third_party_reqs: Vec<crate::domain::ResourceTimingObs> = (0..10)
+            .map(|i| crate::domain::ResourceTimingObs {
+                url: format!("https://cdn{i}.thirdparty.test/script.js"),
+                resource_type: "script".to_owned(),
+                mime_type: None,
+                transfer_size: Some(1024),
+                duration_ms: None,
+                protocol: None,
+                cache_control: Some("max-age=3600".to_owned()),
+                content_encoding: Some("br".to_owned()),
+            })
+            .collect();
+        let snap = EvidenceSnapshot {
+            target: AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "content-encoding".to_owned(),
+                        value: "br".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 512,
+                    body_truncated: false,
+                    body_text: html.to_owned(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    resources: third_party_reqs,
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let res = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_EXCESSIVE_STYLESHEETS));
+        assert!(ids.contains(&RULE_FONT_DISPLAY_SWAP));
+        assert!(ids.contains(&RULE_RUNTIME_THIRD_PARTY_REQUESTS));
     }
 }
