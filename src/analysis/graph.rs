@@ -60,7 +60,7 @@ pub const ALL_RULES: &[&str] = &[
 ];
 
 /// Compact subresource record attached to a [`GraphPageInput`] for `ResourceGraph` projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GraphResourceInput {
     /// Subresource URL.
     pub url: String,
@@ -68,6 +68,8 @@ pub struct GraphResourceInput {
     pub status_code: Option<u16>,
     /// Observed transfer size in bytes, if known.
     pub transfer_size: Option<u64>,
+    /// Observed `Cache-Control` header, if known.
+    pub cache_control: Option<String>,
 }
 
 /// Per-page input record used to construct an [`ApplicationGraph`].
@@ -1429,7 +1431,7 @@ fn check_heavy_shared_assets(
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    let mut asset_pages: BTreeMap<String, (BTreeSet<String>, u64)> = BTreeMap::new();
+    let mut asset_pages: BTreeMap<String, (BTreeSet<String>, u64, bool)> = BTreeMap::new();
     let mut any_resources = false;
     for page in graph.pages.values() {
         for res in &page.resources {
@@ -1437,9 +1439,16 @@ fn check_heavy_shared_assets(
             if let Some(bytes) = res.transfer_size {
                 let entry = asset_pages
                     .entry(res.url.clone())
-                    .or_insert_with(|| (BTreeSet::new(), 0));
+                    .or_insert_with(|| (BTreeSet::new(), 0, false));
                 entry.0.insert(page.url.clone());
                 entry.1 = entry.1.max(bytes);
+                let weak_cache = res.cache_control.as_deref().is_some_and(|cc| {
+                    let low = cc.to_ascii_lowercase();
+                    low.contains("no-store")
+                        || low.contains("no-cache")
+                        || !low.contains("max-age=")
+                });
+                entry.2 |= weak_cache;
             }
         }
     }
@@ -1453,11 +1462,18 @@ fn check_heavy_shared_assets(
         return;
     }
 
+    let mut any_weak_cache = false;
     let heavy: Vec<String> = asset_pages
         .into_iter()
-        .filter(|(_, (pages, max_bytes))| pages.len() >= 2 && *max_bytes > 512_000)
-        .map(|(url, (pages, max_bytes))| {
-            format!("{url} ({} KiB, {} pages)", max_bytes / 1024, pages.len())
+        .filter(|(_, (pages, max_bytes, _))| pages.len() >= 2 && *max_bytes > 512_000)
+        .map(|(url, (pages, max_bytes, weak_cache))| {
+            any_weak_cache |= weak_cache;
+            let cache_note = if weak_cache { ", weak/uncached" } else { "" };
+            format!(
+                "{url} ({} KiB, {} pages{cache_note})",
+                max_bytes / 1024,
+                pages.len()
+            )
         })
         .collect();
     if heavy.is_empty() {
@@ -1472,7 +1488,11 @@ fn check_heavy_shared_assets(
             category: FindingCategory::Performance,
             evidence_level: EvidenceLevel::Rendered,
             kind: FindingKind::Deterministic,
-            severity: Severity::Medium,
+            severity: if any_weak_cache {
+                Severity::Medium
+            } else {
+                Severity::Low
+            },
             confidence: Confidence::High,
             title: format!("Heavy shared subresource dependencies ({})", heavy.len()),
             summary: format!(
@@ -1655,6 +1675,7 @@ mod tests {
             url: "https://cdn.thirdparty.test/broken.js".to_owned(),
             status_code: Some(404),
             transfer_size: Some(0),
+            cache_control: None,
         }];
         let mut p2 = page("https://example.com/filter?color=2");
         p2.resources = p1.resources.clone();
@@ -1682,6 +1703,7 @@ mod tests {
             url: "https://example.com/vendor.js".to_owned(),
             status_code: Some(200),
             transfer_size: Some(700_000),
+            cache_control: Some("no-cache".to_owned()),
         }];
         let mut p2 = page("https://example.com/about/");
         p2.resources = p1.resources.clone();

@@ -714,7 +714,9 @@ fn check_mixed_content_loaded(
     let insecure: Vec<&str> = browser
         .resources
         .iter()
-        .filter(|r| r.url.starts_with("http://"))
+        .filter(|r| {
+            r.url.starts_with("http://") && (r.status_code.is_some() || r.transfer_size.is_some())
+        })
         .map(|r| r.url.as_str())
         .collect();
     if insecure.is_empty() {
@@ -831,7 +833,10 @@ fn check_redirected_subresources(
     let redirected: Vec<&str> = browser
         .resources
         .iter()
-        .filter(|r| r.status_code.is_some_and(|s| (300..400).contains(&s)))
+        .filter(|r| {
+            r.status_code
+                .is_some_and(|s| matches!(s, 301 | 302 | 303 | 307 | 308))
+        })
         .map(|r| r.url.as_str())
         .collect();
 

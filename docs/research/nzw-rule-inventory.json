@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 204,
+  "total_rules": 206,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1734,6 +1734,22 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.js.unused_code_ratio",
+      "constant": "RULE_JS_UNUSED_COVERAGE",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.css.unused_code_ratio",
+      "constant": "RULE_CSS_UNUSED_COVERAGE",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
       "status": "native_rust"
     }
   ]

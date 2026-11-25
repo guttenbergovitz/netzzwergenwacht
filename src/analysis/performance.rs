@@ -43,6 +43,8 @@ const RULE_FONT_LEGACY_FORMAT: &str = "perf.font.legacy_format";
 const RULE_EXCESSIVE_WEBFONTS: &str = "perf.font.excessive_webfonts";
 const RULE_UNBOUNDED_IMAGE_WEIGHT: &str = "perf.images.unbounded_image_weight";
 const RULE_HASHED_ASSET_SHORT_TTL: &str = "perf.cache.hashed_asset_short_ttl";
+const RULE_JS_UNUSED_COVERAGE: &str = "perf.js.unused_code_ratio";
+const RULE_CSS_UNUSED_COVERAGE: &str = "perf.css.unused_code_ratio";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -154,6 +156,7 @@ fn analyse_with_thresholds_and_document(
     check_waterfall_and_cache_semantics(&snapshot.browser, &mut findings, &mut checks);
     check_runtime_cls_lcp_and_fonts(&snapshot.browser, &mut findings, &mut checks);
     check_runtime_asset_budgets(&snapshot.browser, &mut findings, &mut checks);
+    check_runtime_code_coverage(&snapshot.browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -1422,7 +1425,10 @@ fn check_waterfall_and_cache_semantics(
     let redirected: Vec<&str> = data
         .resources
         .iter()
-        .filter(|r| r.status_code.is_some_and(|s| (300..400).contains(&s)))
+        .filter(|r| {
+            r.status_code
+                .is_some_and(|s| matches!(s, 301 | 302 | 303 | 307 | 308))
+        })
         .map(|r| r.url.as_str())
         .collect();
     if redirected.is_empty() {
@@ -1730,12 +1736,25 @@ fn check_image_weight_budget(
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    let total_img_bytes: u64 = data
+    let image_resources: Vec<&crate::domain::ResourceTimingObs> = data
         .resources
         .iter()
         .filter(|r| r.resource_type == "image")
+        .collect();
+    let measured_sizes: Vec<u64> = image_resources
+        .iter()
         .filter_map(|r| r.transfer_size)
-        .sum();
+        .collect();
+    if !image_resources.is_empty() && measured_sizes.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_UNBOUNDED_IMAGE_WEIGHT.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "image transfer sizes unavailable".to_owned(),
+        });
+        return;
+    }
+
+    let total_img_bytes: u64 = measured_sizes.into_iter().sum();
     if total_img_bytes <= 1_572_864 {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_UNBOUNDED_IMAGE_WEIGHT.to_owned()),
@@ -1829,6 +1848,110 @@ fn check_hashed_asset_ttl(
     });
     checks.push(CheckStatus::Failed {
         rule_id: RuleId(RULE_HASHED_ASSET_SHORT_TTL.to_owned()),
+        evidence_level: EvidenceLevel::Rendered,
+    });
+}
+
+fn check_runtime_code_coverage(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) = browser
+    else {
+        return;
+    };
+    let Some(cov) = data.coverage.as_ref() else {
+        for rule in [RULE_JS_UNUSED_COVERAGE, RULE_CSS_UNUSED_COVERAGE] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason: "CDP JS/CSS coverage telemetry unavailable".to_owned(),
+            });
+        }
+        return;
+    };
+
+    evaluate_unused_coverage(
+        RULE_JS_UNUSED_COVERAGE,
+        "JavaScript",
+        cov.js_total_bytes,
+        cov.js_used_bytes,
+        32_768,
+        60,
+        Severity::Medium,
+        "Code-split route bundles, tree-shake unused exports, and defer non-critical scripts.",
+        findings,
+        checks,
+    );
+    evaluate_unused_coverage(
+        RULE_CSS_UNUSED_COVERAGE,
+        "CSS",
+        cov.css_total_bytes,
+        cov.css_used_bytes,
+        16_384,
+        75,
+        Severity::Low,
+        "Purge unused CSS rules per route and inline critical above-the-fold styles.",
+        findings,
+        checks,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_unused_coverage(
+    rule_id: &str,
+    label: &str,
+    total_bytes: u64,
+    used_bytes: u64,
+    min_bytes: u64,
+    threshold_pct: u64,
+    severity: Severity,
+    remediation: &str,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if total_bytes < min_bytes {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(rule_id.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: format!(
+                "sampled {label} byte volume below {} KiB threshold",
+                min_bytes / 1024
+            ),
+        });
+        return;
+    }
+    let unused = total_bytes.saturating_sub(used_bytes);
+    let unused_pct = unused.saturating_mul(100) / total_bytes;
+    if unused_pct < threshold_pct {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(rule_id.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        return;
+    }
+    let tag = label.to_ascii_lowercase();
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(rule_id.to_owned()),
+        category: FindingCategory::Performance,
+        evidence_level: EvidenceLevel::Rendered,
+        kind: FindingKind::Deterministic,
+        severity,
+        confidence: Confidence::High,
+        title: format!("High unused {label} byte ratio ({unused_pct}%)"),
+        summary: format!(
+            "CDP coverage observed {unused} of {total_bytes} {label} bytes unused ({unused_pct}%)."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!("{tag}_used={used_bytes};{tag}_total={total_bytes}"),
+        )],
+        remediation: Some(remediation.to_owned()),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(rule_id.to_owned()),
         evidence_level: EvidenceLevel::Rendered,
     });
 }
@@ -2352,5 +2475,67 @@ mod tests {
         assert!(ids.contains(&RULE_EXCESSIVE_WEBFONTS));
         assert!(ids.contains(&RULE_UNBOUNDED_IMAGE_WEIGHT));
         assert!(ids.contains(&RULE_HASHED_ASSET_SHORT_TTL));
+    }
+
+    #[test]
+    fn flags_unused_js_and_css_cdp_coverage() {
+        let mut snap = EvidenceSnapshot {
+            target: AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "content-encoding".to_owned(),
+                        value: "br".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 512,
+                    body_truncated: false,
+                    body_text: "<html></html>".to_owned(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    coverage: Some(crate::domain::CoverageSummary {
+                        js_total_bytes: 200_000,
+                        js_used_bytes: 40_000,
+                        css_total_bytes: 80_000,
+                        css_used_bytes: 10_000,
+                        js_scripts_sampled: 4,
+                        css_rules_sampled: 300,
+                    }),
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_JS_UNUSED_COVERAGE));
+        assert!(ids.contains(&RULE_CSS_UNUSED_COVERAGE));
+        if let CollectorOutcome::Captured { data } = &mut snap.browser {
+            data.resources.push(crate::domain::ResourceTimingObs {
+                url: "https://example.com/img.png".to_owned(),
+                resource_type: "image".to_owned(),
+                transfer_size: None,
+                ..crate::domain::ResourceTimingObs::default()
+            });
+        }
+        let res2 = analyse(&snap);
+        assert!(res2.checks.iter().any(|c| matches!(
+            c,
+            CheckStatus::Skipped { rule_id, .. } if rule_id.0 == RULE_UNBOUNDED_IMAGE_WEIGHT
+        )));
     }
 }

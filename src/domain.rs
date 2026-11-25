@@ -955,9 +955,30 @@ pub struct BrowserEvidence {
     /// Level 2 client-side storage and cookie counts (without values).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_summary: Option<PrivacyStorageSummary>,
+    /// Level 2 CDP JavaScript and CSS code coverage summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<CoverageSummary>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,
+}
+
+/// Level 2 CDP JavaScript and CSS rule/byte coverage summary.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CoverageSummary {
+    /// Total sampled JavaScript bytes across loaded scripts.
+    pub js_total_bytes: u64,
+    /// Executed JavaScript bytes during initial page load.
+    pub js_used_bytes: u64,
+    /// Total sampled CSS rule bytes across loaded stylesheets.
+    pub css_total_bytes: u64,
+    /// Matched CSS rule bytes during initial page load.
+    pub css_used_bytes: u64,
+    /// Number of scripts included in JS coverage sampling.
+    pub js_scripts_sampled: usize,
+    /// Number of CSS rule ranges sampled.
+    pub css_rules_sampled: usize,
 }
 
 /// Execution provenance attached to Level 2 browser/lab measurements.
