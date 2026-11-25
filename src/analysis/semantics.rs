@@ -17,6 +17,8 @@ const RULE_INTERACTIVE_SEMANTICS: &str = "str.interactive.native_semantics";
 const RULE_CONTAINER_RATIO: &str = "str.doc.container_ratio";
 const RULE_CHARSET: &str = "str.doc.charset";
 const RULE_SKIP_LINK: &str = "str.nav.skip_link";
+const RULE_META_REFRESH: &str = "str.doc.meta_refresh";
+const RULE_FAVICON: &str = "str.doc.favicon";
 
 /// All rule identifiers owned by `StrukturZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -27,6 +29,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_CONTAINER_RATIO,
     RULE_CHARSET,
     RULE_SKIP_LINK,
+    RULE_META_REFRESH,
+    RULE_FAVICON,
 ];
 
 /// Evaluates semantic HTML structure and element integrity over `obs`.
@@ -42,6 +46,8 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
     check_container_ratio(obs, &mut findings, &mut checks);
     check_charset(obs, &mut findings, &mut checks);
     check_skip_link(obs, &mut findings, &mut checks);
+    check_meta_refresh(obs, &mut findings, &mut checks);
+    check_favicon(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Struktur,
@@ -443,6 +449,84 @@ fn check_skip_link(
     }
 }
 
+fn check_meta_refresh(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if let Some(content) = &obs.meta_refresh {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_META_REFRESH.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Document uses <meta http-equiv=\"refresh\">".to_owned(),
+            summary: format!(
+                "Meta refresh (`{content}`) triggers unexpected redirects or reloads for assistive technology users."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("meta_refresh={content}"),
+            )],
+            remediation: Some(
+                "Replace `<meta http-equiv=\"refresh\">` with server-side HTTP 301/302/308 redirects."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_META_REFRESH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_META_REFRESH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_favicon(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.has_favicon {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_FAVICON.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_FAVICON.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Info,
+            confidence: Confidence::High,
+            title: "No favicon link declared".to_owned(),
+            summary:
+                "Document `<head>` lacks `<link rel=\"icon\">` or `<link rel=\"shortcut icon\">`."
+                    .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "has_favicon=false",
+            )],
+            remediation: Some(
+                "Declare a `<link rel=\"icon\" href=\"/favicon.ico\">` or SVG icon in `<head>`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_FAVICON.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +574,19 @@ mod tests {
         let res = analyse(&obs);
         assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_CHARSET));
         assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_SKIP_LINK));
+        assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_FAVICON));
+    }
+
+    #[test]
+    fn flags_meta_refresh() {
+        let html = r#"<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="3;url=/other"><link rel="icon" href="/favicon.ico"></head><body><main><h1>Hi</h1></main></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let res = analyse(&obs);
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_META_REFRESH)
+        );
+        assert!(!res.findings.iter().any(|f| f.rule_id.0 == RULE_FAVICON));
     }
 }

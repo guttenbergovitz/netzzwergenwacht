@@ -20,6 +20,7 @@ const RULE_MOJIBAKE: &str = "inh.content.mojibake";
 const RULE_UNRENDERED_MARKUP: &str = "inh.content.unrendered_markup";
 const RULE_STALE_COPYRIGHT: &str = "inh.content.stale_copyright";
 const RULE_READABILITY: &str = "inh.content.readability";
+const RULE_AUTHOR_OR_DATE: &str = "inh.trust.author_or_date";
 
 /// All rule identifiers owned by `InhaltsZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -32,6 +33,7 @@ pub const ALL_RULES: &[&str] = &[
     RULE_UNRENDERED_MARKUP,
     RULE_STALE_COPYRIGHT,
     RULE_READABILITY,
+    RULE_AUTHOR_OR_DATE,
 ];
 
 /// Evaluates visible word count, freshness headers, and content quality signals over `http` and `obs`.
@@ -49,6 +51,7 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_unrendered_markup(obs, &mut findings, &mut checks);
     check_stale_copyright(obs, &mut findings, &mut checks);
     check_readability(obs, &mut findings, &mut checks);
+    check_author_or_date(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Inhalts,
@@ -547,6 +550,55 @@ fn check_readability(
     }
 }
 
+fn check_author_or_date(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.visible_word_count < 150 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_AUTHOR_OR_DATE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "page has fewer than 150 visible words".to_owned(),
+        });
+        return;
+    }
+
+    if obs.author_or_date_signal.is_some() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_AUTHOR_OR_DATE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_AUTHOR_OR_DATE.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: "Substantive content lacks author or publication date metadata".to_owned(),
+            summary: format!(
+                "Page has {} visible words without `<meta name=\"author\">`, `<time datetime>`, or Schema.org author/datePublished.",
+                obs.visible_word_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("visible_word_count={};author_or_date=none", obs.visible_word_count),
+            )],
+            remediation: Some(
+                "Add author attribution and publication/updated `<time datetime>` or JSON-LD `datePublished`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_AUTHOR_OR_DATE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -645,5 +697,18 @@ mod tests {
         assert!(ids.contains(&RULE_UNRENDERED_MARKUP));
         assert!(ids.contains(&RULE_STALE_COPYRIGHT));
         assert!(ids.contains(&RULE_READABILITY));
+    }
+
+    #[test]
+    fn flags_missing_author_or_date_on_substantive_content() {
+        let words = vec!["Substantive editorial sentence with clear structure."; 30].join(" ");
+        let html = format!("<html><body><main><p>{words}</p></main></body></html>");
+        let (http, obs) = http_with_body(&html, Vec::new());
+        let res = analyse(&http, &obs);
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_AUTHOR_OR_DATE)
+        );
     }
 }
