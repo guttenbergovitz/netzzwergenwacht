@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 149,
+  "total_rules": 157,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1294,6 +1294,70 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.layout.offscreen_control",
+      "constant": "RULE_OFFSCREEN_CONTROL",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.layout.sticky_header_obstruction",
+      "constant": "RULE_STICKY_HEADER_OBSTRUCTION",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.images.pixelation_candidate",
+      "constant": "RULE_IMAGE_PIXELATION",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.media.missing_caption_track",
+      "constant": "RULE_MEDIA_CAPTIONS",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.images.suspicious_alternative_text",
+      "constant": "RULE_SUSPICIOUS_ALT",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.links.ambiguous_accessible_name",
+      "constant": "RULE_AMBIGUOUS_LINKS",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.integrity.unresolved_translation_key",
+      "constant": "RULE_UNRESOLVED_I18N_KEY",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.integrity.placeholder_contact",
+      "constant": "RULE_PLACEHOLDER_CONTACT",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
       "status": "native_rust"
     }
   ]

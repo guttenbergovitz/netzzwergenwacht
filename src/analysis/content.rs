@@ -23,6 +23,8 @@ const RULE_READABILITY: &str = "inh.content.readability";
 const RULE_AUTHOR_OR_DATE: &str = "inh.trust.author_or_date";
 const RULE_TEXT_TO_HTML_RATIO: &str = "inh.content.text_to_html_ratio";
 const RULE_AX_SIGNALS: &str = "inh.ax.machine_readable_signals";
+const RULE_UNRESOLVED_I18N_KEY: &str = "inh.integrity.unresolved_translation_key";
+const RULE_PLACEHOLDER_CONTACT: &str = "inh.integrity.placeholder_contact";
 
 /// All rule identifiers owned by `InhaltsZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -38,6 +40,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_AUTHOR_OR_DATE,
     RULE_TEXT_TO_HTML_RATIO,
     RULE_AX_SIGNALS,
+    RULE_UNRESOLVED_I18N_KEY,
+    RULE_PLACEHOLDER_CONTACT,
 ];
 
 /// Evaluates visible word count, freshness headers, and content quality signals over `http` and `obs`.
@@ -58,6 +62,8 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_author_or_date(obs, &mut findings, &mut checks);
     check_text_to_html_ratio(http, obs, &mut findings, &mut checks);
     check_ax_signals(obs, &mut findings, &mut checks);
+    check_unresolved_translation_keys(obs, &mut findings, &mut checks);
+    check_placeholder_contact(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Inhalts,
@@ -717,6 +723,111 @@ fn check_ax_signals(
     }
 }
 
+fn check_unresolved_translation_keys(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const PREFIXES: &[&str] = &["i18n.", "common.", "nav.", "errors.", "buttons.", "labels."];
+    let matched: Vec<&str> = obs
+        .visible_text_sample
+        .split_whitespace()
+        .filter(|tok| {
+            let clean =
+                tok.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '.' && c != '_');
+            PREFIXES.iter().any(|p| clean.starts_with(p)) && clean.matches('.').count() >= 2
+        })
+        .take(5)
+        .collect();
+
+    if matched.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_UNRESOLVED_I18N_KEY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_UNRESOLVED_I18N_KEY.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Unresolved translation keys in visible text ({})",
+                matched.len()
+            ),
+            summary: format!(
+                "Detected raw localisation key tokens in rendered text: {}.",
+                matched.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("unresolved_i18n_keys={}", matched.join(",")),
+            )],
+            remediation: Some("Verify i18n message bundle loading and fallback keys.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_UNRESOLVED_I18N_KEY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_placeholder_contact(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const PLACEHOLDERS: &[&str] = &[
+        "example@example.com",
+        "test@example.com",
+        "info@example.com",
+        "info@example.org",
+        "test@test.com",
+        "123-456-7890",
+        "555-0100",
+    ];
+    let text_lower = obs.visible_text_sample.to_ascii_lowercase();
+    let in_text = PLACEHOLDERS.iter().any(|p| text_lower.contains(p));
+    let in_links = obs.links.iter().any(|l| {
+        let href = l.href.to_ascii_lowercase();
+        (href.starts_with("mailto:") || href.starts_with("tel:"))
+            && PLACEHOLDERS.iter().any(|p| href.contains(p))
+    });
+
+    if !in_text && !in_links {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_PLACEHOLDER_CONTACT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_PLACEHOLDER_CONTACT.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Placeholder contact details published".to_owned(),
+            summary: "Page contains placeholder email or telephone numbers (for example `example.com` or `555-0100`).".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "placeholder_contact=true",
+            )],
+            remediation: Some(
+                "Replace template contact placeholders with real organisation details.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_PLACEHOLDER_CONTACT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -847,5 +958,18 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_TEXT_TO_HTML_RATIO)
         );
+    }
+
+    #[test]
+    fn flags_unresolved_i18n_keys_and_placeholder_contacts() {
+        let html = r#"<html><body>
+            <p>Welcome to i18n.home.hero_title and common.nav.submit</p>
+            <a href="mailto:test@example.com">Contact test@example.com</a>
+        </body></html>"#;
+        let (http, obs) = http_with_body(html, Vec::new());
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_UNRESOLVED_I18N_KEY));
+        assert!(ids.contains(&RULE_PLACEHOLDER_CONTACT));
     }
 }

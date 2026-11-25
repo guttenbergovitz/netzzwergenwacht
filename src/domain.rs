@@ -741,7 +741,7 @@ pub struct BrokenImageObs {
 }
 
 /// Layout and visual integrity observations for a single browser viewport.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ViewportLayoutObs {
     /// Logical viewport label (for example `"mobile"`, `"desktop"`).
     pub viewport_name: String,
@@ -759,6 +759,12 @@ pub struct ViewportLayoutObs {
     /// Count of visible interactive elements smaller than `44x44` CSS px.
     #[serde(default)]
     pub small_tap_targets: usize,
+    /// Count of visible interactive controls positioned outside the horizontal viewport.
+    #[serde(default)]
+    pub offscreen_controls: usize,
+    /// Percentage (`0..=100`) of viewport height covered by top fixed/sticky bars.
+    #[serde(default)]
+    pub fixed_header_height_pct: u8,
     /// Optional path to a captured screenshot artefact.
     pub screenshot_path: Option<String>,
 }

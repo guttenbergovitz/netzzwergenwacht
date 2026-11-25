@@ -324,10 +324,25 @@ function findBrowser() {
             if (fs > 0 && fs < 12) smallText++;
           }
           let smallTap = 0;
+          let offscreenControls = 0;
           for (const el of Array.from(document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea')).slice(0, 200)) {
             const r = el.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0 && (r.width < 44 || r.height < 44)) smallTap++;
+            if (r.width > 0 && r.height > 0) {
+              if (r.width < 44 || r.height < 44) smallTap++;
+              if (r.right < 0 || r.left > window.innerWidth) offscreenControls++;
+            }
           }
+          let fixedTopHeight = 0;
+          for (const el of Array.from(document.querySelectorAll('header, nav, [role=\'banner\'], div')).slice(0, 120)) {
+            const cs = getComputedStyle(el);
+            if (cs.position === 'fixed' || cs.position === 'sticky') {
+              const r = el.getBoundingClientRect();
+              if (r.top <= 40 && r.height > 0 && r.width > window.innerWidth * 0.5) {
+                if (r.height > fixedTopHeight) fixedTopHeight = r.height;
+              }
+            }
+          }
+          const fixedPct = window.innerHeight > 0 ? Math.min(100, Math.round((fixedTopHeight / window.innerHeight) * 100)) : 0;
           return {
             has_horizontal_overflow: document.documentElement.scrollWidth > window.innerWidth,
             broken_images: Array.from(document.images)
@@ -335,11 +350,13 @@ function findBrowser() {
               .map((img) => ({ src: img.currentSrc || img.getAttribute('src') || '', natural_width: 0 })),
             small_text_nodes: smallText,
             small_tap_targets: smallTap,
+            offscreen_controls: offscreenControls,
+            fixed_header_height_pct: fixedPct,
           };
         })()`,
         returnByValue: true,
       });
-      const val = evalRes?.result?.value || { has_horizontal_overflow: false, broken_images: [], small_text_nodes: 0, small_tap_targets: 0 };
+      const val = evalRes?.result?.value || { has_horizontal_overflow: false, broken_images: [], small_text_nodes: 0, small_tap_targets: 0, offscreen_controls: 0, fixed_header_height_pct: 0 };
       viewports.push({
         viewport_name: vp.name,
         width: vp.width,
@@ -348,6 +365,8 @@ function findBrowser() {
         broken_images: Array.isArray(val.broken_images) ? val.broken_images : [],
         small_text_nodes: Number(val.small_text_nodes || 0),
         small_tap_targets: Number(val.small_tap_targets || 0),
+        offscreen_controls: Number(val.offscreen_controls || 0),
+        fixed_header_height_pct: Number(val.fixed_header_height_pct || 0),
         screenshot_path: null,
       });
     }
