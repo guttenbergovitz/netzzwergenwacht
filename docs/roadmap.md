@@ -30,3 +30,8 @@ metadata, streaming lifecycles and detailed attribution. Use the same session
 evidence for bounded journey and consent scenarios. Extend the existing
 application graph and patrol history with comparable observation coverage before
 adding application-wide conclusions.
+
+Rendered DOM segmentation now captures bounded desktop paragraph and region
+observations. The live fixture compares source and rendered evidence. Stable
+element identity and content fingerprints are the next foundations for comparing
+blocks across captures.

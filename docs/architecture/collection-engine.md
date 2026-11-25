@@ -75,3 +75,26 @@ Kommandant can request the first page without starting a browser. The
 evaluation accepts timeline citations only when their sequence numbers appear
 on that page. The sequence records observation order and can support further
 investigation of a correlation.
+
+## Rendered DOM segmentation
+
+A read-only probe in an isolated Chromium execution world measures paragraphs
+and semantic regions in the main document at the existing desktop viewport.
+The snapshot records viewport dimensions and capture-local node positions.
+These positions resolve only within a single capture. Comparing a source
+document and a browser snapshot can show differing observations, while tracking
+the cause or matching elements across captures requires further evidence.
+
+Computed CSS checks cover display, visibility, opacity and content visibility.
+The probe retains bounded excerpts from eligible text nodes, collapses
+whitespace, and inserts separators at structural boundaries. Nested regions may
+include the same text as their paragraphs. Editable content, form controls and
+CSS-masked text are excluded. Frames, shadow trees, pseudo-elements, geometry,
+clipping and occlusion are outside coverage.
+
+The traversal stops at 16,384 node visits and skips subtrees below depth 64.
+It retains 256 blocks, normalises at most 2,048 UTF-16 units per text run,
+and retains at most 512 per block. Limit flags identify partial evidence.
+A failed probe leaves segmentation unavailable. The serialised snapshot can
+contain visible page text. Current investigation prompts receive no excerpts
+from this collector.

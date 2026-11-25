@@ -38,6 +38,12 @@
       "evidence_level": "Rendered"
     },
     {
+      "family": "RenderedContentSegmentation",
+      "source": "src/domain/rendered_content.rs",
+      "collector": "adapters::browser (Chromium CDP)",
+      "evidence_level": "Rendered"
+    },
+    {
       "family": "AxeEvidence",
       "source": "src/domain.rs",
       "collector": "adapters::axe (axe-core)",

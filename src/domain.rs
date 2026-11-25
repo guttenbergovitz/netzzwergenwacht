@@ -15,6 +15,8 @@ use crate::brigade::DwarfId;
 
 mod browser_timeline;
 pub use browser_timeline::*;
+mod rendered_content;
+pub use rendered_content::*;
 
 /// Policy governing whether private or loopback targets are permitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -921,6 +923,9 @@ pub struct BrowserEvidence {
     /// Time-ordered evidence from the existing CDP session, when collected.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeline: Option<BrowserTimeline>,
+    /// Bounded paragraph and region evidence from the rendered main document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_content: Option<RenderedContentSegmentation>,
     /// Final URL after client-side navigation.
     pub final_url: String,
     /// Browser version string if recorded.

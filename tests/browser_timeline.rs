@@ -27,12 +27,29 @@ async fn spawn_fixture() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) 
                         "",
                         "<img src='/missing'><img src='/disconnect'><script>throw new Error('fixture-runtime-secret')</script>",
                     ),
+                    "/rendered-content" => (
+                        "200 OK",
+                        "",
+                        r#"<style>.hide { display: none }</style>
+                           <main><p>Shared <span>para</span>graph</p><div class="hide"><p>Hidden paragraph</p></div></main>
+                           <script>const paragraph = document.createElement('p'); paragraph.textContent = 'Generated paragraph'; document.querySelector('main').append(paragraph);</script>"#,
+                    ),
+                    "/rendered-limits" => (
+                        "200 OK",
+                        "",
+                        r#"<main><p id="unicode"></p><p id="long"></p><p style="-webkit-text-security: disc">masked secret</p></main>
+                           <script>
+                             document.querySelector('#unicode').textContent = 'before' + String.fromCharCode(0xDC00) + 'after';
+                             document.querySelector('#long').textContent = 'x'.repeat(511) + '😀tail';
+                             for (let i = 0; i < 260; i++) document.querySelector('main').append(document.createElement('p'));
+                           </script>"#,
+                    ),
                     "/disconnect" => return,
                     "/missing" => ("404 Not Found", "", ""),
                     _ => ("204 No Content", "", ""),
                 };
                 let response = format!(
-                    "HTTP/1.1 {status}\r\n{extra}Content-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    "HTTP/1.1 {status}\r\n{extra}Content-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
                 socket.write_all(response.as_bytes()).await.unwrap();
@@ -130,4 +147,97 @@ async fn live_browser_timeline_distinguishes_redirect_http_error_disconnect_and_
             .unwrap()
             .contains("fixture-runtime-secret")
     );
+}
+
+#[tokio::test]
+#[ignore = "requires Node.js and Chromium"]
+async fn live_browser_distinguishes_source_and_rendered_paragraphs() {
+    use netzzwergenwacht::analysis::document::DocumentObservations;
+    use netzzwergenwacht::collection::collect_http;
+    use netzzwergenwacht::domain::{ExecutionBudget, RenderedBlockKind, RenderedCssVisibility};
+
+    let (address, server) = spawn_fixture().await;
+    let policy = TargetPolicy::AllowPrivate;
+    let target = AuditTarget::parse(&format!("http://{address}/rendered-content"), policy).unwrap();
+    let source = collect_http(&target, &ExecutionBudget::default(), policy).await;
+    let rendered = run_browser_with_policy(&target, Duration::from_secs(35), policy).await;
+    server.abort();
+
+    let CollectorOutcome::Captured { data: http } = source.http else {
+        panic!("expected captured source HTML");
+    };
+    let source = DocumentObservations::from_html(&http.body_text);
+    assert_eq!(
+        source
+            .content
+            .paragraphs
+            .iter()
+            .map(|block| block.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Shared paragraph", "Hidden paragraph"]
+    );
+
+    let CollectorOutcome::Captured { data } = rendered else {
+        panic!("expected complete rendered capture: {rendered:?}");
+    };
+    let content = data.rendered_content.unwrap();
+    assert_eq!(
+        (content.viewport_width, content.viewport_height),
+        (1280, 720)
+    );
+    let paragraphs: Vec<_> = content
+        .blocks
+        .iter()
+        .filter(|block| block.kind == RenderedBlockKind::Paragraph)
+        .map(|block| (block.visibility, block.visible_text.as_str()))
+        .collect();
+    assert_eq!(
+        paragraphs,
+        [
+            (RenderedCssVisibility::Visible, "Shared paragraph"),
+            (RenderedCssVisibility::Hidden, ""),
+            (RenderedCssVisibility::Visible, "Generated paragraph"),
+        ]
+    );
+    let main = content
+        .blocks
+        .iter()
+        .find(|block| block.kind == RenderedBlockKind::Main)
+        .unwrap();
+    assert_eq!(main.visible_text, "Shared paragraph Generated paragraph");
+}
+
+#[tokio::test]
+#[ignore = "requires Node.js and Chromium"]
+async fn live_browser_preserves_evidence_when_rendered_content_hits_limits() {
+    use netzzwergenwacht::domain::RenderedBlockKind;
+
+    let (address, server) = spawn_fixture().await;
+    let policy = TargetPolicy::AllowPrivate;
+    let target = AuditTarget::parse(&format!("http://{address}/rendered-limits"), policy).unwrap();
+    let outcome = run_browser_with_policy(&target, Duration::from_secs(35), policy).await;
+    server.abort();
+    let CollectorOutcome::Partial { data, warnings } = outcome else {
+        panic!("expected partial rendered capture: {outcome:?}");
+    };
+    assert!(
+        warnings
+            .iter()
+            .any(|message| message.contains("segmentation reached"))
+    );
+    let content = data.rendered_content.unwrap();
+    assert!(content.limits.blocks);
+    assert_eq!(content.blocks.len(), 256);
+    let mut paragraphs = content
+        .blocks
+        .iter()
+        .filter(|block| block.kind == RenderedBlockKind::Paragraph);
+    assert_eq!(
+        paragraphs.next().unwrap().visible_text,
+        "before\u{fffd}after"
+    );
+    let clipped = paragraphs.next().unwrap();
+    assert!(clipped.text_truncated);
+    assert_eq!(clipped.visible_text, "x".repeat(511));
+    assert_eq!(paragraphs.next().unwrap().visible_text, "");
 }

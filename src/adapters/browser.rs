@@ -9,10 +9,11 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::adapters::run_bounded_command;
-use crate::domain::{AuditTarget, BrowserEvidence, CollectorOutcome};
+use crate::domain::{AuditTarget, BrowserEvidence, CollectorOutcome, RenderedContentSegmentation};
 
 const CDP_HARNESS_JS: &str = concat!(
     include_str!("browser_timeline.js"),
+    include_str!("rendered_content.js"),
     r"
 const { spawn } = require('node:child_process');
 const fs = require('node:fs');
@@ -471,6 +472,20 @@ function findBrowser() {
       returnByValue: true,
     });
     const domAndImages = domAndImagesRes?.result?.value || {};
+    let renderedContent = null;
+    try {
+      const { frameTree } = await call('Page.getFrameTree');
+      const { executionContextId } = await call('Page.createIsolatedWorld', {
+        frameId: frameTree.frame.id,
+        worldName: 'nzw-rendered-content',
+      });
+      const result = await call('Runtime.evaluate', {
+        expression: '(' + collectRenderedContent.toString() + ')()',
+        contextId: executionContextId,
+        returnByValue: true,
+      });
+      renderedContent = result?.result?.value || null;
+    } catch {}
     let axTreeSummary = null;
     try {
       await call('Accessibility.enable');
@@ -780,6 +795,8 @@ function findBrowser() {
       browser_version: browserVersion,
       load_timed_out: loadTimedOut,
       timeline: timeline.finish(loadTimedOut),
+      rendered_content: renderedContent,
+      rendered_content_unavailable: renderedContent === null,
       console_errors: consoleErrors,
       hydration_errors: hydrationErrors,
       failed_requests: failedRequests,
@@ -857,6 +874,8 @@ pub async fn run_browser_with_policy(
 struct RawBrowserOutput {
     #[serde(default)]
     load_timed_out: bool,
+    #[serde(default)]
+    rendered_content_unavailable: bool,
     #[serde(flatten)]
     evidence: BrowserEvidence,
 }
@@ -895,6 +914,17 @@ pub fn parse_browser_outcome(raw: &str) -> CollectorOutcome<BrowserEvidence> {
         .is_some_and(|timeline| timeline.truncated)
     {
         warnings.push("Browser timeline truncated at 512 events".to_owned());
+    }
+    if parsed
+        .evidence
+        .rendered_content
+        .as_ref()
+        .is_some_and(RenderedContentSegmentation::is_partial)
+    {
+        warnings.push("Rendered content segmentation reached a collection limit".to_owned());
+    }
+    if parsed.rendered_content_unavailable {
+        warnings.push("Rendered content segmentation was unavailable".to_owned());
     }
     if parsed.evidence.resources_truncated {
         warnings.push(
