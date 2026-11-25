@@ -31,6 +31,8 @@ const RULE_VIDEO_CONTROLS_POSTER: &str = "vis.media.video_controls_or_poster";
 const RULE_OFFSCREEN_CONTROL: &str = "vis.layout.offscreen_control";
 const RULE_STICKY_HEADER_OBSTRUCTION: &str = "vis.layout.sticky_header_obstruction";
 const RULE_IMAGE_PIXELATION: &str = "vis.images.pixelation_candidate";
+const RULE_HIDDEN_DOWNLOADED_IMAGES: &str = "vis.rendered.hidden_downloaded_images";
+const RULE_VIEWPORT_ZOOM_LOCKED: &str = "vis.mobile.viewport_zoom_locked";
 
 /// All Level 2 rules owned by `GestaltungsZwerg`.
 pub const ALL_RULES: &[&str] = &[RULE_HORIZONTAL_OVERFLOW, RULE_BROKEN_IMAGES];
@@ -46,6 +48,7 @@ pub const ALL_SOURCE_RULES: &[&str] = &[
     RULE_INLINE_SVG_A11Y,
     RULE_INLINE_DATA_URI,
     RULE_VIDEO_CONTROLS_POSTER,
+    RULE_VIEWPORT_ZOOM_LOCKED,
 ];
 
 /// Evaluates rendered viewport layout and image integrity observations.
@@ -88,6 +91,7 @@ pub fn analyse_with_document(
         check_inline_svg_a11y(doc, &mut findings, &mut checks);
         check_inline_data_uri_images(doc, &mut findings, &mut checks);
         check_video_controls_or_poster(doc, &mut findings, &mut checks);
+        check_viewport_zoom_locked(doc, &mut findings, &mut checks);
     }
 
     let browser = match &snapshot.browser {
@@ -1167,6 +1171,102 @@ fn check_image_pixelation(
             evidence_level: EvidenceLevel::Rendered,
         });
     }
+
+    let hidden_downloaded = browser
+        .rendered_images
+        .iter()
+        .filter(|img| {
+            img.natural_width >= 200 && img.rendered_width == 0 && img.rendered_height == 0
+        })
+        .count();
+    if hidden_downloaded == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_HIDDEN_DOWNLOADED_IMAGES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_HIDDEN_DOWNLOADED_IMAGES.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Hidden full-resolution images downloaded ({hidden_downloaded})"),
+            summary: format!(
+                "{hidden_downloaded} image(s) with naturalWidth >= 200px rendered at 0x0 CSS dimensions."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("hidden_downloaded_images={hidden_downloaded}"),
+            )],
+            remediation: Some(
+                "Avoid loading hidden full-resolution images; use CSS media queries, `<picture>`, or lazy loading."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_HIDDEN_DOWNLOADED_IMAGES.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_viewport_zoom_locked(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(vp) = obs.viewport_meta.as_deref() else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_VIEWPORT_ZOOM_LOCKED.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "viewport meta tag absent".to_owned(),
+        });
+        return;
+    };
+
+    let locked = vp.split(',').any(|part| {
+        let Some((k, v)) = part.trim().split_once('=') else {
+            return false;
+        };
+        k.trim().eq_ignore_ascii_case("maximum-scale")
+            && v.trim().parse::<f64>().is_ok_and(|scale| scale <= 1.0)
+    });
+
+    if locked {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_VIEWPORT_ZOOM_LOCKED.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Viewport maximum-scale<=1.0 locks user zoom".to_owned(),
+            summary: format!(
+                "Viewport meta `{vp}` sets `maximum-scale <= 1.0`, preventing pinch-to-zoom."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("meta.viewport={vp}"),
+            )],
+            remediation: Some(
+                "Remove `maximum-scale=1` or raise it to at least `5.0` to preserve zoom."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_VIEWPORT_ZOOM_LOCKED.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_VIEWPORT_ZOOM_LOCKED.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1226,7 +1326,7 @@ mod tests {
         });
         let res = analyse(&snap);
         assert_eq!(res.findings.len(), 0);
-        assert_eq!(res.checks.len(), 7);
+        assert_eq!(res.checks.len(), 8);
         assert!(
             res.checks
                 .iter()
@@ -1411,5 +1511,36 @@ mod tests {
         assert!(ids.contains(&RULE_OFFSCREEN_CONTROL));
         assert!(ids.contains(&RULE_STICKY_HEADER_OBSTRUCTION));
         assert!(ids.contains(&RULE_IMAGE_PIXELATION));
+    }
+
+    #[test]
+    fn flags_hidden_downloaded_images_and_locked_maximum_scale() {
+        let html = r#"<html><head><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1.0"></head><body></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                viewports: vec![ViewportLayoutObs {
+                    viewport_name: "mobile".to_owned(),
+                    width: 390,
+                    height: 844,
+                    ..ViewportLayoutObs::default()
+                }],
+                rendered_images: vec![crate::domain::RenderedImageObs {
+                    src: "https://example.com/hidden-banner.jpg".to_owned(),
+                    natural_width: 1200,
+                    natural_height: 600,
+                    rendered_width: 0,
+                    rendered_height: 0,
+                    in_initial_viewport: false,
+                    loading: None,
+                }],
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_HIDDEN_DOWNLOADED_IMAGES));
+        assert!(ids.contains(&RULE_VIEWPORT_ZOOM_LOCKED));
     }
 }
