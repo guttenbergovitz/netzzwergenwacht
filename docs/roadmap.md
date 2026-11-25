@@ -34,4 +34,5 @@ adding application-wide conclusions.
 Rendered DOM segmentation captures bounded desktop paragraph and region
 observations. The live fixtures verify source and rendered evidence and
 conservative matching by unique ID or tag ancestry across captures.
-Content fingerprints are the next step for measuring text changes on matched blocks.
+Versioned fingerprints now compare complete rendered text on matched blocks.
+Next, integrate the comparison with audit history and surface results in the CLI.

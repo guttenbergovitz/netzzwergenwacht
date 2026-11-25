@@ -488,10 +488,18 @@ function findBrowser() {
       const measurement = result?.result?.value;
       if (measurement?.url === finalUrl && measurement.content) {
         const captured = measurement.content;
+        const textCoverageComplete = !loadTimedOut
+          && !captured.limits.nodes && !captured.limits.depth && !captured.limits.blocks;
         for (const block of captured.blocks) {
           const id = block.identity.id;
           if (id.key !== undefined) {
             id.key = createHash('sha256').update(id.key, 'utf16le').digest('hex');
+          }
+          if (textCoverageComplete && block.visibility === 'visible' && !block.text_truncated) {
+            block.text_fingerprint = {
+              version: 1,
+              digest: createHash('sha256').update(block.visible_text.normalize('NFC'), 'utf8').digest('hex'),
+            };
           }
         }
         renderedContent = captured;

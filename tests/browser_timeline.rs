@@ -47,17 +47,18 @@ async fn spawn_fixture() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) 
                     "/identity-before" => (
                         "200 OK",
                         "",
-                        r#"<main><p id="stable-private-fixture-key">Before</p><section><p>Unlabelled</p></section>
+                        r#"<main><p id="stable-private-fixture-key">Before</p><section><p>Unlabelled Café</p></section><p id="long-text"></p>
                           <article><p id="repeated-key">Repeated</p></article><div id="repeated-key">Outside paragraph</div>
-                          <footer><p>One</p><p>Two</p></footer></main>"#,
+                          <footer><p>One</p><p>Two</p></footer></main>
+                          <script>document.getElementById("long-text").textContent = "x".repeat(520) + "before";</script>"#,
                     ),
                     "/identity-after" => (
                         "200 OK",
                         "",
-                        r#"<header>Banner</header><main><p id="stable-private-fixture-key">After</p><section><p>Unlabelled</p></section>
+                        r#"<header>Banner</header><main><p id="stable-private-fixture-key">After</p><section><p>Unlabelled Cafe&#769;</p></section><p id="long-text"></p>
                           <article><p id="repeated-key">Repeated again</p></article><div id="repeated-key">Outside paragraph</div>
                           <footer><p>One</p><p>Two</p></footer></main>
-                          <script>history.replaceState(null, '', '/identity-before');</script>"#,
+                          <script>document.getElementById('long-text').textContent = 'x'.repeat(520) + 'after'; history.replaceState(null, '', '/identity-before');</script>"#,
                     ),
                     "/disconnect" => return,
                     "/missing" => ("404 Not Found", "", ""),
@@ -270,8 +271,8 @@ async fn live_browser_matches_identity_across_banner_and_text_changes() {
         let policy = TargetPolicy::AllowPrivate;
         let target = AuditTarget::parse(&format!("http://{address}/{route}"), policy).unwrap();
         let result = run_browser_with_policy(&target, Duration::from_secs(35), policy).await;
-        let CollectorOutcome::Captured { data } = result else {
-            panic!("expected complete browser capture: {result:?}");
+        let CollectorOutcome::Partial { data, .. } = result else {
+            panic!("expected a capture with truncated text: {result:?}");
         };
         captures.push(data);
     }
@@ -307,7 +308,7 @@ async fn live_browser_matches_identity_across_banner_and_text_changes() {
             .any(|block| block.node == current && block.visible_text == "After")
     );
     assert!(matches!(
-        matches[&locate("Unlabelled")],
+        matches[&locate("Unlabelled Café")],
         ElementMatch::Matched {
             basis: MatchBasis::UniqueStructure,
             ..
@@ -315,9 +316,50 @@ async fn live_browser_matches_identity_across_banner_and_text_changes() {
     ));
     assert_eq!(matches[&locate("Repeated")], ElementMatch::Ambiguous);
     assert_eq!(matches[&locate("One")], ElementMatch::Ambiguous);
+    assert_rendered_fingerprint_changes(&captures[0], &captures[1]);
     assert!(
         !serde_json::to_string(after)
             .unwrap()
             .contains("stable-private-fixture-key")
+    );
+}
+
+fn assert_rendered_fingerprint_changes(
+    before: &netzzwergenwacht::domain::BrowserEvidence,
+    after: &netzzwergenwacht::domain::BrowserEvidence,
+) {
+    use netzzwergenwacht::analysis::content_fingerprint::{
+        BlockTextChange, TextComparisonLimit, compare_rendered_block_text,
+    };
+    use netzzwergenwacht::domain::RenderedBlockKind;
+
+    let blocks = &before.rendered_content.as_ref().unwrap().blocks;
+    let node = |text: &str| {
+        blocks
+            .iter()
+            .find(|block| block.kind == RenderedBlockKind::Paragraph && block.visible_text == text)
+            .unwrap()
+            .node
+    };
+    let changes = compare_rendered_block_text(before, after).unwrap();
+    assert!(matches!(
+        changes[&node("Before")],
+        BlockTextChange::Changed { .. }
+    ));
+    assert!(matches!(
+        changes[&node("Unlabelled Café")],
+        BlockTextChange::Unchanged { .. }
+    ));
+    assert_eq!(
+        changes[&node(&"x".repeat(512))],
+        BlockTextChange::NotComparable {
+            reason: TextComparisonLimit::TextTruncated,
+        }
+    );
+    assert_eq!(
+        changes[&node("Repeated")],
+        BlockTextChange::NotComparable {
+            reason: TextComparisonLimit::AmbiguousIdentity,
+        }
     );
 }

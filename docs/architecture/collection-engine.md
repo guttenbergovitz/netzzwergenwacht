@@ -120,3 +120,20 @@ equivalent replacements can still refer to different source components.
 The Rust API `analysis::element_identity::match_rendered_blocks` reads existing
 browser evidence. Older snapshots still load and report identity as unavailable.
 An unmatched key means the current capture supplies no comparable candidate.
+
+### Comparing rendered text on matched blocks
+
+The browser adapter fingerprints complete observed text on CSS-visible blocks.
+Version 1 hashes the collector's whitespace-normalised excerpt in Unicode NFC
+using SHA-256 over UTF-8. Case is preserved. The digest describes only the
+collector's existing main-document text scope and can expose low-entropy text
+by guessing.
+
+`analysis::content_fingerprint::compare_rendered_block_text` uses the existing
+element matcher to compare two captured documents with the same final URL
+and viewport and complete structural identity coverage. It reports changed,
+unchanged or not comparable for baseline blocks. An ambiguous or missing match,
+hidden block, truncated text, absent fingerprint or unsupported fingerprint
+version leaves the comparison unavailable for that block. Older captures still
+load without fingerprints. The API uses captured observations and performs no
+acquisition.

@@ -211,6 +211,7 @@ mod tests {
                     visibility: RenderedCssVisibility::Visible,
                     visible_text: "retained excerpt".to_owned(),
                     text_truncated: true,
+                    text_fingerprint: None,
                     identity: Some(RenderedBlockIdentity {
                         id: RenderedBlockId::Absent,
                         path: Some(vec!["body".to_owned(), "p".to_owned()]),

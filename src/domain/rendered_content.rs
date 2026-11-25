@@ -53,6 +53,18 @@ pub struct RenderedContentBlock {
     /// Identity signals, absent in captures made before identity collection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<RenderedBlockIdentity>,
+    /// Versioned fingerprint of the block's complete observed visible text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_fingerprint: Option<RenderedTextFingerprint>,
+}
+
+/// Fingerprint of observed rendered text under a versioned normalisation contract.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RenderedTextFingerprint {
+    /// Version of the extraction, normalisation and digest contract.
+    pub version: u16,
+    /// Hexadecimal digest. Version 1 uses SHA-256 over NFC UTF-8.
+    pub digest: String,
 }
 
 /// Limits reached during segmentation. Any set flag means coverage is partial.
