@@ -567,6 +567,10 @@ function findBrowser() {
       missing_focus_indicator_count: 0,
       open_dialogs_count: 0,
       dialog_escape_closed: null,
+      focus_sequence: [],
+      tab_budget_exhausted: false,
+      modal_focus_escaped: false,
+      obscured_focus_count: 0,
     };
     let hasBeh = false;
     try {
@@ -584,6 +588,7 @@ function findBrowser() {
       behObs.open_dialogs_count = Number(preBeh.dialogs || 0);
       const seenStops = new Set();
       const seq = [];
+      let trappedInModalOnly = true;
       for (let step = 0; step < 25; step++) {
         await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
         await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
@@ -598,27 +603,42 @@ function findBrowser() {
             const focusVis = el.matches(':focus-visible');
             const noOutline = st.outlineStyle === 'none' || parseFloat(st.outlineWidth || '0') === 0;
             const noShadow = !st.boxShadow || st.boxShadow === 'none';
-            return { key, missingIndicator: Boolean(focusVis && noOutline && noShadow) };
+            const inDialog = Boolean(el.closest('dialog[open], [role=dialog], [aria-modal=true]'));
+            let obscured = false;
+            if (rect.width > 0 && rect.height > 0) {
+              const cx = Math.min(Math.max(rect.left + rect.width / 2, 0), window.innerWidth - 1);
+              const cy = Math.min(Math.max(rect.top + rect.height / 2, 0), window.innerHeight - 1);
+              const hit = document.elementFromPoint(cx, cy);
+              if (hit && !el.contains(hit) && !hit.contains(el)) obscured = true;
+            }
+            return { key, missingIndicator: Boolean(focusVis && noOutline && noShadow), inDialog, obscured };
           })()`,
           returnByValue: true,
         });
         const info = focusRes?.result?.value;
         if (info && info.key) {
+          if (behObs.open_dialogs_count > 0 && !info.inDialog) {
+            behObs.modal_focus_escaped = true;
+          }
+          if (!info.inDialog) trappedInModalOnly = false;
           if (!seenStops.has(info.key)) {
             seenStops.add(info.key);
             if (info.missingIndicator) behObs.missing_focus_indicator_count++;
+            if (info.obscured) behObs.obscured_focus_count++;
           }
           seq.push(info.key);
           if (seq.length >= 4 && seq.slice(-3).every((k) => k === info.key)) {
-            behObs.focus_trap_detected = true;
+            if (!(behObs.open_dialogs_count > 0 && trappedInModalOnly)) behObs.focus_trap_detected = true;
             break;
           }
           if (seq.length >= 6 && new Set(seq.slice(-6)).size <= 2 && behObs.tabbable_candidates > 3) {
-            behObs.focus_trap_detected = true;
+            if (!(behObs.open_dialogs_count > 0 && trappedInModalOnly)) behObs.focus_trap_detected = true;
             break;
           }
         }
       }
+      behObs.focus_sequence = seq;
+      behObs.tab_budget_exhausted = seq.length === 25 && !behObs.focus_trap_detected;
       behObs.tab_stops_observed = seenStops.size;
       if (behObs.open_dialogs_count > 0) {
         await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });

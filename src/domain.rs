@@ -974,15 +974,27 @@ pub struct BehaviouralA11yObs {
     pub tab_stops_observed: usize,
     /// Approximate count of visible tabbable controls (`a[href]`, `button`, `input`, etc.).
     pub tabbable_candidates: usize,
-    /// Whether `Tab` traversal detected a keyboard focus trap (stuck or 2-element loop).
+    /// Whether `Tab` traversal detected a keyboard focus trap outside an open modal.
     pub focus_trap_detected: bool,
-    /// Focused elements matching `:focus-visible` with no observable outline or box-shadow.
+    /// Focused elements matching `:focus-visible` with no observable outline, box-shadow, or border.
     pub missing_focus_indicator_count: usize,
     /// Count of open modal/dialog containers (`dialog[open]`, `[role="dialog"]`, `[aria-modal="true"]`).
     pub open_dialogs_count: usize,
     /// Whether pressing `Escape` dismissed an open dialog (`None` if no open dialog was present).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dialog_escape_closed: Option<bool>,
+    /// Ordered sequence of element keys visited during `Tab` traversal (up to 25 steps).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub focus_sequence: Vec<String>,
+    /// Whether the 25-step `Tab` budget was exhausted before traversal wrapped or completed.
+    #[serde(default)]
+    pub tab_budget_exhausted: bool,
+    /// Whether `Tab` focus escaped outside an open modal/dialog container.
+    #[serde(default)]
+    pub modal_focus_escaped: bool,
+    /// Count of focused controls obscured at their center point by another element (e.g. sticky header).
+    #[serde(default)]
+    pub obscured_focus_count: usize,
 }
 
 /// Per-resource CDP code coverage breakdown (uncompressed source offsets during initial load).

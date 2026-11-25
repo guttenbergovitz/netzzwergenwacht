@@ -36,6 +36,8 @@ const RULE_AX_HIGH_IGNORED_RATIO: &str = "a11y.ax.high_ignored_ratio";
 const RULE_BEHAVIOURAL_FOCUS_TRAP: &str = "a11y.behavioural.focus_trap";
 const RULE_BEHAVIOURAL_FOCUS_INDICATOR: &str = "a11y.behavioural.missing_focus_indicator";
 const RULE_BEHAVIOURAL_UNREACHED_CONTROLS: &str = "a11y.behavioural.unreached_interactive_controls";
+const RULE_BEHAVIOURAL_MODAL_CONTAINMENT: &str = "a11y.behavioural.modal_focus_containment";
+const RULE_BEHAVIOURAL_OBSCURED_FOCUS: &str = "a11y.behavioural.obscured_focus";
 
 /// Source-level rule identifiers owned by `ZugänglichkeitsZwerg`.
 pub const SOURCE_RULES: &[&str] = &[
@@ -231,6 +233,8 @@ fn check_behavioural_a11y(
             RULE_BEHAVIOURAL_FOCUS_TRAP,
             RULE_BEHAVIOURAL_FOCUS_INDICATOR,
             RULE_BEHAVIOURAL_UNREACHED_CONTROLS,
+            RULE_BEHAVIOURAL_MODAL_CONTAINMENT,
+            RULE_BEHAVIOURAL_OBSCURED_FOCUS,
         ] {
             checks.push(CheckStatus::Unavailable {
                 rule_id: RuleId(rule.to_owned()),
@@ -280,26 +284,93 @@ fn check_behavioural_a11y(
         checks,
     );
 
-    let unreached = obs.tabbable_candidates > 0 && obs.tab_stops_observed == 0;
+    let unreached = obs.tabbable_candidates > 0
+        && (obs.tab_stops_observed == 0
+            || (!obs.tab_budget_exhausted
+                && obs.tab_stops_observed.saturating_mul(2) < obs.tabbable_candidates));
     emit_behavioural_check(
         RULE_BEHAVIOURAL_UNREACHED_CONTROLS,
         unreached,
-        Severity::High,
-        "No tabbable controls reached during Tab traversal".to_owned(),
+        if obs.tab_stops_observed == 0 {
+            Severity::High
+        } else {
+            Severity::Medium
+        },
+        if obs.tab_stops_observed == 0 {
+            "No tabbable controls reached during Tab traversal".to_owned()
+        } else {
+            format!(
+                "Many interactive controls unreached during Tab traversal ({} of {})",
+                obs.tabbable_candidates
+                    .saturating_sub(obs.tab_stops_observed),
+                obs.tabbable_candidates
+            )
+        },
         format!(
-            "Detected {} visible interactive candidate(s), but `Tab` traversal reached 0 controls.",
-            obs.tabbable_candidates
+            "Detected {} visible interactive candidate(s), but `Tab` traversal reached {} control(s).",
+            obs.tabbable_candidates, obs.tab_stops_observed
         ),
         format!(
-            "tabbable_candidates={};tab_stops_observed=0",
-            obs.tabbable_candidates
+            "tabbable_candidates={};tab_stops_observed={};budget_exhausted={}",
+            obs.tabbable_candidates, obs.tab_stops_observed, obs.tab_budget_exhausted
         ),
         "Ensure interactive elements are keyboard-focusable and not blocked by `inert` or `tabindex=\"-1\"`.",
         findings,
         checks,
     );
 
+    check_modal_and_obscured_focus(obs, findings, checks);
     emit_behavioural_summary(obs, unreached, findings, checks);
+}
+
+fn check_modal_and_obscured_focus(
+    obs: &crate::domain::BehaviouralA11yObs,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.open_dialogs_count == 0 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_BEHAVIOURAL_MODAL_CONTAINMENT.to_owned()),
+            evidence_level: EvidenceLevel::Behavioural,
+            reason: "no open modal/dialog detected on initial load".to_owned(),
+        });
+    } else {
+        emit_behavioural_check(
+            RULE_BEHAVIOURAL_MODAL_CONTAINMENT,
+            obs.modal_focus_escaped,
+            Severity::High,
+            "Keyboard focus escaped open modal dialog".to_owned(),
+            format!(
+                "With {} open dialog(s), `Tab` traversal moved focus outside the modal container.",
+                obs.open_dialogs_count
+            ),
+            format!(
+                "open_dialogs={};modal_focus_escaped={}",
+                obs.open_dialogs_count, obs.modal_focus_escaped
+            ),
+            "Trap Tab/Shift+Tab focus inside open modal dialogs and mark background content `inert`.",
+            findings,
+            checks,
+        );
+    }
+
+    emit_behavioural_check(
+        RULE_BEHAVIOURAL_OBSCURED_FOCUS,
+        obs.obscured_focus_count > 0,
+        Severity::Medium,
+        format!(
+            "Focused controls obscured by overlapping elements ({})",
+            obs.obscured_focus_count
+        ),
+        format!(
+            "{} focused control(s) had another element (such as a sticky header or overlay) covering their center point.",
+            obs.obscured_focus_count
+        ),
+        format!("obscured_focus_count={}", obs.obscured_focus_count),
+        "Add `scroll-margin-top` / `scroll-padding-top` or dismiss overlays so focused controls remain visible.",
+        findings,
+        checks,
+    );
 }
 
 fn emit_behavioural_summary(
@@ -362,7 +433,7 @@ fn emit_behavioural_check(
         evidence_level: EvidenceLevel::Behavioural,
         kind: FindingKind::Deterministic,
         severity,
-        confidence: Confidence::High,
+        confidence: Confidence::Medium,
         title,
         summary,
         evidence_refs: vec![EvidenceRef::new(
@@ -1290,6 +1361,10 @@ mod tests {
                     missing_focus_indicator_count: 2,
                     open_dialogs_count: 1,
                     dialog_escape_closed: Some(false),
+                    focus_sequence: vec!["button#trap@10,10".to_owned()],
+                    tab_budget_exhausted: false,
+                    modal_focus_escaped: true,
+                    obscured_focus_count: 1,
                 }),
                 ..BrowserEvidence::default()
             },
@@ -1300,5 +1375,7 @@ mod tests {
         assert!(ids.contains(&RULE_BEHAVIOURAL_FOCUS_TRAP));
         assert!(ids.contains(&RULE_BEHAVIOURAL_FOCUS_INDICATOR));
         assert!(ids.contains(&RULE_BEHAVIOURAL_UNREACHED_CONTROLS));
+        assert!(ids.contains(&RULE_BEHAVIOURAL_MODAL_CONTAINMENT));
+        assert!(ids.contains(&RULE_BEHAVIOURAL_OBSCURED_FOCUS));
     }
 }

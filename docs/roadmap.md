@@ -1,6 +1,6 @@
 # NetzZwergenWacht Roadmap
 
-Current state on `develop`: **209 implemented diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **158+ passing tests**.
+Current state on `develop`: **211 implemented diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **159+ passing tests**.
 
 ## Completed under Operation Aufrüstung I–III
 

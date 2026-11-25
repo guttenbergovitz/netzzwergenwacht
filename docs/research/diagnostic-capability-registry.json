@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 209,
+  "total_implemented_capabilities": 211,
   "by_dwarf": {
     "LeistungsZwerg": 32,
     "SicherheitsZwerg": 33,
@@ -9,7 +9,7 @@
     "SuchZwerg": 19,
     "InhaltsZwerg": 16,
     "ApplicationGraph": 19,
-    "ZugänglichkeitsZwerg": 22,
+    "ZugänglichkeitsZwerg": 24,
     "StrukturZwerg": 15,
     "NetzZwerg": 18,
     "BrowserZwerg": 14
@@ -1889,6 +1889,24 @@
     },
     {
       "id": "a11y.behavioural.unreached_interactive_controls",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "evidence_level": "Behavioural",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "a11y.behavioural.modal_focus_containment",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "evidence_level": "Behavioural",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "a11y.behavioural.obscured_focus",
       "dwarf": "ZugänglichkeitsZwerg",
       "module": "analysis::accessibility",
       "source_path": "src/analysis/accessibility.rs",
