@@ -103,7 +103,11 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
             analysers.push(security::analyse_with_document(snapshot, Some(&obs)));
             analysers.push(performance::analyse_with_document(snapshot, Some(&obs)));
             analysers.push(semantics::analyse(&obs));
-            analysers.push(accessibility::analyse_with_axe(&obs, &snapshot.axe));
+            analysers.push(accessibility::analyse_with_browser(
+                &obs,
+                &snapshot.axe,
+                &snapshot.browser,
+            ));
             analysers.push(seo::analyse(http, &obs));
             analysers.push(content::analyse(http, &obs));
             analysers.push(browser::analyse_with_document(snapshot, Some(&obs)));

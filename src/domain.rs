@@ -828,6 +828,72 @@ pub struct RenderedImageObs {
     pub loading: Option<String>,
 }
 
+/// Summary of the Level 2 browser Accessibility Tree (`Accessibility.getFullAXTree`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AccessibilityTreeSummary {
+    /// Total accessibility nodes inspected (up to collector sampling limit).
+    pub total_nodes: usize,
+    /// Number of nodes marked `ignored` in the accessibility tree.
+    pub ignored_nodes: usize,
+    /// Interactive nodes (button, link, textbox, etc.) with an empty accessible name.
+    pub interactive_without_name: usize,
+    /// Focusable nodes inside an ignored (`aria-hidden` / `display:none`) subtree.
+    pub hidden_focusable_count: usize,
+    /// Whether the accessibility tree exceeded the collector sampling cap.
+    pub truncated: bool,
+}
+
+/// Level 2 navigation timing, LCP, CLS, and Long Task telemetry from the browser runtime.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PerformanceRuntimeObs {
+    /// DNS lookup duration in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dns_ms: Option<u64>,
+    /// TCP connection establishment duration in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tcp_ms: Option<u64>,
+    /// TLS negotiation duration in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tls_ms: Option<u64>,
+    /// Time to first byte in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttfb_ms: Option<u64>,
+    /// Response download duration in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub download_ms: Option<u64>,
+    /// `domInteractive` timestamp in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dom_interactive_ms: Option<u64>,
+    /// `domContentLoadedEventEnd` timestamp in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dom_content_loaded_ms: Option<u64>,
+    /// `loadEventEnd` timestamp in milliseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load_event_ms: Option<u64>,
+    /// Largest Contentful Paint in milliseconds from `PerformanceObserver`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lcp_ms: Option<u64>,
+    /// Tag/selector summary of the LCP element, if observed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lcp_element: Option<String>,
+    /// Resource URL of the LCP element, if applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lcp_url: Option<String>,
+    /// Cumulative Layout Shift expressed in integer thousandths (for example `150` = `0.150`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cls_thousandths: Option<u64>,
+    /// Number of layout shift entries without recent input.
+    pub layout_shift_count: usize,
+    /// Number of main-thread long tasks (`> 50ms`).
+    pub long_task_count: usize,
+    /// Total duration of observed long tasks in milliseconds.
+    pub long_task_total_ms: u64,
+    /// Maximum single long task duration in milliseconds.
+    pub max_long_task_ms: u64,
+}
+
 /// Level 2 browser runtime and visual layout evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserEvidence {
@@ -862,6 +928,12 @@ pub struct BrowserEvidence {
     /// Visible word count extracted from rendered `document.body.innerText`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rendered_word_count: Option<usize>,
+    /// Level 2 Accessibility Tree summary (`Accessibility.getFullAXTree`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ax_tree: Option<AccessibilityTreeSummary>,
+    /// Level 2 Navigation Timing, LCP, CLS, and Long Task telemetry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance: Option<PerformanceRuntimeObs>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,
