@@ -26,6 +26,9 @@ const RULE_PERMISSIONS_POLICY: &str = "sec.headers.permissions_policy";
 const RULE_VERSION_DISCLOSURE: &str = "sec.headers.version_disclosure";
 const RULE_INSECURE_FORMS: &str = "sec.dom.insecure_forms";
 const RULE_EXPOSED_SECRETS: &str = "sec.dom.exposed_secrets";
+const RULE_CROSS_ORIGIN_ISOLATION: &str = "sec.headers.cross_origin_isolation";
+const RULE_SENSITIVE_CACHE: &str = "sec.headers.sensitive_cache";
+const RULE_IFRAME_SANDBOX: &str = "sec.dom.iframe_sandbox";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -43,6 +46,9 @@ const ALL_RULES: &[&str] = &[
     RULE_VERSION_DISCLOSURE,
     RULE_INSECURE_FORMS,
     RULE_EXPOSED_SECRETS,
+    RULE_CROSS_ORIGIN_ISOLATION,
+    RULE_SENSITIVE_CACHE,
+    RULE_IFRAME_SANDBOX,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -96,13 +102,22 @@ pub fn analyse_with_document(
     check_permissions_policy(http, &mut findings, &mut checks);
     check_version_disclosure(http, obs, &mut findings, &mut checks);
     check_exposed_secrets(http, &mut findings, &mut checks);
+    check_cross_origin_isolation(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
         check_sri(http, doc, &mut findings, &mut checks);
         check_insecure_forms(uses_https, doc, &mut findings, &mut checks);
+        check_sensitive_cache(http, doc, &mut findings, &mut checks);
+        check_iframe_sandbox(doc, &mut findings, &mut checks);
     } else {
-        for rule in [RULE_MIXED_CONTENT, RULE_SRI, RULE_INSECURE_FORMS] {
+        for rule in [
+            RULE_MIXED_CONTENT,
+            RULE_SRI,
+            RULE_INSECURE_FORMS,
+            RULE_SENSITIVE_CACHE,
+            RULE_IFRAME_SANDBOX,
+        ] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
                 evidence_level: EvidenceLevel::Source,
@@ -1123,6 +1138,146 @@ fn check_exposed_secrets(
     }
 }
 
+fn check_cross_origin_isolation(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let opener_policy = header_value(http, "cross-origin-opener-policy");
+    let resource_policy = header_value(http, "cross-origin-resource-policy");
+    if opener_policy.is_some() && resource_policy.is_some() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CROSS_ORIGIN_ISOLATION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        let mut missing = Vec::new();
+        if opener_policy.is_none() {
+            missing.push("Cross-Origin-Opener-Policy");
+        }
+        if resource_policy.is_none() {
+            missing.push("Cross-Origin-Resource-Policy");
+        }
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CROSS_ORIGIN_ISOLATION.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Info,
+            confidence: Confidence::High,
+            title: "Missing cross-origin isolation headers".to_owned(),
+            summary: format!("Response omits {}.", missing.join(" and ")),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("missing={}", missing.join(",")),
+            )],
+            remediation: Some(
+                "Set `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Resource-Policy: same-origin` where compatible."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CROSS_ORIGIN_ISOLATION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_sensitive_cache(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let has_password = obs.forms.iter().any(|f| f.has_password_input);
+    if !has_password {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_SENSITIVE_CACHE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no password form present".to_owned(),
+        });
+        return;
+    }
+
+    let cc = header_value(http, "cache-control")
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    if cc.contains("no-store") {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SENSITIVE_CACHE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SENSITIVE_CACHE.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Page with password form lacks Cache-Control: no-store".to_owned(),
+            summary: format!(
+                "Response containing a password input returned `Cache-Control: {}` without `no-store`.",
+                if cc.is_empty() { "<missing>" } else { &cc }
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("has_password_form=true;cache_control={cc}"),
+            )],
+            remediation: Some(
+                "Send `Cache-Control: no-store` on authentication and sensitive form responses."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SENSITIVE_CACHE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_iframe_sandbox(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.iframes_without_sandbox == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_IFRAME_SANDBOX.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_IFRAME_SANDBOX.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("<iframe> elements without sandbox ({})", obs.iframes_without_sandbox),
+            summary: format!(
+                "{} <iframe> element(s) do not specify a `sandbox` attribute.",
+                obs.iframes_without_sandbox
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("iframes_without_sandbox={}", obs.iframes_without_sandbox),
+            )],
+            remediation: Some(
+                "Add a restrictive `sandbox` attribute to embedded <iframe> elements where possible."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_IFRAME_SANDBOX.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1189,6 +1344,8 @@ mod tests {
                 ("x-frame-options", "DENY"),
                 ("referrer-policy", "no-referrer"),
                 ("permissions-policy", "geolocation=()"),
+                ("cross-origin-opener-policy", "same-origin"),
+                ("cross-origin-resource-policy", "same-origin"),
             ],
         );
         let result = analyse(&snap);
@@ -1295,5 +1452,28 @@ mod tests {
         assert!(ids.contains(&RULE_VERSION_DISCLOSURE));
         assert!(ids.contains(&RULE_INSECURE_FORMS));
         assert!(ids.contains(&RULE_EXPOSED_SECRETS));
+    }
+
+    #[test]
+    fn flags_cross_origin_isolation_sensitive_cache_and_iframe_sandbox() {
+        let mut snap = snapshot_with_headers("https://example.com/", Vec::new());
+        let html = r#"<html><body>
+            <form action="https://example.com/login" method="POST"><input type="password"></form>
+            <iframe src="https://embed.example.org/frame" title="Embed"></iframe>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_CROSS_ORIGIN_ISOLATION));
+        assert!(ids.contains(&RULE_SENSITIVE_CACHE));
+        assert!(ids.contains(&RULE_IFRAME_SANDBOX));
     }
 }

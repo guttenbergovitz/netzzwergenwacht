@@ -21,6 +21,8 @@ const RULE_UNRENDERED_MARKUP: &str = "inh.content.unrendered_markup";
 const RULE_STALE_COPYRIGHT: &str = "inh.content.stale_copyright";
 const RULE_READABILITY: &str = "inh.content.readability";
 const RULE_AUTHOR_OR_DATE: &str = "inh.trust.author_or_date";
+const RULE_TEXT_TO_HTML_RATIO: &str = "inh.content.text_to_html_ratio";
+const RULE_AX_SIGNALS: &str = "inh.ax.machine_readable_signals";
 
 /// All rule identifiers owned by `InhaltsZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -34,6 +36,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_STALE_COPYRIGHT,
     RULE_READABILITY,
     RULE_AUTHOR_OR_DATE,
+    RULE_TEXT_TO_HTML_RATIO,
+    RULE_AX_SIGNALS,
 ];
 
 /// Evaluates visible word count, freshness headers, and content quality signals over `http` and `obs`.
@@ -52,6 +56,8 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_stale_copyright(obs, &mut findings, &mut checks);
     check_readability(obs, &mut findings, &mut checks);
     check_author_or_date(obs, &mut findings, &mut checks);
+    check_text_to_html_ratio(http, obs, &mut findings, &mut checks);
+    check_ax_signals(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Inhalts,
@@ -599,6 +605,118 @@ fn check_author_or_date(
     }
 }
 
+fn check_text_to_html_ratio(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if http.body_bytes < 2048 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_TEXT_TO_HTML_RATIO.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "HTML payload smaller than 2048 bytes".to_owned(),
+        });
+        return;
+    }
+
+    let ratio_pct = (obs.visible_char_count * 100) / http.body_bytes.max(1);
+    if ratio_pct < 5 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_TEXT_TO_HTML_RATIO.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::Medium,
+            title: format!("Low visible text-to-HTML ratio ({ratio_pct}%)"),
+            summary: format!(
+                "Only {} visible chars out of {} HTML bytes ({ratio_pct}% < 5%).",
+                obs.visible_char_count, http.body_bytes
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!(
+                    "visible_chars={};body_bytes={}",
+                    obs.visible_char_count, http.body_bytes
+                ),
+            )],
+            remediation: Some(
+                "Reduce inline script/markup bloat or render substantive text server-side."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_TEXT_TO_HTML_RATIO.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_TEXT_TO_HTML_RATIO.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_ax_signals(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.visible_word_count < 150 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_AX_SIGNALS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "page has fewer than 150 visible words".to_owned(),
+        });
+        return;
+    }
+
+    let has_landmarks = obs.landmarks.main_count > 0 && !obs.headings.is_empty();
+    let has_structured = obs.json_ld_count > 0;
+    if has_landmarks && has_structured {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_AX_SIGNALS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_AX_SIGNALS.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: "Incomplete Agent Experience (AX) machine-readable signals".to_owned(),
+            summary: format!(
+                "Substantive page lacks complete machine-readable structure (main_count={}, headings={}, json_ld={}).",
+                obs.landmarks.main_count,
+                obs.headings.len(),
+                obs.json_ld_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!(
+                    "main={};headings={};json_ld={}",
+                    obs.landmarks.main_count,
+                    obs.headings.len(),
+                    obs.json_ld_count
+                ),
+            )],
+            remediation: Some(
+                "Wrap primary content in `<main>` with clear headings and Schema.org JSON-LD."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_AX_SIGNALS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -709,6 +827,25 @@ mod tests {
             res.findings
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_AUTHOR_OR_DATE)
+        );
+    }
+
+    #[test]
+    fn flags_low_text_to_html_ratio_and_incomplete_ax_signals() {
+        let padding = "<div><span></span></div>".repeat(150);
+        let words = vec!["word"; 160].join(" ");
+        let html = format!("<html><body>{padding}<p>{words}</p></body></html>");
+        let (http, obs) = http_with_body(&html, Vec::new());
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_AX_SIGNALS));
+        let tiny_text_html = format!("<html><body>{padding}<p>hi</p></body></html>");
+        let (http2, obs2) = http_with_body(&tiny_text_html, Vec::new());
+        let res2 = analyse(&http2, &obs2);
+        assert!(
+            res2.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_TEXT_TO_HTML_RATIO)
         );
     }
 }

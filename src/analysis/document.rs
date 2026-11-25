@@ -254,6 +254,12 @@ pub struct DocumentObservations {
     pub autoplay_unmuted_media: usize,
     /// Detected author or publication/modification date metadata signal, if present.
     pub author_or_date_signal: Option<&'static str>,
+    /// Count of `<iframe>` elements lacking a `sandbox` attribute.
+    pub iframes_without_sandbox: usize,
+    /// Count of RSS/Atom/JSON feed autodiscovery `<link rel="alternate">` elements.
+    pub feed_links_count: usize,
+    /// Count of non-background `<video>` elements lacking `controls` or `poster`.
+    pub videos_without_controls_or_poster: usize,
 }
 
 impl DocumentObservations {
@@ -423,6 +429,31 @@ fn extract_wave5_observations(doc: &Html, obs: &mut DocumentObservations) {
     } else {
         None
     };
+
+    if let Ok(iframe_sel) = Selector::parse("iframe") {
+        for el in doc.select(&iframe_sel) {
+            if el.value().attr("sandbox").is_none() {
+                obs.iframes_without_sandbox += 1;
+            }
+        }
+    }
+
+    obs.feed_links_count = count_selector(
+        doc,
+        r#"link[rel="alternate"][type="application/rss+xml"], link[rel="alternate"][type="application/atom+xml"], link[rel="alternate"][type="application/feed+json"]"#,
+    );
+
+    if let Ok(video_sel) = Selector::parse("video") {
+        for el in doc.select(&video_sel) {
+            let is_bg = el.value().attr("autoplay").is_some() && el.value().attr("muted").is_some();
+            if !is_bg
+                && (el.value().attr("controls").is_none()
+                    || non_empty_attr(&el, "poster").is_none())
+            {
+                obs.videos_without_controls_or_poster += 1;
+            }
+        }
+    }
 }
 
 fn extract_scripts_and_styles(doc: &Html, obs: &mut DocumentObservations) {
