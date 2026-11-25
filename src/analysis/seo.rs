@@ -23,6 +23,8 @@ const RULE_SOCIAL: &str = "such.social.metadata";
 const RULE_URL_HYGIENE: &str = "such.url.hygiene";
 const RULE_CANONICAL_ABSOLUTE: &str = "such.meta.canonical_absolute";
 const RULE_FEED_AUTODISCOVERY: &str = "such.feeds.autodiscovery";
+const RULE_HREFLANG_SELF_REF: &str = "such.i18n.missing_self_reference";
+const RULE_SOCIAL_IMAGE: &str = "such.social.missing_preview_image";
 
 /// All rule identifiers owned by `SuchZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -37,6 +39,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_URL_HYGIENE,
     RULE_CANONICAL_ABSOLUTE,
     RULE_FEED_AUTODISCOVERY,
+    RULE_HREFLANG_SELF_REF,
+    RULE_SOCIAL_IMAGE,
     schema::RULE_SCHEMA_TYPE_REQUIREMENTS,
     schema::RULE_SCHEMA_SAME_AS,
     schema::RULE_SCHEMA_ENTITY_REFS,
@@ -60,6 +64,8 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_url_hygiene(http, &mut findings, &mut checks);
     check_canonical_absolute(obs, &mut findings, &mut checks);
     check_feed_autodiscovery(obs, &mut findings, &mut checks);
+    check_hreflang_self_reference(http, obs, &mut findings, &mut checks);
+    check_social_preview_image(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Such,
@@ -646,6 +652,113 @@ fn check_feed_autodiscovery(
     }
 }
 
+fn check_hreflang_self_reference(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.hreflangs.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_HREFLANG_SELF_REF.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no hreflang declarations present".to_owned(),
+        });
+        return;
+    }
+
+    let expected = obs.canonical_url.as_deref().unwrap_or(&http.final_url);
+    let expected_norm = expected.trim_end_matches('/');
+    let has_self = obs
+        .hreflangs
+        .iter()
+        .any(|h| h.href.trim_end_matches('/') == expected_norm);
+
+    if has_self {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_HREFLANG_SELF_REF.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_HREFLANG_SELF_REF.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Hreflang cluster omits self-referencing alternate link".to_owned(),
+            summary: format!(
+                "Page declares {} hreflang link(s) without a self-referencing entry for `{expected}`.",
+                obs.hreflangs.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("hreflang_count={};self_ref=false", obs.hreflangs.len()),
+            )],
+            remediation: Some(
+                "Include a self-referencing `<link rel=\"alternate\" hreflang=\"...\">` pointing to the page's canonical URL."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_HREFLANG_SELF_REF.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_social_preview_image(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let has_og = obs.social_meta.og_title.is_some() || obs.social_meta.og_description.is_some();
+    if !has_og {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_SOCIAL_IMAGE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no Open Graph metadata declared".to_owned(),
+        });
+        return;
+    }
+
+    let valid_img = obs
+        .social_meta
+        .og_image
+        .as_deref()
+        .is_some_and(|img| img.starts_with("https://") || img.starts_with("http://"));
+
+    if valid_img {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SOCIAL_IMAGE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SOCIAL_IMAGE.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "Open Graph metadata missing absolute og:image".to_owned(),
+            summary: "Document declares Open Graph tags without an absolute `https://`/`http://` `og:image` preview URL.".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "og_image_valid=false",
+            )],
+            remediation: Some("Provide an absolute `og:image` URL (1200x630 recommended).".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SOCIAL_IMAGE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -736,5 +849,21 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_CANONICAL_ABSOLUTE));
         assert!(ids.contains(&RULE_FEED_AUTODISCOVERY));
+    }
+
+    #[test]
+    fn flags_missing_hreflang_self_ref_and_missing_og_image() {
+        let html = r#"<html><head>
+            <title>NetzZwergenWacht</title>
+            <meta name="description" content="Desc">
+            <link rel="canonical" href="https://example.com/">
+            <link rel="alternate" hreflang="de" href="https://example.com/de">
+            <meta property="og:title" content="NZW">
+        </head><body><h1>NZW</h1></body></html>"#;
+        let (http, obs) = http_with_html(html);
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_HREFLANG_SELF_REF));
+        assert!(ids.contains(&RULE_SOCIAL_IMAGE));
     }
 }

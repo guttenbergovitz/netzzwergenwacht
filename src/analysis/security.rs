@@ -37,6 +37,8 @@ const RULE_COOKIE_PREFIX: &str = "sec.cookies.prefix_violation";
 const RULE_COOKIE_LIFETIME: &str = "sec.cookies.excessive_lifetime";
 const RULE_FORM_CROSS_ORIGIN: &str = "sec.forms.cross_origin_submission";
 const RULE_SENSITIVE_URL_PARAMS: &str = "sec.exposure.sensitive_url_parameters";
+const RULE_HSTS_DURATION: &str = "sec.headers.hsts_duration";
+const RULE_SENSITIVE_GET_FORM: &str = "sec.forms.sensitive_get_submission";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -65,6 +67,8 @@ const ALL_RULES: &[&str] = &[
     RULE_COOKIE_LIFETIME,
     RULE_FORM_CROSS_ORIGIN,
     RULE_SENSITIVE_URL_PARAMS,
+    RULE_HSTS_DURATION,
+    RULE_SENSITIVE_GET_FORM,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -122,6 +126,7 @@ pub fn analyse_with_document(
     check_csp_directives(http, &mut findings, &mut checks);
     check_cookie_attributes(http, &mut findings, &mut checks);
     check_sensitive_url_params(http, &mut findings, &mut checks);
+    check_hsts_duration(http, uses_https, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
@@ -130,6 +135,7 @@ pub fn analyse_with_document(
         check_sensitive_cache(http, doc, &mut findings, &mut checks);
         check_iframe_sandbox(doc, &mut findings, &mut checks);
         check_cross_origin_forms(http, doc, &mut findings, &mut checks);
+        check_sensitive_get_forms(doc, &mut findings, &mut checks);
     } else {
         for rule in [
             RULE_MIXED_CONTENT,
@@ -138,6 +144,7 @@ pub fn analyse_with_document(
             RULE_SENSITIVE_CACHE,
             RULE_IFRAME_SANDBOX,
             RULE_FORM_CROSS_ORIGIN,
+            RULE_SENSITIVE_GET_FORM,
         ] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
@@ -1717,6 +1724,114 @@ fn check_sensitive_url_params(
     }
 }
 
+fn check_hsts_duration(
+    http: &HttpEvidence,
+    uses_https: bool,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const MIN_RECOMMENDED_HSTS_SECS: u64 = 15_552_000; // 180 days
+    if !uses_https {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_HSTS_DURATION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "target did not use HTTPS".to_owned(),
+        });
+        return;
+    }
+    let Some(hsts) = header_value(http, "strict-transport-security") else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_HSTS_DURATION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "Strict-Transport-Security header absent".to_owned(),
+        });
+        return;
+    };
+    let max_age = hsts.split(';').map(str::trim).find_map(|part| {
+        part.to_ascii_lowercase()
+            .strip_prefix("max-age=")
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    });
+
+    if let Some(secs) = max_age
+        && secs > 0
+        && secs < MIN_RECOMMENDED_HSTS_SECS
+    {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_HSTS_DURATION.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Short HSTS max-age ({secs}s < 180 days)"),
+            summary: format!(
+                "Strict-Transport-Security `max-age={secs}` is shorter than the recommended 180-day (15,552,000s) minimum."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("hsts_max_age={secs}"),
+            )],
+            remediation: Some(
+                "Increase HSTS `max-age` to at least `15552000` (180 days) or `31536000` (1 year)."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_HSTS_DURATION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_HSTS_DURATION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_sensitive_get_forms(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let get_pwd_forms = obs
+        .forms
+        .iter()
+        .filter(|f| f.has_password_input && f.method.as_deref().unwrap_or("get") == "get")
+        .count();
+
+    if get_pwd_forms == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SENSITIVE_GET_FORM.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SENSITIVE_GET_FORM.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!("Password form using HTTP GET method ({get_pwd_forms})"),
+            summary: format!(
+                "{get_pwd_forms} <form> with a password input submits via GET (explicit or default), exposing credentials in URLs and logs."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("password_get_forms={get_pwd_forms}"),
+            )],
+            remediation: Some("Set `method=\"POST\"` on all authentication and password forms.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SENSITIVE_GET_FORM.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1959,5 +2074,29 @@ mod tests {
                 .iter()
                 .all(|f| !f.summary.contains("REDACTED_TEST_VAL"))
         );
+    }
+
+    #[test]
+    fn flags_short_hsts_duration_and_sensitive_get_form() {
+        let mut snap = snapshot_with_headers(
+            "https://example.com/",
+            vec![("strict-transport-security", "max-age=86400")],
+        );
+        let html = r#"<html><body>
+            <form action="https://example.com/login" method="GET"><input type="password"></form>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_HSTS_DURATION));
+        assert!(ids.contains(&RULE_SENSITIVE_GET_FORM));
     }
 }
