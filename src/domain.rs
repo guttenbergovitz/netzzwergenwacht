@@ -958,9 +958,31 @@ pub struct BrowserEvidence {
     /// Level 2 CDP JavaScript and CSS code coverage summary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coverage: Option<CoverageSummary>,
+    /// Level 3 behavioural keyboard navigation, focus indicator, and dialog probe observations.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub behavioural_a11y: Option<BehaviouralA11yObs>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,
+}
+
+/// Level 3 behavioural keyboard navigation, focus visibility, and dialog observations.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct BehaviouralA11yObs {
+    /// Distinct non-body elements reached during bounded `Tab` traversal.
+    pub tab_stops_observed: usize,
+    /// Approximate count of visible tabbable controls (`a[href]`, `button`, `input`, etc.).
+    pub tabbable_candidates: usize,
+    /// Whether `Tab` traversal detected a keyboard focus trap (stuck or 2-element loop).
+    pub focus_trap_detected: bool,
+    /// Focused elements matching `:focus-visible` with no observable outline or box-shadow.
+    pub missing_focus_indicator_count: usize,
+    /// Count of open modal/dialog containers (`dialog[open]`, `[role="dialog"]`, `[aria-modal="true"]`).
+    pub open_dialogs_count: usize,
+    /// Whether pressing `Escape` dismissed an open dialog (`None` if no open dialog was present).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dialog_escape_closed: Option<bool>,
 }
 
 /// Per-resource CDP code coverage breakdown (uncompressed source offsets during initial load).

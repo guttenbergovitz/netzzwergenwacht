@@ -533,7 +533,7 @@ function findBrowser() {
         }
       }
       perScript.sort((a, b) => (b.total_bytes - b.used_bytes) - (a.total_bytes - a.used_bytes));
-      coverageSummary.top_unused_scripts = perScript.slice(0, 5);
+      coverageSummary.top_unused_scripts = perScript.slice(0, 15);
       await call('Profiler.stopPreciseCoverage');
       hasCoverage = true;
     } catch {}
@@ -556,8 +556,80 @@ function findBrowser() {
       }
       const perSheet = Array.from(bySheet.values());
       perSheet.sort((a, b) => (b.total_bytes - b.used_bytes) - (a.total_bytes - a.used_bytes));
-      coverageSummary.top_unused_stylesheets = perSheet.slice(0, 5);
+      coverageSummary.top_unused_stylesheets = perSheet.slice(0, 15);
       hasCoverage = true;
+    } catch {}
+    let behaviouralA11y = null;
+    let behObs = {
+      tab_stops_observed: 0,
+      tabbable_candidates: 0,
+      focus_trap_detected: false,
+      missing_focus_indicator_count: 0,
+      open_dialogs_count: 0,
+      dialog_escape_closed: null,
+    };
+    let hasBeh = false;
+    try {
+      const preBehRes = await call('Runtime.evaluate', {
+        expression: `(() => {
+          const vis = (el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; };
+          const candidates = Array.from(document.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]')).filter((el) => el.getAttribute('tabindex') !== '-1' && vis(el)).length;
+          const dialogs = Array.from(document.querySelectorAll('dialog[open], [role=dialog], [aria-modal=true]')).filter(vis).length;
+          return { candidates, dialogs };
+        })()`,
+        returnByValue: true,
+      });
+      const preBeh = preBehRes?.result?.value || {};
+      behObs.tabbable_candidates = Number(preBeh.candidates || 0);
+      behObs.open_dialogs_count = Number(preBeh.dialogs || 0);
+      const seenStops = new Set();
+      const seq = [];
+      for (let step = 0; step < 25; step++) {
+        await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+        await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9 });
+        const focusRes = await call('Runtime.evaluate', {
+          expression: `(() => {
+            const el = document.activeElement;
+            if (!el || el === document.body || el === document.documentElement) return null;
+            const idPart = el.id ? '#' + el.id : '';
+            const rect = el.getBoundingClientRect();
+            const key = el.tagName.toLowerCase() + idPart + '@' + Math.round(rect.left) + ',' + Math.round(rect.top);
+            const st = getComputedStyle(el);
+            const focusVis = el.matches(':focus-visible');
+            const noOutline = st.outlineStyle === 'none' || parseFloat(st.outlineWidth || '0') === 0;
+            const noShadow = !st.boxShadow || st.boxShadow === 'none';
+            return { key, missingIndicator: Boolean(focusVis && noOutline && noShadow) };
+          })()`,
+          returnByValue: true,
+        });
+        const info = focusRes?.result?.value;
+        if (info && info.key) {
+          if (!seenStops.has(info.key)) {
+            seenStops.add(info.key);
+            if (info.missingIndicator) behObs.missing_focus_indicator_count++;
+          }
+          seq.push(info.key);
+          if (seq.length >= 4 && seq.slice(-3).every((k) => k === info.key)) {
+            behObs.focus_trap_detected = true;
+            break;
+          }
+          if (seq.length >= 6 && new Set(seq.slice(-6)).size <= 2 && behObs.tabbable_candidates > 3) {
+            behObs.focus_trap_detected = true;
+            break;
+          }
+        }
+      }
+      behObs.tab_stops_observed = seenStops.size;
+      if (behObs.open_dialogs_count > 0) {
+        await call('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+        await call('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+        const afterEsc = await call('Runtime.evaluate', {
+          expression: `Array.from(document.querySelectorAll('dialog[open], [role=dialog], [aria-modal=true]')).filter((el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none'; }).length`,
+          returnByValue: true,
+        });
+        behObs.dialog_escape_closed = Number(afterEsc?.result?.value || 0) < behObs.open_dialogs_count;
+      }
+      hasBeh = true;
     } catch {}
     for (const v of Array.isArray(domAndImages.csp_violations) ? domAndImages.csp_violations : []) {
       consoleErrors.push({
@@ -590,6 +662,7 @@ function findBrowser() {
       performance: domAndImages.performance || null,
       storage_summary: domAndImages.storage_summary || null,
       coverage: hasCoverage ? coverageSummary : null,
+      behavioural_a11y: hasBeh ? behObs : behaviouralA11y,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',
