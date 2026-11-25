@@ -28,6 +28,10 @@ const RULE_ENTITY_CONFLICTS: &str = "graph.schema.entity_conflicts";
 const RULE_DANGLING_ENTITIES: &str = "graph.schema.dangling_entities";
 const RULE_DEEP_CRAWL_DEPTH: &str = "graph.crawl.deep_crawl_depth";
 const RULE_SITEMAP_NON_INDEXABLE: &str = "graph.seo.sitemap_non_indexable";
+const RULE_EXCESSIVE_INTERNAL_REDIRECTS: &str = "graph.links.excessive_internal_redirects";
+const RULE_CRAWL_TRAP_CANDIDATE: &str = "graph.crawl.trap_candidate";
+const RULE_SHARED_FAILED_DEPENDENCY: &str = "graph.resources.shared_failed_dependency";
+const RULE_THIRD_PARTY_CONCENTRATION: &str = "graph.resources.third_party_concentration";
 
 /// All rule identifiers evaluated by the Application Graph engine.
 pub const ALL_RULES: &[&str] = &[
@@ -43,7 +47,22 @@ pub const ALL_RULES: &[&str] = &[
     RULE_DANGLING_ENTITIES,
     RULE_DEEP_CRAWL_DEPTH,
     RULE_SITEMAP_NON_INDEXABLE,
+    RULE_EXCESSIVE_INTERNAL_REDIRECTS,
+    RULE_CRAWL_TRAP_CANDIDATE,
+    RULE_SHARED_FAILED_DEPENDENCY,
+    RULE_THIRD_PARTY_CONCENTRATION,
 ];
+
+/// Compact subresource record attached to a [`GraphPageInput`] for `ResourceGraph` projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphResourceInput {
+    /// Subresource URL.
+    pub url: String,
+    /// Observed HTTP status code, if known.
+    pub status_code: Option<u16>,
+    /// Observed transfer size in bytes, if known.
+    pub transfer_size: Option<u64>,
+}
 
 /// Per-page input record used to construct an [`ApplicationGraph`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +99,8 @@ pub struct GraphPageInput {
     pub lang: Option<String>,
     /// Structured data entities extracted from JSON-LD blocks on this page.
     pub entities: Vec<SchemaEntitySummary>,
+    /// Optional subresource observations for cross-page `ResourceGraph` correlation.
+    pub resources: Vec<GraphResourceInput>,
 }
 
 /// Normalised application-level URL, link, canonical, and hreflang graph.
@@ -154,6 +175,9 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
     check_links_to_redirects(graph, &mut netz_findings, &mut netz_checks);
     check_orphan_candidates(graph, &mut netz_findings, &mut netz_checks);
     check_deep_crawl_depth(graph, &mut netz_findings, &mut netz_checks);
+    check_excessive_internal_redirects(graph, &mut netz_findings, &mut netz_checks);
+    check_crawl_trap_candidates(graph, &mut netz_findings, &mut netz_checks);
+    check_resource_graph_dependencies(graph, &mut netz_findings, &mut netz_checks);
 
     check_links_to_non_indexable(graph, &mut such_findings, &mut such_checks);
     check_canonical_graph(graph, &mut such_findings, &mut such_checks);
@@ -994,6 +1018,271 @@ fn check_sitemap_non_indexable(
     }
 }
 
+fn check_excessive_internal_redirects(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let multi_hop: Vec<String> = graph
+        .pages
+        .values()
+        .filter(|p| p.redirect_targets.len() >= 2)
+        .map(|p| format!("{} ({} hops)", p.requested_url, p.redirect_targets.len()))
+        .collect();
+
+    if multi_hop.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_EXCESSIVE_INTERNAL_REDIRECTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_EXCESSIVE_INTERNAL_REDIRECTS.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Multi-hop internal redirect chains ({})", multi_hop.len()),
+            summary: format!(
+                "{} URL(s) traverse 2 or more redirect hops: {}.",
+                multi_hop.len(),
+                multi_hop
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpStatus,
+                format!("multi_hop_redirects={}", multi_hop.len()),
+            )],
+            remediation: Some(
+                "Collapse multi-hop redirects into a single 301/308 hop and update internal links."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_EXCESSIVE_INTERNAL_REDIRECTS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_crawl_trap_candidates(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mut path_variants: BTreeMap<String, usize> = BTreeMap::new();
+    for url_str in graph.pages.keys() {
+        if let Ok(parsed) = url::Url::parse(url_str)
+            && parsed.query().is_some()
+        {
+            let base = format!(
+                "{}://{}{}",
+                parsed.scheme(),
+                parsed.host_str().unwrap_or(""),
+                parsed.path()
+            );
+            *path_variants.entry(base).or_insert(0) += 1;
+        }
+    }
+    let traps: Vec<String> = path_variants
+        .into_iter()
+        .filter(|(_, count)| *count >= 5)
+        .map(|(base, count)| format!("{base} ({count} query variants)"))
+        .collect();
+
+    if traps.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CRAWL_TRAP_CANDIDATE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CRAWL_TRAP_CANDIDATE.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: format!("Potential parameterised crawl trap(s) ({})", traps.len()),
+            summary: format!(
+                "Detected path(s) generating >= 5 parameterised URL variants: {}.",
+                traps.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("crawl_trap_paths={}", traps.len()),
+            )],
+            remediation: Some(
+                "Canonicalise faceted/filter query URLs or disallow unbounded parameter combinations in robots.txt."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CRAWL_TRAP_CANDIDATE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_resource_graph_dependencies(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let pages_with_res: Vec<&GraphPageInput> = graph
+        .pages
+        .values()
+        .filter(|p| !p.resources.is_empty())
+        .collect();
+    if pages_with_res.len() < 2 {
+        for rule in [
+            RULE_SHARED_FAILED_DEPENDENCY,
+            RULE_THIRD_PARTY_CONCENTRATION,
+        ] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason: "fewer than 2 pages with subresource telemetry".to_owned(),
+            });
+        }
+        return;
+    }
+
+    let mut failed_by_url: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut host_pages: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+    for page in &pages_with_res {
+        let page_host = url::Url::parse(&page.url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+        for res in &page.resources {
+            if res.status_code.is_some_and(|s| s >= 400) {
+                failed_by_url
+                    .entry(res.url.clone())
+                    .or_default()
+                    .insert(page.url.clone());
+            }
+            if let Ok(u) = url::Url::parse(&res.url)
+                && let Some(h) = u.host_str().map(str::to_ascii_lowercase)
+                && page_host.as_deref() != Some(h.as_str())
+            {
+                host_pages.entry(h).or_default().insert(page.url.clone());
+            }
+        }
+    }
+
+    let shared_failed: Vec<String> = failed_by_url
+        .into_iter()
+        .filter(|(_, pages)| pages.len() >= 2)
+        .map(|(url, pages)| format!("{url} ({} pages)", pages.len()))
+        .collect();
+    if shared_failed.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SHARED_FAILED_DEPENDENCY.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SHARED_FAILED_DEPENDENCY.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!(
+                "Shared failing subresource dependencies ({})",
+                shared_failed.len()
+            ),
+            summary: format!(
+                "{} subresource(s) failed across multiple pages: {}.",
+                shared_failed.len(),
+                shared_failed
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("shared_failed_resources={}", shared_failed.len()),
+            )],
+            remediation: Some(
+                "Repair or remove broken shared template dependencies affecting multiple routes."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SHARED_FAILED_DEPENDENCY.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    emit_third_party_concentration(host_pages, pages_with_res.len(), findings, checks);
+}
+
+fn emit_third_party_concentration(
+    host_pages: BTreeMap<String, BTreeSet<String>>,
+    total_pages: usize,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let concentrated: Vec<String> = host_pages
+        .into_iter()
+        .filter(|(_, pages)| pages.len() * 2 >= total_pages)
+        .map(|(host, pages)| format!("{host} ({}/{total_pages})", pages.len()))
+        .collect();
+    if concentrated.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_THIRD_PARTY_CONCENTRATION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_THIRD_PARTY_CONCENTRATION.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::High,
+            title: format!(
+                "High third-party origin concentration ({})",
+                concentrated.len()
+            ),
+            summary: format!(
+                "External host(s) loaded across >= 50% of inspected pages: {}.",
+                concentrated
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("concentrated_third_party_hosts={}", concentrated.len()),
+            )],
+            remediation: Some(
+                "Assess availability and latency risk of widely shared third-party origins."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_THIRD_PARTY_CONCENTRATION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1016,6 +1305,7 @@ mod tests {
             all_ids: HashSet::new(),
             lang: Some("en".to_owned()),
             entities: Vec::new(),
+            resources: Vec::new(),
         }
     }
 
@@ -1139,5 +1429,36 @@ mod tests {
 
         assert!(rule_ids.contains(&RULE_DEEP_CRAWL_DEPTH));
         assert!(rule_ids.contains(&RULE_SITEMAP_NON_INDEXABLE));
+    }
+
+    #[test]
+    fn detects_excessive_redirects_crawl_traps_and_resource_graph_dependencies() {
+        let mut p1 = page("https://example.com/filter?color=1");
+        p1.redirect_targets = vec![
+            "https://example.com/old1".to_owned(),
+            "https://example.com/old2".to_owned(),
+        ];
+        p1.resources = vec![GraphResourceInput {
+            url: "https://cdn.thirdparty.test/broken.js".to_owned(),
+            status_code: Some(404),
+            transfer_size: Some(0),
+        }];
+        let mut p2 = page("https://example.com/filter?color=2");
+        p2.resources = p1.resources.clone();
+        let p3 = page("https://example.com/filter?color=3");
+        let p4 = page("https://example.com/filter?color=4");
+        let p5 = page("https://example.com/filter?color=5");
+
+        let graph = ApplicationGraph::from_pages(&[p1, p2, p3, p4, p5], true);
+        let results = analyse(&graph);
+        let rule_ids: Vec<&str> = results
+            .iter()
+            .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+
+        assert!(rule_ids.contains(&RULE_EXCESSIVE_INTERNAL_REDIRECTS));
+        assert!(rule_ids.contains(&RULE_CRAWL_TRAP_CANDIDATE));
+        assert!(rule_ids.contains(&RULE_SHARED_FAILED_DEPENDENCY));
+        assert!(rule_ids.contains(&RULE_THIRD_PARTY_CONCENTRATION));
     }
 }

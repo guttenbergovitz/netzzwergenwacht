@@ -15,6 +15,7 @@ pub mod schema;
 pub mod security;
 pub mod semantics;
 pub mod seo;
+pub mod stats;
 pub mod visual;
 
 use schemars::JsonSchema;

@@ -754,6 +754,7 @@ pub fn registered_tool_definitions(
     let prev = InspectPreviousFindingsTool::new(target.clone(), policy);
     let verify = VerifyFindingTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
     let query_browser = QueryBrowserEvidenceTool::new(target.clone(), policy, timeout, backend);
+    let calc_dist = CalculateDistributionTool;
     vec![
         portable_tool_definition(&browser),
         portable_tool_definition(&axe),
@@ -764,7 +765,93 @@ pub fn registered_tool_definitions(
         portable_tool_definition(&prev),
         portable_tool_definition(&verify),
         portable_tool_definition(&query_browser),
+        portable_tool_definition(&calc_dist),
     ]
+}
+
+/// Typed arguments for [`CalculateDistributionTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalculateDistributionArgs {
+    /// Metric name (for example `"ttfb_ms"`, `"transfer_bytes"`).
+    pub metric: String,
+    /// Named numeric observations (`label`, optional `value`).
+    pub samples: Vec<NamedSample>,
+}
+
+/// A single labelled numeric sample for [`CalculateDistributionTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NamedSample {
+    /// Sample label (for example page URL or resource URL).
+    pub label: String,
+    /// Observed value (`None` if missing/unavailable).
+    pub value: Option<u64>,
+}
+
+/// Output produced by [`CalculateDistributionTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalculateDistributionOutput {
+    /// Metric name echoed back.
+    pub metric: String,
+    /// Descriptive statistics summary.
+    pub summary: crate::analysis::stats::DistributionSummary,
+    /// Upper-tail Tukey IQR outliers (empty when `< 4` non-missing samples).
+    pub outliers: Vec<crate::analysis::stats::OutlierPoint>,
+}
+
+/// `rig-core` [`PortableTool`] computing descriptive statistics and Tukey IQR outliers.
+pub struct CalculateDistributionTool;
+
+impl PortableTool for CalculateDistributionTool {
+    const NAME: &'static str = "calculate_distribution";
+    type Args = CalculateDistributionArgs;
+    type Output = CalculateDistributionOutput;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Calculate descriptive statistics (count, missing, min, max, mean, median, p75, p95, IQR, MAD) \
+and identify Tukey IQR upper-tail outliers over a list of labelled numeric observations."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "metric": { "type": "string", "description": "Metric name" },
+                "samples": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "label": { "type": "string" },
+                            "value": { "type": ["integer", "null"] }
+                        },
+                        "required": ["label", "value"]
+                    }
+                }
+            },
+            "required": ["metric", "samples"]
+        })
+    }
+
+    fn call(
+        &self,
+        arguments: Self::Args,
+    ) -> impl std::future::Future<Output = Result<Self::Output, Self::Error>> + Send {
+        let raw: Vec<Option<u64>> = arguments.samples.iter().map(|s| s.value).collect();
+        let summary = crate::analysis::stats::summarise_u64(&raw);
+        let present: Vec<(String, u64)> = arguments
+            .samples
+            .into_iter()
+            .filter_map(|s| s.value.map(|v| (s.label, v)))
+            .collect();
+        let outliers = crate::analysis::stats::identify_upper_iqr_outliers(&present);
+        std::future::ready(Ok(CalculateDistributionOutput {
+            metric: arguments.metric,
+            summary,
+            outliers,
+        }))
+    }
 }
 
 /// Compact waterfall and runtime-error summary returned by [`QueryBrowserEvidenceTool`].

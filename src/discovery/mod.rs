@@ -640,6 +640,7 @@ pub(crate) fn build_captured_graph_input(
         all_ids: obs.all_ids.clone(),
         lang: obs.html_lang.clone(),
         entities: crate::analysis::schema::extract_entities(&obs.json_ld_blocks).entities,
+        resources: Vec::new(),
     }
 }
 
@@ -665,6 +666,7 @@ pub(crate) fn unreachable_graph_input(
         all_ids: HashSet::new(),
         lang: None,
         entities: Vec::new(),
+        resources: Vec::new(),
     }
 }
 

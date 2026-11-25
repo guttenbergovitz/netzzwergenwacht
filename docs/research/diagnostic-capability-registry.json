@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 145,
+  "total_implemented_capabilities": 149,
   "by_dwarf": {
     "LeistungsZwerg": 24,
     "SicherheitsZwerg": 26,
     "GestaltungsZwerg": 16,
     "SuchZwerg": 14,
     "InhaltsZwerg": 12,
-    "ApplicationGraph": 12,
+    "ApplicationGraph": 16,
     "ZugänglichkeitsZwerg": 13,
     "StrukturZwerg": 9,
     "NetzZwerg": 8,
@@ -1317,6 +1317,42 @@
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
       "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.links.excessive_internal_redirects",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.crawl.trap_candidate",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.resources.shared_failed_dependency",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.resources.third_party_concentration",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Rendered",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
     }
