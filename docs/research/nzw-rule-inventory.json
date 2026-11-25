@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 157,
+  "total_rules": 163,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1358,6 +1358,54 @@
       "dwarf": "InhaltsZwerg",
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.redirect.https_downgrade",
+      "constant": "RULE_REDIRECT_HTTPS_DOWNGRADE",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.redirect.cross_origin_chain",
+      "constant": "RULE_REDIRECT_CROSS_ORIGIN",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.etag_validation",
+      "constant": "RULE_ETAG_VALIDATION",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.rate_limiting_observed",
+      "constant": "RULE_RATE_LIMITING",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.landmarks.duplicate_main",
+      "constant": "RULE_DUPLICATE_MAIN",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.headings.empty_heading",
+      "constant": "RULE_EMPTY_HEADING",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
       "status": "native_rust"
     }
   ]

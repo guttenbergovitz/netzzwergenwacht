@@ -236,3 +236,136 @@ async fn verifies_remediation_between_baseline_and_fixed_zwergenpruefstand_page(
 
     server.abort();
 }
+
+fn make_http_snapshot(
+    html: &str,
+    final_url: &str,
+    headers: Vec<netzzwergenwacht::domain::HttpHeader>,
+    with_tls: bool,
+) -> netzzwergenwacht::domain::EvidenceSnapshot {
+    use netzzwergenwacht::domain::{
+        CollectorOutcome, EvidenceSnapshot, HttpEvidence, Measurement, MeasurementUnit, TlsEvidence,
+    };
+    let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+    let tls = if with_tls {
+        CollectorOutcome::Captured {
+            data: TlsEvidence {
+                subject: "CN=example.com".to_owned(),
+                issuer: "CN=Example CA".to_owned(),
+                not_after_unix_secs: 2_000_000_000,
+                days_until_expiry: 90,
+            },
+        }
+    } else {
+        CollectorOutcome::Skipped {
+            reason: "test".to_owned(),
+        }
+    };
+    EvidenceSnapshot {
+        target,
+        captured_at_unix_secs: 0,
+        http: CollectorOutcome::Captured {
+            data: HttpEvidence {
+                final_url: final_url.to_owned(),
+                status_code: 200,
+                redirect_chain: Vec::new(),
+                headers,
+                elapsed_ms: Measurement::Measured {
+                    value: 50,
+                    unit: MeasurementUnit::Milliseconds,
+                },
+                body_bytes: html.len(),
+                body_truncated: false,
+                body_text: html.to_owned(),
+            },
+        },
+        tls,
+        browser: CollectorOutcome::default(),
+        lighthouse: CollectorOutcome::default(),
+        axe: CollectorOutcome::default(),
+    }
+}
+
+#[test]
+fn verifies_aufrustung3_rules_with_clean_control_and_defect_fixture() {
+    use netzzwergenwacht::domain::HttpHeader;
+
+    let defect_html = r#"<!doctype html><html lang="en"><head>
+        <meta charset="utf-8"><title>Defect Fixture</title><link rel="icon" href="/f.ico">
+    </head><body>
+        <main><h1></h1><p>Welcome i18n.home.hero_title</p><a href="mailto:test@example.com">Read more</a></main>
+        <main><img src="/p.jpg" alt="IMG_001.jpg"><video controls src="/v.mp4"></video></main>
+    </body></html>"#;
+    let defect_snap = make_http_snapshot(
+        defect_html,
+        "https://example.com/?token=SECRET_XYZ",
+        vec![
+            HttpHeader {
+                name: "strict-transport-security".to_owned(),
+                value: "max-age=31536000".to_owned(),
+            },
+            HttpHeader {
+                name: "content-security-policy".to_owned(),
+                value: "default-src 'self'".to_owned(),
+            },
+            HttpHeader {
+                name: "etag".to_owned(),
+                value: "bad-etag".to_owned(),
+            },
+        ],
+        true,
+    );
+    let defect_report = analysis::run_all(&defect_snap);
+    let defect_ids: Vec<&str> = defect_report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+    for expected in [
+        "sec.csp.missing_object_restriction",
+        "sec.csp.missing_base_uri_restriction",
+        "sec.exposure.sensitive_url_parameters",
+        "netz.http.etag_validation",
+        "str.landmarks.duplicate_main",
+        "str.headings.empty_heading",
+        "a11y.media.missing_caption_track",
+        "a11y.images.suspicious_alternative_text",
+        "a11y.links.ambiguous_accessible_name",
+        "inh.integrity.unresolved_translation_key",
+        "inh.integrity.placeholder_contact",
+    ] {
+        assert!(
+            defect_ids.contains(&expected),
+            "expected `{expected}` in defect findings, got {defect_ids:?}"
+        );
+    }
+    assert!(
+        defect_report
+            .analysers
+            .iter()
+            .flat_map(|a| a.findings.iter())
+            .all(|f| !f.summary.contains("SECRET_XYZ"))
+    );
+
+    let clean_html = include_str!("../fixtures/zwergenpruefstand/healthy.html");
+    let clean_snap = make_http_snapshot(
+        clean_html,
+        "https://example.com/",
+        vec![HttpHeader {
+            name: "etag".to_owned(),
+            value: "\"v1-clean\"".to_owned(),
+        }],
+        false,
+    );
+    let clean_report = analysis::run_all(&clean_snap);
+    let clean_ids: Vec<&str> = clean_report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+    assert!(!clean_ids.contains(&"netz.http.etag_validation"));
+    assert!(!clean_ids.contains(&"str.landmarks.duplicate_main"));
+    assert!(!clean_ids.contains(&"str.headings.empty_heading"));
+    assert!(!clean_ids.contains(&"inh.integrity.unresolved_translation_key"));
+    assert!(!clean_ids.contains(&"inh.integrity.placeholder_contact"));
+}
