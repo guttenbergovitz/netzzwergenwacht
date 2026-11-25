@@ -13,6 +13,7 @@ pub mod element_identity;
 pub mod graph;
 pub mod network;
 pub mod performance;
+pub mod rendered_history;
 pub mod schema;
 pub mod security;
 pub mod segmentation;
@@ -83,6 +84,9 @@ pub struct AuditReport {
     /// Status summaries for optional Level 2 collectors (`browser`, `lighthouse`, `axe`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub level2_collectors: Vec<Level2CollectorStatus>,
+    /// Optional rendered identity and fingerprints retained for offline comparisons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_history: Option<rendered_history::RenderedHistoryEvidence>,
     /// Per-Zwerg analyser outputs.
     pub analysers: Vec<AnalyserResult>,
     /// Deterministic finding and check counts.
@@ -167,6 +171,9 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
         captured_at_unix_secs: snapshot.captured_at_unix_secs,
         http: snapshot.http.clone(),
         level2_collectors,
+        rendered_history: rendered_history::RenderedHistoryEvidence::from_outcome(
+            &snapshot.browser,
+        ),
         analysers,
         summary,
         ai_synthesis: None,

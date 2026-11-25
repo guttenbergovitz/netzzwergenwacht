@@ -100,6 +100,9 @@ pub struct RenderedContentSegmentation {
     /// Whether all main-document light DOM elements were visited for ID counts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id_census_complete: Option<bool>,
+    /// SHA-256 digest of the exact final browser URL, when recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_key: Option<String>,
 }
 
 impl RenderedContentSegmentation {

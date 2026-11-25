@@ -71,3 +71,19 @@ cargo test --all-targets --locked
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+### Compare rendered text across saved audits
+
+Run two browser-enabled checks against the same page and save each result.
+`diff` accepts JSON reports or the latest entry from each JSONL history file.
+
+```sh
+nzw check https://example.org/ --browser --history baseline.jsonl
+nzw check https://example.org/ --browser --history current.jsonl
+nzw diff baseline.jsonl current.jsonl
+nzw diff baseline.jsonl current.jsonl --format json
+```
+
+The comparison reports changed, unchanged and incomparable baseline blocks.
+Older reports without rendered comparison evidence give an unavailable result.
+The diff reads the saved files locally.

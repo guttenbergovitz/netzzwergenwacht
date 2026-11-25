@@ -14,7 +14,9 @@ async fn spawn_fixture() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) 
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move {
+        let history_requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         while let Ok((mut socket, _)) = listener.accept().await {
+            let history_requests = std::sync::Arc::clone(&history_requests);
             tokio::spawn(async move {
                 let mut input = [0; 4096];
                 let bytes = socket.read(&mut input).await.unwrap();
@@ -60,6 +62,16 @@ async fn spawn_fixture() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) 
                           <footer><p>One</p><p>Two</p></footer></main>
                           <script>document.getElementById('long-text').textContent = 'x'.repeat(520) + 'after'; history.replaceState(null, '', '/identity-before');</script>"#,
                     ),
+                    "/identity-history" => {
+                        let visits =
+                            history_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let location = if visits < 2 {
+                            "Location: /identity-before\r\n"
+                        } else {
+                            "Location: /identity-after\r\n"
+                        };
+                        ("302 Found", location, "")
+                    }
                     "/disconnect" => return,
                     "/missing" => ("404 Not Found", "", ""),
                     _ => ("204 No Content", "", ""),
@@ -362,4 +374,81 @@ fn assert_rendered_fingerprint_changes(
             reason: TextComparisonLimit::AmbiguousIdentity,
         }
     );
+}
+
+#[tokio::test]
+#[ignore = "requires Node.js and Chromium"]
+async fn live_cli_diffs_saved_rendered_fingerprints_without_acquisition() {
+    let (address, server) = spawn_fixture().await;
+    let files = std::env::temp_dir().join(format!("nzw-rendered-diff-{}", std::process::id()));
+    std::fs::create_dir(&files).unwrap();
+    let baseline = files.join("baseline.jsonl");
+    let current = files.join("current.json");
+    let binary = env!("CARGO_BIN_EXE_nzw");
+    let target = format!("http://{address}/identity-history");
+
+    let first = tokio::process::Command::new(binary)
+        .args([
+            "check",
+            &target,
+            "--browser",
+            "--allow-private",
+            "--history",
+        ])
+        .arg(&baseline)
+        .output()
+        .await
+        .unwrap();
+    assert!(matches!(first.status.code(), Some(0 | 1)));
+    let second = tokio::process::Command::new(binary)
+        .args([
+            "check",
+            &target,
+            "--browser",
+            "--allow-private",
+            "--format",
+            "json",
+        ])
+        .output()
+        .await
+        .unwrap();
+    assert!(matches!(second.status.code(), Some(0 | 1)));
+    std::fs::write(&current, &second.stdout).unwrap();
+    server.abort();
+
+    let output = std::process::Command::new(binary)
+        .arg("diff")
+        .args([&baseline, &current])
+        .args(["--format", "json"])
+        .output()
+        .unwrap();
+    assert!(matches!(output.status.code(), Some(0 | 1)));
+    let diff: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let rendered = &diff["rendered_text"];
+    assert_eq!(rendered["status"], "compared", "{diff}");
+    assert!(rendered["changed_count"].as_u64().unwrap() > 0);
+    assert!(rendered["unchanged_count"].as_u64().unwrap() > 0);
+    assert!(rendered["reasons"]["text_truncated"].as_u64().unwrap() > 0);
+    assert!(rendered["reasons"]["ambiguous_identity"].as_u64().unwrap() > 0);
+    let saved: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert!(
+        !saved["rendered_history"]
+            .to_string()
+            .contains("visible_text")
+    );
+    let mut legacy = saved;
+    legacy.as_object_mut().unwrap().remove("rendered_history");
+    let old = files.join("legacy.json");
+    std::fs::write(&old, legacy.to_string()).unwrap();
+    let legacy_diff = std::process::Command::new(binary)
+        .arg("diff")
+        .args([&old, &current])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8(legacy_diff.stdout)
+            .unwrap()
+            .contains("baseline has no saved rendered evidence")
+    );
+    std::fs::remove_dir_all(files).unwrap();
 }

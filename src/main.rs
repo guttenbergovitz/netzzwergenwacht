@@ -15,7 +15,7 @@ use netzzwergenwacht::config::{self, AppConfig, PolicyConfig, PolicyEvaluation};
 use netzzwergenwacht::domain::{
     AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, Measurement, Severity, TargetPolicy,
 };
-use netzzwergenwacht::persistence::{self, RegressionReport};
+use netzzwergenwacht::persistence::{self, RegressionReport, RenderedTextDiff};
 
 const EXIT_OK: u8 = 0;
 const EXIT_FINDINGS: u8 = 1;
@@ -1202,6 +1202,28 @@ fn print_diff_report(diff: &RegressionReport) {
         "Summary:  {} new, {} persisting, {} resolved",
         diff.summary.new_count, diff.summary.persisting_count, diff.summary.resolved_count
     );
+
+    if let Some(rendered) = &diff.rendered_text {
+        match rendered {
+            RenderedTextDiff::Compared {
+                changed_count,
+                unchanged_count,
+                not_comparable_count,
+                reasons,
+                ..
+            } => {
+                println!(
+                    "Rendered text: {changed_count} changed, {unchanged_count} unchanged, {not_comparable_count} not comparable"
+                );
+                for (reason, count) in reasons {
+                    println!("  {reason}: {count}");
+                }
+            }
+            RenderedTextDiff::Unavailable { reason } => {
+                println!("Rendered text unavailable: {reason}");
+            }
+        }
+    }
 
     if !diff.new_findings.is_empty() {
         println!("\nNew findings:");

@@ -137,3 +137,18 @@ hidden block, truncated text, absent fingerprint or unsupported fingerprint
 version leaves the comparison unavailable for that block. Older captures still
 load without fingerprints. The API uses captured observations and performs no
 acquisition.
+
+### Comparing saved audits
+
+Audit JSON and JSONL history optionally retain the rendered comparison
+projection. It contains capture-local block positions, identity observations,
+text fingerprints and coverage, with a SHA-256 key for the exact final browser
+URL. The projection omits rendered excerpts and the raw browser URL. Existing
+HTTP evidence retains its own fields.
+
+`nzw diff` reads saved reports and uses the rendered projection when both
+audits have comparable evidence. The text output gives counts and reasons for
+incomparable blocks. JSON also includes each baseline block's result. Reports
+saved before this feature still load and give an explicit unavailable result.
+Rendered text changes are observations and preserve the existing finding-based
+exit codes.

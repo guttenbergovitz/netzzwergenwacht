@@ -2,33 +2,53 @@
 
 use std::collections::BTreeMap;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::element_identity::{ElementComparisonError, ElementMatch, match_rendered_blocks};
 use crate::domain::{
-    BrowserEvidence, RenderedContentBlock, RenderedCssVisibility, RenderedTextFingerprint,
+    BrowserEvidence, RenderedContentBlock, RenderedContentSegmentation, RenderedCssVisibility,
+    RenderedTextFingerprint,
 };
 
 /// Why a baseline block's text cannot be compared.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    thiserror::Error,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum TextComparisonLimit {
     /// More than one element identity candidate was observed.
+    #[error("ambiguous element identity")]
     AmbiguousIdentity,
     /// A comparable matching element was unavailable.
+    #[error("missing identity match")]
     MissingIdentityMatch,
     /// At least one retained text observation was truncated.
+    #[error("truncated text")]
     TextTruncated,
     /// At least one block was CSS-hidden at measurement time.
+    #[error("CSS-hidden block")]
     HiddenBlock,
     /// At least one capture did not provide a text fingerprint.
+    #[error("missing text fingerprint")]
     MissingFingerprint,
     /// A version or digest representation is unsupported.
+    #[error("unsupported text fingerprint")]
     UnsupportedFingerprint,
 }
 
 /// Compared content of a baseline block in the measured scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum BlockTextChange {
     /// The normalised text fingerprints agree.
@@ -70,12 +90,20 @@ pub fn compare_rendered_block_text(
         .rendered_content
         .as_ref()
         .ok_or(ElementComparisonError::Unavailable)?;
+    Ok(compare_content_text(baseline, current, &identities))
+}
+
+pub(crate) fn compare_content_text(
+    baseline: &RenderedContentSegmentation,
+    current: &RenderedContentSegmentation,
+    identities: &BTreeMap<u32, ElementMatch>,
+) -> Changes {
     let current_by_node: BTreeMap<_, _> = current
         .blocks
         .iter()
         .map(|block| (block.node, block))
         .collect();
-    Ok(baseline
+    baseline
         .blocks
         .iter()
         .map(|block| {
@@ -90,7 +118,7 @@ pub fn compare_rendered_block_text(
             };
             (block.node, result)
         })
-        .collect())
+        .collect()
 }
 
 const fn missing_identity() -> BlockTextChange {

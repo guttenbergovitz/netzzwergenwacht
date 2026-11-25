@@ -12,6 +12,9 @@ use thiserror::Error;
 use crate::analysis::AuditReport;
 use crate::domain::{Finding, FindingFingerprint};
 
+mod rendered_diff;
+pub use rendered_diff::{RenderedDiffLimit, RenderedTextDiff};
+
 /// Errors returned by persistence and report-loading operations.
 #[derive(Debug, Error)]
 pub enum PersistenceError {
@@ -77,6 +80,9 @@ pub struct RegressionReport {
     pub reintroduced_findings: Vec<Finding>,
     /// Summary counts.
     pub summary: RegressionSummary,
+    /// Rendered text comparison, absent in regression reports written before this feature.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_text: Option<RenderedTextDiff>,
 }
 
 /// Appends `report` as a single JSON line to `path`, creating parent directories if needed.
@@ -155,31 +161,7 @@ pub fn latest_for_host<'a>(reports: &'a [AuditReport], host: &str) -> Option<&'a
 #[must_use]
 pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> RegressionReport {
     if baseline.target.as_str() != current.target.as_str() {
-        return RegressionReport {
-            baseline_target: baseline.target.as_str().to_owned(),
-            current_target: current.target.as_str().to_owned(),
-            baseline_captured_at_unix_secs: baseline.captured_at_unix_secs,
-            current_captured_at_unix_secs: current.captured_at_unix_secs,
-            not_comparable_reason: Some(format!(
-                "targets differ (`{}` vs `{}`); refusing cross-target resolution claims",
-                baseline.target.as_str(),
-                current.target.as_str()
-            )),
-            new_findings: Vec::new(),
-            persisting_findings: Vec::new(),
-            resolved_findings: Vec::new(),
-            unverified_findings: baseline
-                .analysers
-                .iter()
-                .flat_map(|a| a.findings.iter().cloned())
-                .collect(),
-            changed_findings: Vec::new(),
-            reintroduced_findings: Vec::new(),
-            summary: RegressionSummary {
-                unverified_count: baseline.analysers.iter().map(|a| a.findings.len()).sum(),
-                ..RegressionSummary::default()
-            },
-        };
+        return cross_target_diff(baseline, current);
     }
 
     let baseline_by_fp: std::collections::HashMap<&FindingFingerprint, &Finding> = baseline
@@ -251,6 +233,7 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         baseline_captured_at_unix_secs: baseline.captured_at_unix_secs,
         current_captured_at_unix_secs: current.captured_at_unix_secs,
         not_comparable_reason: None,
+        rendered_text: Some(rendered_diff::diff_saved_rendered(baseline, current)),
         new_findings,
         persisting_findings,
         resolved_findings,
@@ -258,6 +241,37 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         changed_findings,
         reintroduced_findings: Vec::new(),
         summary,
+    }
+}
+
+fn cross_target_diff(baseline: &AuditReport, current: &AuditReport) -> RegressionReport {
+    RegressionReport {
+        baseline_target: baseline.target.as_str().to_owned(),
+        current_target: current.target.as_str().to_owned(),
+        baseline_captured_at_unix_secs: baseline.captured_at_unix_secs,
+        current_captured_at_unix_secs: current.captured_at_unix_secs,
+        not_comparable_reason: Some(format!(
+            "targets differ (`{}` vs `{}`); refusing cross-target resolution claims",
+            baseline.target.as_str(),
+            current.target.as_str()
+        )),
+        rendered_text: Some(RenderedTextDiff::Unavailable {
+            reason: RenderedDiffLimit::DifferentPage,
+        }),
+        new_findings: Vec::new(),
+        persisting_findings: Vec::new(),
+        resolved_findings: Vec::new(),
+        unverified_findings: baseline
+            .analysers
+            .iter()
+            .flat_map(|a| a.findings.iter().cloned())
+            .collect(),
+        changed_findings: Vec::new(),
+        reintroduced_findings: Vec::new(),
+        summary: RegressionSummary {
+            unverified_count: baseline.analysers.iter().map(|a| a.findings.len()).sum(),
+            ..RegressionSummary::default()
+        },
     }
 }
 
@@ -279,6 +293,9 @@ pub fn diff_history(history: &[AuditReport], current: &AuditReport) -> Regressio
             baseline_captured_at_unix_secs: 0,
             current_captured_at_unix_secs: current.captured_at_unix_secs,
             not_comparable_reason: Some("no prior baseline report in history".to_owned()),
+            rendered_text: Some(RenderedTextDiff::Unavailable {
+                reason: RenderedDiffLimit::NoBaseline,
+            }),
             new_findings,
             persisting_findings: Vec::new(),
             resolved_findings: Vec::new(),

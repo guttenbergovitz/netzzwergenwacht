@@ -72,6 +72,26 @@ pub fn match_rendered_blocks(
     }
     let baseline = comparable_content(baseline)?;
     let current = comparable_content(current)?;
+    match_rendered_content(baseline, current)
+}
+
+pub(crate) fn match_rendered_content(
+    baseline: &RenderedContentSegmentation,
+    current: &RenderedContentSegmentation,
+) -> Result<BTreeMap<u32, ElementMatch>, ElementComparisonError> {
+    for content in [baseline, current] {
+        match content.id_census_complete {
+            None => return Err(ElementComparisonError::Unavailable),
+            Some(false) => return Err(ElementComparisonError::Incomplete),
+            Some(true) => {}
+        }
+        if content.limits.reached() {
+            return Err(ElementComparisonError::Incomplete);
+        }
+        if content.blocks.iter().any(|block| block.identity.is_none()) {
+            return Err(ElementComparisonError::Unavailable);
+        }
+    }
     if (baseline.viewport_width, baseline.viewport_height)
         != (current.viewport_width, current.viewport_height)
     {
@@ -98,21 +118,12 @@ fn comparable_content(
         .rendered_content
         .as_ref()
         .ok_or(ElementComparisonError::Unavailable)?;
-    match content.id_census_complete {
-        None => return Err(ElementComparisonError::Unavailable),
-        Some(false) => return Err(ElementComparisonError::Incomplete),
-        Some(true) => {}
-    }
-    if content.limits.reached()
-        || evidence
-            .timeline
-            .as_ref()
-            .is_some_and(|timeline| timeline.end == TimelineEnd::LoadTimedOut)
+    if evidence
+        .timeline
+        .as_ref()
+        .is_some_and(|timeline| timeline.end == TimelineEnd::LoadTimedOut)
     {
         return Err(ElementComparisonError::Incomplete);
-    }
-    if content.blocks.iter().any(|block| block.identity.is_none()) {
-        return Err(ElementComparisonError::Unavailable);
     }
     Ok(content)
 }
@@ -223,6 +234,7 @@ mod tests {
                     blocks: false,
                 },
                 id_census_complete: census,
+                page_key: None,
             }),
             ..BrowserEvidence::default()
         }

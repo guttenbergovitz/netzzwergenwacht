@@ -488,6 +488,7 @@ function findBrowser() {
       const measurement = result?.result?.value;
       if (measurement?.url === finalUrl && measurement.content) {
         const captured = measurement.content;
+        captured.page_key = createHash('sha256').update(finalUrl, 'utf8').digest('hex');
         const textCoverageComplete = !loadTimedOut
           && !captured.limits.nodes && !captured.limits.depth && !captured.limits.blocks;
         for (const block of captured.blocks) {
