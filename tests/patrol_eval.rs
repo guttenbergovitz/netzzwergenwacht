@@ -363,7 +363,7 @@ async fn patrol_delegates_to_distinct_per_dwarf_models() {
 
     let backend: Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
         Arc::new(LiveDiagnosticBackend);
-    let report = run_patrol_with_router(
+    let report = Box::pin(run_patrol_with_router(
         seed,
         TargetPolicy::AllowPrivate,
         ExecutionBudget::default(),
@@ -375,7 +375,7 @@ async fn patrol_delegates_to_distinct_per_dwarf_models() {
         None,
         Some(&router),
         backend,
-    )
+    ))
     .await;
 
     assert!(report.execution_succeeded);

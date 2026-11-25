@@ -1877,6 +1877,7 @@ fn check_runtime_code_coverage(
         "JavaScript",
         cov.js_total_bytes,
         cov.js_used_bytes,
+        &cov.top_unused_scripts,
         32_768,
         60,
         Severity::Medium,
@@ -1889,6 +1890,7 @@ fn check_runtime_code_coverage(
         "CSS",
         cov.css_total_bytes,
         cov.css_used_bytes,
+        &cov.top_unused_stylesheets,
         16_384,
         75,
         Severity::Low,
@@ -1898,12 +1900,61 @@ fn check_runtime_code_coverage(
     );
 }
 
+/// Computes exact disjoint executed byte/character count from nested CDP coverage ranges `(start, end, count)`.
+#[must_use]
+pub fn disjoint_used_bytes(ranges: &[(u64, u64, u64)]) -> u64 {
+    let mut sorted: Vec<(u64, u64, u64)> =
+        ranges.iter().copied().filter(|(s, e, _)| e > s).collect();
+    sorted.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| (b.1 - b.0).cmp(&(a.1 - a.0))));
+
+    let mut stack: Vec<(u64, u64, u64)> = Vec::new();
+    let mut pos = 0_u64;
+    let mut used = 0_u64;
+
+    for (start, end, count) in sorted {
+        while let Some(&(_, top_end, top_count)) = stack.last() {
+            if top_end > start {
+                break;
+            }
+            stack.pop();
+            if top_end > pos {
+                if top_count > 0 {
+                    used += top_end - pos;
+                }
+                pos = top_end;
+            }
+        }
+        if let Some(&(_, _, top_count)) = stack.last()
+            && start > pos
+        {
+            if top_count > 0 {
+                used += start - pos;
+            }
+            pos = start;
+        } else if start > pos {
+            pos = start;
+        }
+        stack.push((start, end, count));
+    }
+
+    while let Some((_, top_end, top_count)) = stack.pop() {
+        if top_end > pos {
+            if top_count > 0 {
+                used += top_end - pos;
+            }
+            pos = top_end;
+        }
+    }
+    used
+}
+
 #[allow(clippy::too_many_arguments)]
 fn evaluate_unused_coverage(
     rule_id: &str,
     label: &str,
     total_bytes: u64,
     used_bytes: u64,
+    top_resources: &[crate::domain::ResourceCoverageEntry],
     min_bytes: u64,
     threshold_pct: u64,
     severity: Severity,
@@ -1916,7 +1967,7 @@ fn evaluate_unused_coverage(
             rule_id: RuleId(rule_id.to_owned()),
             evidence_level: EvidenceLevel::Rendered,
             reason: format!(
-                "sampled {label} byte volume below {} KiB threshold",
+                "sampled {label} source volume below {} KiB threshold",
                 min_bytes / 1024
             ),
         });
@@ -1932,6 +1983,32 @@ fn evaluate_unused_coverage(
         return;
     }
     let tag = label.to_ascii_lowercase();
+    let top_detail = top_resources
+        .first()
+        .map(|r| {
+            format!(
+                " Top contributor: `{}` ({} / {} source bytes unused).",
+                r.url,
+                r.total_bytes.saturating_sub(r.used_bytes),
+                r.total_bytes
+            )
+        })
+        .unwrap_or_default();
+    let mut evidence_refs = vec![EvidenceRef::new(
+        EvidenceSource::BrowserRuntime,
+        format!("{tag}_used={used_bytes};{tag}_total={total_bytes}"),
+    )];
+    for entry in top_resources.iter().take(3) {
+        evidence_refs.push(EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            format!(
+                "{tag}_resource={};unused={};total={}",
+                entry.url,
+                entry.total_bytes.saturating_sub(entry.used_bytes),
+                entry.total_bytes
+            ),
+        ));
+    }
     findings.push(Finding {
         fingerprint: FindingFingerprint::default(),
         rule_id: RuleId(rule_id.to_owned()),
@@ -1940,14 +2017,11 @@ fn evaluate_unused_coverage(
         kind: FindingKind::Deterministic,
         severity,
         confidence: Confidence::High,
-        title: format!("High unused {label} byte ratio ({unused_pct}%)"),
+        title: format!("High unused {label} ratio during initial load ({unused_pct}%)"),
         summary: format!(
-            "CDP coverage observed {unused} of {total_bytes} {label} bytes unused ({unused_pct}%)."
+            "CDP coverage observed {unused} of {total_bytes} uncompressed {label} source bytes unused during initial load ({unused_pct}%).{top_detail}"
         ),
-        evidence_refs: vec![EvidenceRef::new(
-            EvidenceSource::BrowserRuntime,
-            format!("{tag}_used={used_bytes};{tag}_total={total_bytes}"),
-        )],
+        evidence_refs,
         remediation: Some(remediation.to_owned()),
     });
     checks.push(CheckStatus::Failed {
@@ -2513,6 +2587,16 @@ mod tests {
                         css_used_bytes: 10_000,
                         js_scripts_sampled: 4,
                         css_rules_sampled: 300,
+                        top_unused_scripts: vec![crate::domain::ResourceCoverageEntry {
+                            url: "https://example.com/vendor.js".to_owned(),
+                            total_bytes: 150_000,
+                            used_bytes: 20_000,
+                        }],
+                        top_unused_stylesheets: vec![crate::domain::ResourceCoverageEntry {
+                            url: "https://example.com/app.css".to_owned(),
+                            total_bytes: 80_000,
+                            used_bytes: 10_000,
+                        }],
                     }),
                     ..crate::domain::BrowserEvidence::default()
                 },
@@ -2537,5 +2621,12 @@ mod tests {
             c,
             CheckStatus::Skipped { rule_id, .. } if rule_id.0 == RULE_UNBOUNDED_IMAGE_WEIGHT
         )));
+    }
+
+    #[test]
+    fn disjoint_used_bytes_handles_nested_executed_and_unexecuted_ranges() {
+        // Outer [0, 1000) count=1, inner [200, 500) count=0 (hole), inner [600, 700) count=5 (no double-count)
+        let used = disjoint_used_bytes(&[(0, 1000, 1), (200, 500, 0), (600, 700, 5)]);
+        assert_eq!(used, 700);
     }
 }
