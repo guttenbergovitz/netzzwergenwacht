@@ -46,6 +46,7 @@ const RULE_CSP_WILDCARD: &str = "sec.csp.wildcard_source";
 const RULE_STACK_TRACE_LEAK: &str = "sec.headers.server_error_stack_trace";
 const RULE_CONSENT_ASYMMETRY: &str = "sec.privacy.consent_banner_asymmetry";
 const RULE_TRACKING_NO_BANNER: &str = "sec.privacy.tracking_without_consent_banner";
+const RULE_SESSION_COOKIE_HTTPONLY: &str = "sec.cookies.session_missing_httponly";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -83,6 +84,7 @@ const ALL_RULES: &[&str] = &[
     RULE_STACK_TRACE_LEAK,
     RULE_CONSENT_ASYMMETRY,
     RULE_TRACKING_NO_BANNER,
+    RULE_SESSION_COOKIE_HTTPONLY,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -139,6 +141,7 @@ pub fn analyse_with_document(
     check_cross_origin_isolation(http, &mut findings, &mut checks);
     check_csp_directives(http, &mut findings, &mut checks);
     check_cookie_attributes(http, &mut findings, &mut checks);
+    check_session_cookie_httponly(http, &mut findings, &mut checks);
     check_sensitive_url_params(http, &mut findings, &mut checks);
     check_hsts_duration(http, uses_https, &mut findings, &mut checks);
     check_privacy_browser_signals(&snapshot.browser, &mut findings, &mut checks);
@@ -2202,6 +2205,81 @@ fn check_privacy_tracker_requests(
     check_consent_banner_signals(data, findings, checks);
 }
 
+fn check_session_cookie_httponly(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let cookies = http.header_values("set-cookie");
+    if cookies.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_SESSION_COOKIE_HTTPONLY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no Set-Cookie headers present".to_owned(),
+        });
+        return;
+    }
+
+    let missing: Vec<String> = cookies
+        .iter()
+        .filter_map(|raw| {
+            let name = raw.split(';').next()?.split('=').next()?.trim();
+            let low_name = name.to_ascii_lowercase();
+            let looks_session = [
+                "session",
+                "sess",
+                "sid",
+                "jsessionid",
+                "phpsessid",
+                "auth",
+                "token",
+                "jwt",
+            ]
+            .iter()
+            .any(|kw| low_name.contains(kw));
+            let has_httponly = raw
+                .split(';')
+                .skip(1)
+                .any(|attr| attr.trim().eq_ignore_ascii_case("httponly"));
+            (looks_session && !has_httponly).then(|| name.to_owned())
+        })
+        .collect();
+
+    if missing.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SESSION_COOKIE_HTTPONLY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SESSION_COOKIE_HTTPONLY.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Session-like cookies missing HttpOnly ({})", missing.len()),
+            summary: format!(
+                "Set-Cookie for session/auth cookie(s) omits `HttpOnly`: {}.",
+                missing.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("session_cookies_missing_httponly={}", missing.join(",")),
+            )],
+            remediation: Some(
+                "Add `HttpOnly` to all session and authentication cookies to mitigate XSS theft."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SESSION_COOKIE_HTTPONLY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 fn check_consent_banner_signals(
     data: &crate::domain::BrowserEvidence,
     findings: &mut Vec<Finding>,
@@ -2266,10 +2344,10 @@ fn check_consent_banner_signals(
             category: FindingCategory::Security,
             evidence_level: EvidenceLevel::Rendered,
             kind: FindingKind::Deterministic,
-            severity: Severity::Low,
-            confidence: Confidence::Medium,
-            title: "Client-side cookies/storage set without visible consent banner".to_owned(),
-            summary: "Fresh session populated cookies or localStorage without any detected consent banner.".to_owned(),
+            severity: Severity::Info,
+            confidence: Confidence::Low,
+            title: "Cookies or localStorage populated without visible consent banner".to_owned(),
+            summary: "Fresh session populated cookies or localStorage without any detected consent banner (not necessarily tracking).".to_owned(),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::BrowserRuntime,
                 "consent_banner=absent;storage_or_cookies=present",
@@ -2652,6 +2730,20 @@ mod tests {
             res2.findings
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_TRACKING_NO_BANNER)
+        );
+    }
+
+    #[test]
+    fn flags_session_cookie_missing_httponly() {
+        let snap = snapshot_with_headers(
+            "https://example.com/",
+            vec![("set-cookie", "session_id=abc123; Secure; Path=/")],
+        );
+        let res = analyse(&snap);
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_SESSION_COOKIE_HTTPONLY)
         );
     }
 }

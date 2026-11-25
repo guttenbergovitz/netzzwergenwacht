@@ -641,6 +641,7 @@ pub(crate) fn build_captured_graph_input(
         lang: obs.html_lang.clone(),
         entities: crate::analysis::schema::extract_entities(&obs.json_ld_blocks).entities,
         resources: Vec::new(),
+        text_simhash: crate::analysis::graph::compute_text_simhash(&obs.visible_text_sample),
     }
 }
 
@@ -667,6 +668,7 @@ pub(crate) fn unreachable_graph_input(
         lang: None,
         entities: Vec::new(),
         resources: Vec::new(),
+        text_simhash: None,
     }
 }
 

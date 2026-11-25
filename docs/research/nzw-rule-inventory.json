@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 218,
+  "total_rules": 225,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1843,6 +1843,62 @@
     {
       "rule_id": "sec.privacy.tracking_without_consent_banner",
       "constant": "RULE_TRACKING_NO_BANNER",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.i18n.language_mismatch",
+      "constant": "RULE_LANGUAGE_MISMATCH",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.excessive_link_density",
+      "constant": "RULE_EXCESSIVE_LINK_DENSITY",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.repeated_headings",
+      "constant": "RULE_REPEATED_HEADINGS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.content.near_duplicate_simhash",
+      "constant": "RULE_NEAR_DUPLICATE_SIMHASH",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.indexability.noindex_canonical_conflict",
+      "constant": "RULE_NOINDEX_CANONICAL_CONFLICT",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.schema.empty_json_ld_entities",
+      "constant": "RULE_EMPTY_JSON_LD_ENTITIES",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.cookies.session_missing_httponly",
+      "constant": "RULE_SESSION_COOKIE_HTTPONLY",
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",

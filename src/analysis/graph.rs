@@ -35,6 +35,7 @@ const RULE_THIRD_PARTY_CONCENTRATION: &str = "graph.resources.third_party_concen
 const RULE_TRAILING_SLASH_INCONSISTENCY: &str = "graph.seo.trailing_slash_inconsistency";
 const RULE_HTTP_HTTPS_MIXED_PAGES: &str = "graph.seo.http_https_mixed_pages";
 const RULE_HEAVY_SHARED_ASSET: &str = "graph.resources.heavy_shared_asset";
+const RULE_NEAR_DUPLICATE_SIMHASH: &str = "graph.content.near_duplicate_simhash";
 
 /// All rule identifiers evaluated by the Application Graph engine.
 pub const ALL_RULES: &[&str] = &[
@@ -57,6 +58,7 @@ pub const ALL_RULES: &[&str] = &[
     RULE_TRAILING_SLASH_INCONSISTENCY,
     RULE_HTTP_HTTPS_MIXED_PAGES,
     RULE_HEAVY_SHARED_ASSET,
+    RULE_NEAR_DUPLICATE_SIMHASH,
 ];
 
 /// Compact subresource record attached to a [`GraphPageInput`] for `ResourceGraph` projection.
@@ -109,6 +111,8 @@ pub struct GraphPageInput {
     pub entities: Vec<SchemaEntitySummary>,
     /// Optional subresource observations for cross-page `ResourceGraph` correlation.
     pub resources: Vec<GraphResourceInput>,
+    /// Optional 64-bit `SimHash` of visible body text for near-duplicate clustering.
+    pub text_simhash: Option<u64>,
 }
 
 /// Normalised application-level URL, link, canonical, and hreflang graph.
@@ -197,6 +201,7 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
 
     check_broken_anchors(graph, &mut str_findings, &mut str_checks);
     check_duplicate_metadata(graph, &mut inh_findings, &mut inh_checks);
+    check_near_duplicate_simhash(graph, &mut inh_findings, &mut inh_checks);
 
     vec![
         AnalyserResult {
@@ -1530,6 +1535,116 @@ fn is_weak_cache_control(raw: &str) -> bool {
     max_age_secs.is_none_or(|secs| secs < 3_600)
 }
 
+/// Computes a 64-bit FNV-1a `SimHash` over normalised word shingles when `text` has >= 25 tokens.
+#[must_use]
+pub fn compute_text_simhash(text: &str) -> Option<u64> {
+    let tokens: Vec<String> = text
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| t.len() >= 2)
+        .map(str::to_ascii_lowercase)
+        .collect();
+    if tokens.len() < 25 {
+        return None;
+    }
+
+    let mut weights = [0_i32; 64];
+    for window in tokens.windows(3) {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for tok in window {
+            for b in tok.as_bytes() {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+            h ^= 0xff;
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+        for (bit, weight) in weights.iter_mut().enumerate() {
+            if (h >> bit) & 1 == 1 {
+                *weight += 1;
+            } else {
+                *weight -= 1;
+            }
+        }
+    }
+
+    let mut fingerprint = 0_u64;
+    for (bit, &w) in weights.iter().enumerate() {
+        if w > 0 {
+            fingerprint |= 1_u64 << bit;
+        }
+    }
+    Some(fingerprint)
+}
+
+fn check_near_duplicate_simhash(
+    graph: &ApplicationGraph,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let hashed: Vec<(&str, u64)> = graph
+        .pages
+        .values()
+        .filter(|p| p.indexable)
+        .filter_map(|p| p.text_simhash.map(|h| (p.url.as_str(), h)))
+        .collect();
+    if hashed.len() < 2 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "fewer than two indexable pages with text_simhash".to_owned(),
+        });
+        return;
+    }
+
+    let mut pairs = Vec::new();
+    for i in 0..hashed.len() {
+        for j in (i + 1)..hashed.len() {
+            let dist = (hashed[i].1 ^ hashed[j].1).count_ones();
+            if dist <= 6 {
+                pairs.push(format!(
+                    "{} ~ {} (hamming={dist})",
+                    hashed[i].0, hashed[j].0
+                ));
+            }
+        }
+    }
+
+    if pairs.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
+            category: FindingCategory::Content,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: format!("Near-duplicate content pairs detected ({})", pairs.len()),
+            summary: format!(
+                "{} indexable page pair(s) share SimHash distance <= 4 (for example `{}`).",
+                pairs.len(),
+                pairs[0]
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("near_duplicate_pairs={}", pairs.len()),
+            )],
+            remediation: Some(
+                "Consolidate near-duplicate pages with canonical tags or differentiate page copy."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1553,6 +1668,7 @@ mod tests {
             lang: Some("en".to_owned()),
             entities: Vec::new(),
             resources: Vec::new(),
+            text_simhash: None,
         }
     }
 
@@ -1733,5 +1849,22 @@ mod tests {
         assert!(rule_ids.contains(&RULE_TRAILING_SLASH_INCONSISTENCY));
         assert!(rule_ids.contains(&RULE_HTTP_HTTPS_MIXED_PAGES));
         assert!(rule_ids.contains(&RULE_HEAVY_SHARED_ASSET));
+    }
+
+    #[test]
+    fn detects_near_duplicate_pages_via_simhash() {
+        let base_text = "NetzZwergenWacht inspects web application security accessibility performance structure and search metadata deterministically across every route in the application graph for reliable evidence and continuous quality assurance across large multi page web applications with deterministic verification and repeatable results.";
+        let near_text = "NetzZwergenWacht inspects web application security accessibility performance structure and search metadata deterministically across every route in the application graph for reliable evidence and continuous quality assurance across large multi page web applications with deterministic verification and repeatable outputs.";
+        let mut p1 = page("https://example.com/p1");
+        p1.text_simhash = compute_text_simhash(base_text);
+        let mut p2 = page("https://example.com/p2");
+        p2.text_simhash = compute_text_simhash(near_text);
+        let graph = ApplicationGraph::from_pages(&[p1, p2], true);
+        let results = analyse(&graph);
+        let rule_ids: Vec<&str> = results
+            .iter()
+            .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+        assert!(rule_ids.contains(&RULE_NEAR_DUPLICATE_SIMHASH));
     }
 }
