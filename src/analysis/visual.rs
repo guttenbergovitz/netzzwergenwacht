@@ -28,6 +28,9 @@ const RULE_MOBILE_SMALL_FONT: &str = "vis.mobile.small_font_size";
 const RULE_MOBILE_TAP_TARGETS: &str = "vis.mobile.small_tap_targets";
 const RULE_INLINE_DATA_URI: &str = "vis.images.inline_data_uri";
 const RULE_VIDEO_CONTROLS_POSTER: &str = "vis.media.video_controls_or_poster";
+const RULE_OFFSCREEN_CONTROL: &str = "vis.layout.offscreen_control";
+const RULE_STICKY_HEADER_OBSTRUCTION: &str = "vis.layout.sticky_header_obstruction";
+const RULE_IMAGE_PIXELATION: &str = "vis.images.pixelation_candidate";
 
 /// All Level 2 rules owned by `GestaltungsZwerg`.
 pub const ALL_RULES: &[&str] = &[RULE_HORIZONTAL_OVERFLOW, RULE_BROKEN_IMAGES];
@@ -141,6 +144,7 @@ pub fn analyse_with_document(
     check_broken_images(browser, &mut findings, &mut checks);
     check_rendered_image_geometry(browser, &mut findings, &mut checks);
     check_mobile_readability_and_tap_targets(browser, &mut findings, &mut checks);
+    check_layout_obstructions_and_pixelation(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Gestaltungs,
@@ -1038,6 +1042,133 @@ fn check_video_controls_or_poster(
     }
 }
 
+fn check_layout_obstructions_and_pixelation(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let offscreen_total: usize = browser.viewports.iter().map(|v| v.offscreen_controls).sum();
+    if offscreen_total == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_OFFSCREEN_CONTROL.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_OFFSCREEN_CONTROL.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Offscreen interactive controls ({offscreen_total})"),
+            summary: format!(
+                "{offscreen_total} visible interactive control(s) sit outside the horizontal viewport bounds."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("offscreen_controls={offscreen_total}"),
+            )],
+            remediation: Some(
+                "Ensure interactive controls stay within responsive viewport bounds without horizontal clipping."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_OFFSCREEN_CONTROL.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    let max_fixed_pct = browser
+        .viewports
+        .iter()
+        .map(|v| v.fixed_header_height_pct)
+        .max()
+        .unwrap_or(0);
+    if max_fixed_pct > 25 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_STICKY_HEADER_OBSTRUCTION.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: format!("Oversized sticky/fixed header ({max_fixed_pct}% of viewport)"),
+            summary: format!(
+                "A top fixed/sticky bar covers {max_fixed_pct}% of viewport height (> 25%), risking content and focus obstruction."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("fixed_header_height_pct={max_fixed_pct}"),
+            )],
+            remediation: Some(
+                "Keep sticky headers compact (<= 15–20% of mobile viewport height) or unpin on scroll."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_STICKY_HEADER_OBSTRUCTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_STICKY_HEADER_OBSTRUCTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    check_image_pixelation(browser, findings, checks);
+}
+
+fn check_image_pixelation(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let pixelated = browser
+        .rendered_images
+        .iter()
+        .filter(|img| {
+            img.natural_width > 0 && img.rendered_width > img.natural_width.saturating_mul(2)
+        })
+        .count();
+    if pixelated == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_IMAGE_PIXELATION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_IMAGE_PIXELATION.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Upscaled / pixelated rendered images ({pixelated})"),
+            summary: format!(
+                "{pixelated} rendered image(s) are displayed at more than 2x their intrinsic natural width."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::VisualLayout,
+                format!("pixelated_images={pixelated}"),
+            )],
+            remediation: Some(
+                "Provide higher-resolution image candidates via `srcset` so rendered dimensions do not exceed 2x natural width."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_IMAGE_PIXELATION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1088,13 +1219,14 @@ mod tests {
                     small_text_nodes: 0,
                     small_tap_targets: 0,
                     screenshot_path: None,
+                    ..ViewportLayoutObs::default()
                 }],
                 ..BrowserEvidence::default()
             },
         });
         let res = analyse(&snap);
         assert_eq!(res.findings.len(), 0);
-        assert_eq!(res.checks.len(), 4);
+        assert_eq!(res.checks.len(), 7);
         assert!(
             res.checks
                 .iter()
@@ -1122,6 +1254,7 @@ mod tests {
                     small_text_nodes: 0,
                     small_tap_targets: 0,
                     screenshot_path: None,
+                    ..ViewportLayoutObs::default()
                 }],
                 ..BrowserEvidence::default()
             },
@@ -1186,6 +1319,7 @@ mod tests {
                     small_text_nodes: 0,
                     small_tap_targets: 0,
                     screenshot_path: None,
+                    ..ViewportLayoutObs::default()
                 }],
                 rendered_images: vec![crate::domain::RenderedImageObs {
                     src: "https://example.com/hero.webp".to_owned(),
@@ -1220,6 +1354,7 @@ mod tests {
                     small_text_nodes: 4,
                     small_tap_targets: 3,
                     screenshot_path: None,
+                    ..ViewportLayoutObs::default()
                 }],
                 ..BrowserEvidence::default()
             },
@@ -1244,5 +1379,37 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_INLINE_DATA_URI));
         assert!(ids.contains(&RULE_VIDEO_CONTROLS_POSTER));
+    }
+
+    #[test]
+    fn flags_offscreen_controls_sticky_header_and_pixelated_images() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                viewports: vec![ViewportLayoutObs {
+                    viewport_name: "mobile".to_owned(),
+                    width: 390,
+                    height: 844,
+                    offscreen_controls: 2,
+                    fixed_header_height_pct: 32,
+                    ..ViewportLayoutObs::default()
+                }],
+                rendered_images: vec![crate::domain::RenderedImageObs {
+                    src: "https://example.com/thumb.jpg".to_owned(),
+                    natural_width: 100,
+                    natural_height: 100,
+                    rendered_width: 300,
+                    rendered_height: 300,
+                    in_initial_viewport: true,
+                    loading: None,
+                }],
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_OFFSCREEN_CONTROL));
+        assert!(ids.contains(&RULE_STICKY_HEADER_OBSTRUCTION));
+        assert!(ids.contains(&RULE_IMAGE_PIXELATION));
     }
 }

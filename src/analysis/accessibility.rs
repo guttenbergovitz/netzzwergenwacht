@@ -23,6 +23,9 @@ const RULE_TABLE_HEADERS: &str = "a11y.tables.headers";
 const RULE_IFRAME_TITLE: &str = "a11y.iframes.title";
 const RULE_POSITIVE_TABINDEX: &str = "a11y.focus.positive_tabindex";
 const RULE_AUTOPLAY_MEDIA: &str = "a11y.media.autoplay_unmuted";
+const RULE_MEDIA_CAPTIONS: &str = "a11y.media.missing_caption_track";
+const RULE_SUSPICIOUS_ALT: &str = "a11y.images.suspicious_alternative_text";
+const RULE_AMBIGUOUS_LINKS: &str = "a11y.links.ambiguous_accessible_name";
 const RULE_RENDERED_AXE: &str = "a11y.rendered.contrast_and_axe";
 const RULE_AX_MISSING_NAME: &str = "a11y.ax.missing_accessible_name";
 const RULE_AX_HIDDEN_FOCUSABLE: &str = "a11y.ax.hidden_focusable_element";
@@ -39,6 +42,9 @@ pub const SOURCE_RULES: &[&str] = &[
     RULE_IFRAME_TITLE,
     RULE_POSITIVE_TABINDEX,
     RULE_AUTOPLAY_MEDIA,
+    RULE_MEDIA_CAPTIONS,
+    RULE_SUSPICIOUS_ALT,
+    RULE_AMBIGUOUS_LINKS,
 ];
 
 /// Evaluates source-level accessibility checks and records higher-level gaps.
@@ -79,6 +85,9 @@ pub fn analyse_with_browser(
     check_iframe_titles(obs, &mut findings, &mut checks);
     check_positive_tabindex(obs, &mut findings, &mut checks);
     check_autoplay_media(obs, &mut findings, &mut checks);
+    check_media_captions(obs, &mut findings, &mut checks);
+    check_suspicious_alt_text(obs, &mut findings, &mut checks);
+    check_ambiguous_links(obs, &mut findings, &mut checks);
 
     check_axe_violations(axe, &mut findings, &mut checks);
     check_ax_tree(browser, &mut findings, &mut checks);
@@ -676,6 +685,122 @@ fn check_autoplay_media(
     );
 }
 
+fn check_media_captions(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    check_count_rule(
+        CountRuleSpec {
+            rule_id: RULE_MEDIA_CAPTIONS,
+            count: obs.videos_without_captions,
+            severity: Severity::Medium,
+            title: format!(
+                "<video> elements missing caption tracks ({})",
+                obs.videos_without_captions
+            ),
+            summary: format!(
+                "{} non-background <video> element(s) lack a `<track kind=\"captions\">` or `subtitles` element.",
+                obs.videos_without_captions
+            ),
+            evidence_detail: format!("videos_without_captions={}", obs.videos_without_captions),
+            remediation: "Add `<track kind=\"captions\" src=\"...\" srclang=\"...\">` to video elements.",
+        },
+        findings,
+        checks,
+    );
+}
+
+fn check_suspicious_alt_text(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const GENERIC_ALT: &[&str] = &[
+        "image",
+        "img",
+        "photo",
+        "picture",
+        "graphic",
+        "icon",
+        "placeholder",
+    ];
+    let suspicious = obs
+        .images
+        .iter()
+        .filter_map(|img| img.alt.as_deref())
+        .map(|a| a.trim().to_ascii_lowercase())
+        .filter(|lower| {
+            !lower.is_empty()
+                && (GENERIC_ALT.contains(&lower.as_str())
+                    || std::path::Path::new(lower)
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .is_some_and(|e| matches!(e, "jpg" | "jpeg" | "png" | "webp"))
+                    || lower.starts_with("dsc_")
+                    || lower.starts_with("img_"))
+        })
+        .count();
+    check_count_rule(
+        CountRuleSpec {
+            rule_id: RULE_SUSPICIOUS_ALT,
+            count: suspicious,
+            severity: Severity::Low,
+            title: format!("Suspicious or filename-like image alt text ({suspicious})"),
+            summary: format!(
+                "{suspicious} <img> element(s) use generic or filename-like `alt` text (for example `image`, `IMG_...`, `.jpg`)."
+            ),
+            evidence_detail: format!("suspicious_alt_count={suspicious}"),
+            remediation: "Replace generic or filename `alt` attributes with meaningful descriptions (or `alt=\"\"` if decorative).",
+        },
+        findings,
+        checks,
+    );
+}
+
+fn check_ambiguous_links(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const AMBIGUOUS: &[&str] = &[
+        "click here",
+        "here",
+        "read more",
+        "learn more",
+        "more",
+        "link",
+        "details",
+        "więcej",
+        "kliknij tutaj",
+        "mehr",
+        "weiterlesen",
+    ];
+    let ambiguous = obs
+        .links
+        .iter()
+        .filter(|l| {
+            let lower = l.text.trim().to_ascii_lowercase();
+            AMBIGUOUS.contains(&lower.as_str())
+        })
+        .count();
+    check_count_rule(
+        CountRuleSpec {
+            rule_id: RULE_AMBIGUOUS_LINKS,
+            count: ambiguous,
+            severity: Severity::Low,
+            title: format!("Ambiguous generic link text ({ambiguous})"),
+            summary: format!(
+                "{ambiguous} link(s) use non-descriptive text such as `read more` or `click here`."
+            ),
+            evidence_detail: format!("ambiguous_links={ambiguous}"),
+            remediation: "Use descriptive link text or provide `aria-label` so screen-reader link lists remain meaningful.",
+        },
+        findings,
+        checks,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -798,5 +923,20 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_AX_MISSING_NAME));
         assert!(ids.contains(&RULE_AX_HIDDEN_FOCUSABLE));
+    }
+
+    #[test]
+    fn flags_missing_captions_suspicious_alt_and_ambiguous_links() {
+        let html = r#"<html lang="en"><body>
+            <video controls src="/demo.mp4"></video>
+            <img src="/pic.jpg" alt="IMG_001.jpg">
+            <a href="/post">Read more</a>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let res = analyse(&obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_MEDIA_CAPTIONS));
+        assert!(ids.contains(&RULE_SUSPICIOUS_ALT));
+        assert!(ids.contains(&RULE_AMBIGUOUS_LINKS));
     }
 }

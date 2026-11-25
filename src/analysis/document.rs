@@ -260,6 +260,8 @@ pub struct DocumentObservations {
     pub feed_links_count: usize,
     /// Count of non-background `<video>` elements lacking `controls` or `poster`.
     pub videos_without_controls_or_poster: usize,
+    /// Count of non-background `<video>` elements lacking `<track kind="captions"|"subtitles">`.
+    pub videos_without_captions: usize,
 }
 
 impl DocumentObservations {
@@ -444,6 +446,7 @@ fn extract_wave5_observations(doc: &Html, obs: &mut DocumentObservations) {
     );
 
     if let Ok(video_sel) = Selector::parse("video") {
+        let track_sel = Selector::parse(r#"track[kind="captions"], track[kind="subtitles"]"#).ok();
         for el in doc.select(&video_sel) {
             let is_bg = el.value().attr("autoplay").is_some() && el.value().attr("muted").is_some();
             if !is_bg
@@ -451,6 +454,13 @@ fn extract_wave5_observations(doc: &Html, obs: &mut DocumentObservations) {
                     || non_empty_attr(&el, "poster").is_none())
             {
                 obs.videos_without_controls_or_poster += 1;
+            }
+            if !is_bg
+                && track_sel
+                    .as_ref()
+                    .is_none_or(|s| el.select(s).next().is_none())
+            {
+                obs.videos_without_captions += 1;
             }
         }
     }

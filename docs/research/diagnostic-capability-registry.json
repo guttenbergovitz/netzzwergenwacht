@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 149,
+  "total_implemented_capabilities": 157,
   "by_dwarf": {
     "LeistungsZwerg": 24,
     "SicherheitsZwerg": 26,
-    "GestaltungsZwerg": 16,
+    "GestaltungsZwerg": 19,
     "SuchZwerg": 14,
-    "InhaltsZwerg": 12,
+    "InhaltsZwerg": 14,
     "ApplicationGraph": 16,
-    "ZugänglichkeitsZwerg": 13,
+    "ZugänglichkeitsZwerg": 16,
     "StrukturZwerg": 9,
     "NetzZwerg": 8,
     "BrowserZwerg": 11
@@ -1353,6 +1353,78 @@
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
       "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "vis.layout.offscreen_control",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "vis.layout.sticky_header_obstruction",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "vis.images.pixelation_candidate",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "a11y.media.missing_caption_track",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "a11y.images.suspicious_alternative_text",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "a11y.links.ambiguous_accessible_name",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "inh.integrity.unresolved_translation_key",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "inh.integrity.placeholder_contact",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "evidence_level": "Source",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
     }
