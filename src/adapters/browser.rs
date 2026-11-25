@@ -98,7 +98,9 @@ function findBrowser() {
     const hydrationErrors = [];
     const failedRequests = [];
     const reqUrls = new Map();
+    const reqMeta = new Map();
     const resourcesByReqId = new Map();
+    let navStartTs = null;
     let loadResolve = null;
 
     ws.addEventListener('message', (ev) => {
@@ -117,16 +119,46 @@ function findBrowser() {
           hydrationErrors.push(text || 'hydration mismatch');
         }
         if (msg.params?.type === 'error') {
-          consoleErrors.push({ level: 'error', text: text || 'console.error' });
+          const isCsp = lower.includes('content security policy') || lower.includes('refused to ');
+          consoleErrors.push({
+            level: 'error',
+            text: text || 'console.error',
+            error_kind: isCsp ? 'csp_violation' : 'console_error',
+            source_url: msg.params?.stackTrace?.callFrames?.[0]?.url || null,
+            line_number: typeof msg.params?.stackTrace?.callFrames?.[0]?.lineNumber === 'number'
+              ? msg.params.stackTrace.callFrames[0].lineNumber + 1
+              : null,
+          });
         }
       } else if (msg.method === 'Runtime.exceptionThrown') {
-        const text = msg.params?.exceptionDetails?.text || 'Uncaught exception';
-        if (text.toLowerCase().includes('hydration') || text.toLowerCase().includes('did not match')) {
+        const details = msg.params?.exceptionDetails || {};
+        const text = details.exception?.description || details.text || 'Uncaught exception';
+        const lower = text.toLowerCase();
+        if (lower.includes('hydration') || lower.includes('did not match')) {
           hydrationErrors.push(text);
         }
-        consoleErrors.push({ level: 'exception', text });
+        const isRejection = (details.text || '').toLowerCase().includes('in promise') || lower.includes('unhandledrejection');
+        consoleErrors.push({
+          level: 'exception',
+          text,
+          error_kind: isRejection ? 'unhandled_rejection' : 'uncaught_exception',
+          source_url: details.url || null,
+          line_number: typeof details.lineNumber === 'number' ? details.lineNumber + 1 : null,
+        });
       } else if (msg.method === 'Network.requestWillBeSent') {
+        if (navStartTs === null && typeof msg.params.timestamp === 'number') {
+          navStartTs = msg.params.timestamp;
+        }
         reqUrls.set(msg.params.requestId, msg.params.request?.url || '');
+        reqMeta.set(msg.params.requestId, {
+          initiator_type: msg.params.initiator?.type ? String(msg.params.initiator.type).toLowerCase() : null,
+          initiator_url: msg.params.initiator?.url || msg.params.initiator?.stack?.callFrames?.[0]?.url || null,
+          start_time_ms: (navStartTs !== null && typeof msg.params.timestamp === 'number')
+            ? Math.max(0, Math.round((msg.params.timestamp - navStartTs) * 1000))
+            : null,
+          priority: msg.params.request?.initialPriority || null,
+          start_ts: typeof msg.params.timestamp === 'number' ? msg.params.timestamp : null,
+        });
       } else if (msg.method === 'Network.loadingFailed') {
         failedRequests.push({
           url: reqUrls.get(msg.params.requestId) || '',
@@ -136,6 +168,7 @@ function findBrowser() {
       } else if (msg.method === 'Network.responseReceived') {
         const resp = msg.params?.response;
         const rUrl = resp?.url || '';
+        const meta = reqMeta.get(msg.params.requestId) || {};
         if (resp?.status >= 400) {
           failedRequests.push({
             url: rUrl,
@@ -149,6 +182,12 @@ function findBrowser() {
         resourcesByReqId.set(msg.params.requestId, {
           url: rUrl,
           resource_type: String(msg.params?.type || 'other').toLowerCase(),
+          request_id: msg.params.requestId || null,
+          initiator_type: meta.initiator_type || null,
+          initiator_url: meta.initiator_url || null,
+          start_time_ms: meta.start_time_ms ?? null,
+          status_code: typeof resp?.status === 'number' ? resp.status : null,
+          priority: meta.priority || null,
           mime_type: resp?.mimeType || null,
           transfer_size: null,
           duration_ms: null,
@@ -158,8 +197,14 @@ function findBrowser() {
         });
       } else if (msg.method === 'Network.loadingFinished') {
         const rec = resourcesByReqId.get(msg.params.requestId);
-        if (rec && typeof msg.params.encodedDataLength === 'number') {
-          rec.transfer_size = Math.max(0, Math.round(msg.params.encodedDataLength));
+        const meta = reqMeta.get(msg.params.requestId);
+        if (rec) {
+          if (typeof msg.params.encodedDataLength === 'number') {
+            rec.transfer_size = Math.max(0, Math.round(msg.params.encodedDataLength));
+          }
+          if (meta?.start_ts !== null && typeof msg.params.timestamp === 'number') {
+            rec.duration_ms = Math.max(0, Math.round((msg.params.timestamp - meta.start_ts) * 1000));
+          }
         }
       } else if (msg.method === 'Fetch.requestPaused') {
         const reqUrl = msg.params?.request?.url || '';
@@ -212,6 +257,9 @@ function findBrowser() {
     await call('Page.enable');
     await call('Runtime.enable');
     await call('Network.enable');
+    await call('Page.addScriptToEvaluateOnNewDocument', {
+      source: `window.__nzwCspViolations = []; window.addEventListener('securitypolicyviolation', (e) => { if (window.__nzwCspViolations.length < 50) window.__nzwCspViolations.push({ directive: e.violatedDirective || '', blocked_uri: e.blockedURI || '', source_file: e.sourceFile || null, line_number: e.lineNumber || null }); });`,
+    });
     if (process.env.NZW_BROWSER_POLICY === 'public_only') {
       await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
     }
@@ -302,13 +350,26 @@ function findBrowser() {
         return {
           rendered_dom_elements: document.querySelectorAll('*').length,
           rendered_images: imgs,
+          rendered_images_truncated: document.images.length > 100,
           rendered_word_count: renderedWords,
+          csp_violations: Array.isArray(window.__nzwCspViolations) ? window.__nzwCspViolations : [],
         };
       })()`,
       returnByValue: true,
     });
     const domAndImages = domAndImagesRes?.result?.value || {};
-    const resources = Array.from(resourcesByReqId.values()).slice(0, 200);
+    for (const v of Array.isArray(domAndImages.csp_violations) ? domAndImages.csp_violations : []) {
+      consoleErrors.push({
+        level: 'error',
+        text: `CSP violation (${v.directive}): blocked ${v.blocked_uri}`,
+        error_kind: 'csp_violation',
+        source_url: v.source_file || null,
+        line_number: typeof v.line_number === 'number' && v.line_number > 0 ? v.line_number : null,
+      });
+    }
+    const allResources = Array.from(resourcesByReqId.values());
+    const resourcesTruncated = allResources.length > 200;
+    const resources = allResources.slice(0, 200);
 
     process.stdout.write(JSON.stringify({
       final_url: finalUrl,
@@ -319,7 +380,9 @@ function findBrowser() {
       failed_requests: failedRequests,
       viewports,
       resources,
+      resources_truncated: resourcesTruncated,
       rendered_images: Array.isArray(domAndImages.rendered_images) ? domAndImages.rendered_images : [],
+      rendered_images_truncated: Boolean(domAndImages.rendered_images_truncated),
       rendered_dom_elements: typeof domAndImages.rendered_dom_elements === 'number' ? domAndImages.rendered_dom_elements : null,
       rendered_word_count: typeof domAndImages.rendered_word_count === 'number' ? domAndImages.rendered_word_count : null,
       provenance: {
@@ -405,17 +468,33 @@ pub fn parse_browser_outcome(raw: &str) -> CollectorOutcome<BrowserEvidence> {
             error: "browser evidence JSON has empty `final_url`".to_owned(),
         };
     }
+    let mut warnings = Vec::new();
     if parsed.load_timed_out {
-        CollectorOutcome::Partial {
-            data: parsed.evidence,
-            warnings: vec![
-                "Page.loadEventFired timed out after 15000 ms; DOM metrics captured before full load"
-                    .to_owned(),
-            ],
-        }
-    } else {
+        warnings.push(
+            "Page.loadEventFired timed out after 15000 ms; DOM metrics captured before full load"
+                .to_owned(),
+        );
+    }
+    if parsed.evidence.resources_truncated {
+        warnings.push(
+            "Browser subresource list truncated at 200 entries; waterfall analysis is partial"
+                .to_owned(),
+        );
+    }
+    if parsed.evidence.rendered_images_truncated {
+        warnings.push(
+            "Rendered image list truncated at 100 entries; image geometry analysis is partial"
+                .to_owned(),
+        );
+    }
+    if warnings.is_empty() {
         CollectorOutcome::Captured {
             data: parsed.evidence,
+        }
+    } else {
+        CollectorOutcome::Partial {
+            data: parsed.evidence,
+            warnings,
         }
     }
 }
@@ -520,5 +599,27 @@ mod tests {
             parse_browser_outcome(raw),
             CollectorOutcome::Captured { .. }
         ));
+    }
+
+    #[test]
+    fn truncated_resources_or_images_produce_partial_outcome() {
+        let raw = r#"{
+            "final_url": "https://example.org/",
+            "browser_version": "HeadlessChrome/131.0",
+            "load_timed_out": false,
+            "resources_truncated": true,
+            "rendered_images_truncated": true,
+            "console_errors": [],
+            "failed_requests": [],
+            "viewports": []
+        }"#;
+        match parse_browser_outcome(raw) {
+            CollectorOutcome::Partial { data, warnings } => {
+                assert!(data.resources_truncated);
+                assert!(data.rendered_images_truncated);
+                assert_eq!(warnings.len(), 2);
+            }
+            other => panic!("expected Partial outcome, got {other:?}"),
+        }
     }
 }

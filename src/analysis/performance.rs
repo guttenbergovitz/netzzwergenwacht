@@ -1545,6 +1545,7 @@ mod tests {
                         protocol: Some("h2".to_owned()),
                         cache_control: None,
                         content_encoding: None,
+                        ..crate::domain::ResourceTimingObs::default()
                     }],
                     rendered_dom_elements: Some(2_200),
                     ..crate::domain::BrowserEvidence::default()
@@ -1584,6 +1585,7 @@ mod tests {
                 protocol: None,
                 cache_control: Some("max-age=3600".to_owned()),
                 content_encoding: Some("br".to_owned()),
+                ..crate::domain::ResourceTimingObs::default()
             })
             .collect();
         let snap = EvidenceSnapshot {
