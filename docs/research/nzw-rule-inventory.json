@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 145,
+  "total_rules": 149,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1262,6 +1262,38 @@
       "dwarf": "SicherheitsZwerg",
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.links.excessive_internal_redirects",
+      "constant": "RULE_EXCESSIVE_INTERNAL_REDIRECTS",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.crawl.trap_candidate",
+      "constant": "RULE_CRAWL_TRAP_CANDIDATE",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.resources.shared_failed_dependency",
+      "constant": "RULE_SHARED_FAILED_DEPENDENCY",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "graph.resources.third_party_concentration",
+      "constant": "RULE_THIRD_PARTY_CONCENTRATION",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
       "status": "native_rust"
     }
   ]
