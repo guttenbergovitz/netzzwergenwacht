@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 111,
+  "total_rules": 120,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -990,6 +990,78 @@
       "dwarf": "InhaltsZwerg",
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.cross_origin_isolation",
+      "constant": "RULE_CROSS_ORIGIN_ISOLATION",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.sensitive_cache",
+      "constant": "RULE_SENSITIVE_CACHE",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.dom.iframe_sandbox",
+      "constant": "RULE_IFRAME_SANDBOX",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.meta.canonical_absolute",
+      "constant": "RULE_CANONICAL_ABSOLUTE",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "such.feeds.autodiscovery",
+      "constant": "RULE_FEED_AUTODISCOVERY",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.content.text_to_html_ratio",
+      "constant": "RULE_TEXT_TO_HTML_RATIO",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "inh.ax.machine_readable_signals",
+      "constant": "RULE_AX_SIGNALS",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.images.inline_data_uri",
+      "constant": "RULE_INLINE_DATA_URI",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "vis.media.video_controls_or_poster",
+      "constant": "RULE_VIDEO_CONTROLS_POSTER",
+      "dwarf": "GestaltungsZwerg",
+      "module": "analysis::visual",
+      "source_path": "src/analysis/visual.rs",
       "status": "native_rust"
     }
   ]

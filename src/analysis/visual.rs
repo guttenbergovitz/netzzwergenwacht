@@ -26,6 +26,8 @@ const RULE_ASPECT_DISTORTION: &str = "vis.rendered.aspect_ratio_distortion";
 const RULE_ABOVE_FOLD_LAZY: &str = "vis.rendered.above_fold_lazy_lcp";
 const RULE_MOBILE_SMALL_FONT: &str = "vis.mobile.small_font_size";
 const RULE_MOBILE_TAP_TARGETS: &str = "vis.mobile.small_tap_targets";
+const RULE_INLINE_DATA_URI: &str = "vis.images.inline_data_uri";
+const RULE_VIDEO_CONTROLS_POSTER: &str = "vis.media.video_controls_or_poster";
 
 /// All Level 2 rules owned by `GestaltungsZwerg`.
 pub const ALL_RULES: &[&str] = &[RULE_HORIZONTAL_OVERFLOW, RULE_BROKEN_IMAGES];
@@ -39,6 +41,8 @@ pub const ALL_SOURCE_RULES: &[&str] = &[
     RULE_IMAGE_FILENAME,
     RULE_IMAGE_HOTLINKED,
     RULE_INLINE_SVG_A11Y,
+    RULE_INLINE_DATA_URI,
+    RULE_VIDEO_CONTROLS_POSTER,
 ];
 
 /// Evaluates rendered viewport layout and image integrity observations.
@@ -79,6 +83,8 @@ pub fn analyse_with_document(
         check_image_filename_quality(doc, &mut findings, &mut checks);
         check_hotlinked_images(snapshot, doc, &mut findings, &mut checks);
         check_inline_svg_a11y(doc, &mut findings, &mut checks);
+        check_inline_data_uri_images(doc, &mut findings, &mut checks);
+        check_video_controls_or_poster(doc, &mut findings, &mut checks);
     }
 
     let browser = match &snapshot.browser {
@@ -937,6 +943,101 @@ fn check_mobile_readability_and_tap_targets(
     }
 }
 
+fn check_inline_data_uri_images(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let bloated = obs
+        .images
+        .iter()
+        .filter(|img| {
+            img.src
+                .as_deref()
+                .is_some_and(|s| s.starts_with("data:image/") && s.len() > 4096)
+        })
+        .count();
+
+    if bloated == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INLINE_DATA_URI.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_INLINE_DATA_URI.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Large inline data:image URI(s) ({bloated})"),
+            summary: format!(
+                "{bloated} <img> element(s) inline > 4 KiB base64/data URIs, inflating HTML and preventing caching."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("large_data_uri_images={bloated}"),
+            )],
+            remediation: Some(
+                "Serve large images as external cacheable assets (AVIF/WebP/SVG) instead of data URIs."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_INLINE_DATA_URI.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_video_controls_or_poster(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.videos_without_controls_or_poster == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_VIDEO_CONTROLS_POSTER.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_VIDEO_CONTROLS_POSTER.to_owned()),
+            category: FindingCategory::Visual,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!(
+                "<video> elements missing controls or poster ({})",
+                obs.videos_without_controls_or_poster
+            ),
+            summary: format!(
+                "{} non-background <video> element(s) lack `controls` or a `poster` image.",
+                obs.videos_without_controls_or_poster
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!(
+                    "videos_without_controls_or_poster={}",
+                    obs.videos_without_controls_or_poster
+                ),
+            )],
+            remediation: Some(
+                "Add `controls` and a `poster` attribute on interactive `<video>` elements."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_VIDEO_CONTROLS_POSTER.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1127,5 +1228,21 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_MOBILE_SMALL_FONT));
         assert!(ids.contains(&RULE_MOBILE_TAP_TARGETS));
+    }
+
+    #[test]
+    fn flags_large_data_uri_images_and_video_without_controls_or_poster() {
+        let big_data = format!("data:image/png;base64,{}", "A".repeat(4200));
+        let html = format!(
+            r#"<html><body><img src="{big_data}" alt="Big"><video src="/clip.mp4"></video></body></html>"#
+        );
+        let obs = DocumentObservations::from_html(&html);
+        let snap = base_snapshot(CollectorOutcome::Skipped {
+            reason: "no browser".to_owned(),
+        });
+        let res = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_INLINE_DATA_URI));
+        assert!(ids.contains(&RULE_VIDEO_CONTROLS_POSTER));
     }
 }

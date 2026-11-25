@@ -21,6 +21,8 @@ const RULE_HREFLANG: &str = "such.i18n.hreflang";
 const RULE_JSON_LD: &str = "such.schema.json_ld";
 const RULE_SOCIAL: &str = "such.social.metadata";
 const RULE_URL_HYGIENE: &str = "such.url.hygiene";
+const RULE_CANONICAL_ABSOLUTE: &str = "such.meta.canonical_absolute";
+const RULE_FEED_AUTODISCOVERY: &str = "such.feeds.autodiscovery";
 
 /// All rule identifiers owned by `SuchZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -33,6 +35,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_JSON_LD,
     RULE_SOCIAL,
     RULE_URL_HYGIENE,
+    RULE_CANONICAL_ABSOLUTE,
+    RULE_FEED_AUTODISCOVERY,
     schema::RULE_SCHEMA_TYPE_REQUIREMENTS,
     schema::RULE_SCHEMA_SAME_AS,
     schema::RULE_SCHEMA_ENTITY_REFS,
@@ -54,6 +58,8 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     schema::analyse_into(obs, &mut findings, &mut checks);
     check_social_meta(obs, &mut findings, &mut checks);
     check_url_hygiene(http, &mut findings, &mut checks);
+    check_canonical_absolute(obs, &mut findings, &mut checks);
+    check_feed_autodiscovery(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Such,
@@ -551,6 +557,95 @@ fn check_url_hygiene(
     }
 }
 
+fn check_canonical_absolute(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(canonical) = obs.canonical_url.as_deref() else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CANONICAL_ABSOLUTE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no canonical link declared".to_owned(),
+        });
+        return;
+    };
+
+    if canonical.starts_with("https://") || canonical.starts_with("http://") {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CANONICAL_ABSOLUTE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CANONICAL_ABSOLUTE.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Relative canonical URL".to_owned(),
+            summary: format!(
+                "Canonical link `{canonical}` is relative; search engines require an absolute `https://` URL."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("canonical={canonical}"),
+            )],
+            remediation: Some("Use a fully-qualified absolute URL in `<link rel=\"canonical\">`.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CANONICAL_ABSOLUTE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_feed_autodiscovery(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.feed_links_count > 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_FEED_AUTODISCOVERY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else if obs.visible_word_count < 150 {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_FEED_AUTODISCOVERY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "page has fewer than 150 visible words".to_owned(),
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_FEED_AUTODISCOVERY.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Low,
+            title: "No RSS/Atom/JSON feed autodiscovery link".to_owned(),
+            summary: "Substantive page does not advertise a syndication feed via `<link rel=\"alternate\" type=\"application/rss+xml\">`."
+                .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "feed_links_count=0",
+            )],
+            remediation: Some(
+                "Expose an RSS, Atom, or JSON Feed autodiscovery link in `<head>` for editorial sections."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_FEED_AUTODISCOVERY.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -624,5 +719,22 @@ mod tests {
         let res = analyse(&http, &obs);
         assert!(!res.findings.iter().any(|f| f.rule_id.0 == RULE_HREFLANG));
         assert!(res.findings.iter().any(|f| f.rule_id.0 == RULE_JSON_LD));
+    }
+
+    #[test]
+    fn flags_relative_canonical_and_missing_feed_on_substantive_page() {
+        let words = vec!["Editorial article paragraph word"; 40].join(" ");
+        let html = format!(
+            r#"<html><head>
+                <title>NetzZwergenWacht Article</title>
+                <meta name="description" content="External web auditing engine.">
+                <link rel="canonical" href="/relative-path">
+            </head><body><h1>Article</h1><p>{words}</p></body></html>"#
+        );
+        let (http, obs) = http_with_html(&html);
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_CANONICAL_ABSOLUTE));
+        assert!(ids.contains(&RULE_FEED_AUTODISCOVERY));
     }
 }
