@@ -28,6 +28,8 @@ const RULE_SOCIAL_IMAGE: &str = "such.social.missing_preview_image";
 const RULE_MULTIPLE_TITLES: &str = "such.meta.multiple_titles";
 const RULE_MULTIPLE_CANONICALS: &str = "such.canonical.multiple_declarations";
 const RULE_AX_RENDERING_DEP: &str = "such.ax.rendering_dependency";
+const RULE_NOINDEX_CANONICAL_CONFLICT: &str = "such.indexability.noindex_canonical_conflict";
+const RULE_EMPTY_JSON_LD_ENTITIES: &str = "such.schema.empty_json_ld_entities";
 
 /// All rule identifiers owned by `SuchZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -50,6 +52,8 @@ pub const ALL_RULES: &[&str] = &[
     schema::RULE_SCHEMA_TYPE_REQUIREMENTS,
     schema::RULE_SCHEMA_SAME_AS,
     schema::RULE_SCHEMA_ENTITY_REFS,
+    RULE_NOINDEX_CANONICAL_CONFLICT,
+    RULE_EMPTY_JSON_LD_ENTITIES,
 ];
 
 /// Evaluates search metadata and indexability signals over `http` and `obs`.
@@ -74,6 +78,7 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_social_preview_image(obs, &mut findings, &mut checks);
     check_multiple_titles_and_canonicals(obs, &mut findings, &mut checks);
     check_ax_rendering_dependency(http, obs, &mut findings, &mut checks);
+    check_noindex_canonical_conflict_and_schema(http, obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Such,
@@ -882,6 +887,116 @@ fn check_ax_rendering_dependency(
     }
 }
 
+fn check_noindex_canonical_conflict_and_schema(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let meta_noindex = obs
+        .meta_robots
+        .as_deref()
+        .is_some_and(|v| v.to_ascii_lowercase().contains("noindex"));
+    let header_noindex = header_value(http, "x-robots-tag")
+        .is_some_and(|v| v.to_ascii_lowercase().contains("noindex"));
+    let is_noindex = meta_noindex || header_noindex;
+
+    if let Some(canon) = obs.canonical_url.as_deref()
+        && is_noindex
+    {
+        let diff_target = canon != http.final_url;
+        if diff_target {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_NOINDEX_CANONICAL_CONFLICT.to_owned()),
+                category: FindingCategory::Seo,
+                evidence_level: EvidenceLevel::Source,
+                kind: FindingKind::Deterministic,
+                severity: Severity::Medium,
+                confidence: Confidence::High,
+                title: "Conflicting noindex directive and external canonical".to_owned(),
+                summary: format!(
+                    "Page declares `noindex` while canonical points to `{canon}` instead of `{}`.",
+                    http.final_url
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::HttpBody,
+                    format!("noindex=true;canonical={canon}"),
+                )],
+                remediation: Some(
+                    "Remove `noindex` when consolidating via `rel=\"canonical\"`, or drop the cross-URL canonical."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_NOINDEX_CANONICAL_CONFLICT.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        } else {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_NOINDEX_CANONICAL_CONFLICT.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        }
+    } else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_NOINDEX_CANONICAL_CONFLICT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "page does not combine noindex with canonical".to_owned(),
+        });
+    }
+
+    if obs.json_ld_blocks.is_empty() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_EMPTY_JSON_LD_ENTITIES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "no JSON-LD blocks present".to_owned(),
+        });
+    } else {
+        let extracted = crate::analysis::schema::extract_entities(&obs.json_ld_blocks);
+        let has_typed_entity = extracted
+            .entities
+            .iter()
+            .any(|e| !e.entity_types.is_empty());
+        if has_typed_entity {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_EMPTY_JSON_LD_ENTITIES.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        } else {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_EMPTY_JSON_LD_ENTITIES.to_owned()),
+                category: FindingCategory::Seo,
+                evidence_level: EvidenceLevel::Source,
+                kind: FindingKind::Deterministic,
+                severity: Severity::Low,
+                confidence: Confidence::High,
+                title: "JSON-LD blocks yield no typed Schema.org entities".to_owned(),
+                summary: format!(
+                    "Found {} JSON-LD block(s), but none declared a valid `@type` entity.",
+                    obs.json_ld_blocks.len()
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::HttpBody,
+                    format!(
+                        "json_ld_blocks={};typed_entities=0",
+                        obs.json_ld_blocks.len()
+                    ),
+                )],
+                remediation: Some(
+                    "Include valid Schema.org `@context` and `@type` fields in JSON-LD blocks."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_EMPTY_JSON_LD_ENTITIES.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1007,5 +1122,19 @@ mod tests {
         assert!(ids.contains(&RULE_MULTIPLE_TITLES));
         assert!(ids.contains(&RULE_MULTIPLE_CANONICALS));
         assert!(ids.contains(&RULE_AX_RENDERING_DEP));
+    }
+
+    #[test]
+    fn flags_noindex_canonical_conflict_and_typeless_json_ld() {
+        let html = r#"<html><head>
+            <meta name="robots" content="noindex">
+            <link rel="canonical" href="https://example.com/other">
+            <script type="application/ld+json">{"@context":"https://schema.org","name":"NoType"}</script>
+        </head><body></body></html>"#;
+        let (http, obs) = http_with_html(html);
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_NOINDEX_CANONICAL_CONFLICT));
+        assert!(ids.contains(&RULE_EMPTY_JSON_LD_ENTITIES));
     }
 }

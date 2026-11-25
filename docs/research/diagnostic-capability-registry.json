@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 218,
+  "total_implemented_capabilities": 225,
   "by_dwarf": {
     "LeistungsZwerg": 34,
-    "SicherheitsZwerg": 35,
+    "SicherheitsZwerg": 36,
     "GestaltungsZwerg": 21,
-    "SuchZwerg": 19,
-    "InhaltsZwerg": 16,
-    "ApplicationGraph": 19,
+    "SuchZwerg": 21,
+    "InhaltsZwerg": 19,
+    "ApplicationGraph": 20,
     "ZugänglichkeitsZwerg": 27,
     "StrukturZwerg": 15,
     "NetzZwerg": 18,
@@ -1974,6 +1974,69 @@
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
       "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "inh.i18n.language_mismatch",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "inh.content.excessive_link_density",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "inh.content.repeated_headings",
+      "dwarf": "InhaltsZwerg",
+      "module": "analysis::content",
+      "source_path": "src/analysis/content.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "graph.content.near_duplicate_simhash",
+      "dwarf": "ApplicationGraph",
+      "module": "analysis::graph",
+      "source_path": "src/analysis/graph.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "such.indexability.noindex_canonical_conflict",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "such.schema.empty_json_ld_entities",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.cookies.session_missing_httponly",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Source",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
     }
