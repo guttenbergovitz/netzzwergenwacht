@@ -21,6 +21,8 @@ const RULE_META_REFRESH: &str = "str.doc.meta_refresh";
 const RULE_FAVICON: &str = "str.doc.favicon";
 const RULE_DUPLICATE_MAIN: &str = "str.landmarks.duplicate_main";
 const RULE_EMPTY_HEADING: &str = "str.headings.empty_heading";
+const RULE_INVALID_DOCTYPE: &str = "str.html.invalid_doctype";
+const RULE_INVALID_LABEL_ASSOC: &str = "str.forms.invalid_association";
 
 /// All rule identifiers owned by `StrukturZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -35,6 +37,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_FAVICON,
     RULE_DUPLICATE_MAIN,
     RULE_EMPTY_HEADING,
+    RULE_INVALID_DOCTYPE,
+    RULE_INVALID_LABEL_ASSOC,
 ];
 
 /// Evaluates semantic HTML structure and element integrity over `obs`.
@@ -54,6 +58,8 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
     check_favicon(obs, &mut findings, &mut checks);
     check_duplicate_main(obs, &mut findings, &mut checks);
     check_empty_headings(obs, &mut findings, &mut checks);
+    check_doctype(obs, &mut findings, &mut checks);
+    check_label_associations(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Struktur,
@@ -614,6 +620,89 @@ fn check_empty_headings(
     }
 }
 
+fn check_doctype(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.doctype_kind == Some("html5") {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INVALID_DOCTYPE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_INVALID_DOCTYPE.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Missing or legacy HTML DOCTYPE declaration".to_owned(),
+            summary: format!(
+                "Document lacks `<!DOCTYPE html>` (detected={}), risking quirks-mode rendering.",
+                obs.doctype_kind.unwrap_or("none")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("doctype={}", obs.doctype_kind.unwrap_or("none")),
+            )],
+            remediation: Some("Start every HTML5 document with `<!DOCTYPE html>`.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_INVALID_DOCTYPE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_label_associations(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let broken: Vec<&str> = obs
+        .label_for_ids
+        .iter()
+        .filter(|id| !obs.all_ids.contains(*id))
+        .map(String::as_str)
+        .collect();
+    if broken.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INVALID_LABEL_ASSOC.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_INVALID_LABEL_ASSOC.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Broken <label for> associations ({})", broken.len()),
+            summary: format!(
+                "{} `<label for=\"...\">` attribute(s) reference missing element IDs.",
+                broken.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("broken_label_for={}", broken.len()),
+            )],
+            remediation: Some(
+                "Ensure every `<label for=\"id\">` matches an existing form control `id`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_INVALID_LABEL_ASSOC.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -686,5 +775,15 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_DUPLICATE_MAIN));
         assert!(ids.contains(&RULE_EMPTY_HEADING));
+    }
+
+    #[test]
+    fn flags_missing_doctype_and_broken_label_for() {
+        let html = r#"<html><body><label for="missing_input">Email</label></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let res = analyse(&obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_INVALID_DOCTYPE));
+        assert!(ids.contains(&RULE_INVALID_LABEL_ASSOC));
     }
 }

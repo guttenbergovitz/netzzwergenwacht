@@ -262,6 +262,12 @@ pub struct DocumentObservations {
     pub videos_without_controls_or_poster: usize,
     /// Count of non-background `<video>` elements lacking `<track kind="captions"|"subtitles">`.
     pub videos_without_captions: usize,
+    /// Detected doctype declaration (`Some("html5")`, `Some("legacy")`, or `None`).
+    pub doctype_kind: Option<&'static str>,
+    /// Total count of `<title>` elements in the document.
+    pub title_count: usize,
+    /// Total count of `<link rel="canonical">` elements in the document.
+    pub canonical_count: usize,
 }
 
 impl DocumentObservations {
@@ -292,6 +298,9 @@ impl DocumentObservations {
                 r#"link[rel="preconnect"], link[rel="dns-prefetch"]"#,
             ),
             meta_refresh: first_attr(&doc, r#"meta[http-equiv="refresh"]"#, "content"),
+            doctype_kind: detect_doctype(html),
+            title_count: count_selector(&doc, "title"),
+            canonical_count: count_selector(&doc, r#"link[rel="canonical"]"#),
             ..Self::default()
         };
 
@@ -305,6 +314,18 @@ impl DocumentObservations {
         extract_wave5_observations(&doc, &mut obs);
 
         obs
+    }
+}
+
+fn detect_doctype(html: &str) -> Option<&'static str> {
+    let trimmed = html.trim_start_matches('\u{feff}').trim_start();
+    let prefix = trimmed.get(..15).unwrap_or(trimmed).to_ascii_lowercase();
+    if prefix.starts_with("<!doctype html>") || prefix.starts_with("<!doctype html ") {
+        Some("html5")
+    } else if prefix.starts_with("<!doctype") {
+        Some("legacy")
+    } else {
+        None
     }
 }
 

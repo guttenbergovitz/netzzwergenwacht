@@ -1,17 +1,17 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 172,
+  "total_implemented_capabilities": 180,
   "by_dwarf": {
     "LeistungsZwerg": 27,
     "SicherheitsZwerg": 30,
     "GestaltungsZwerg": 19,
-    "SuchZwerg": 16,
+    "SuchZwerg": 19,
     "InhaltsZwerg": 14,
     "ApplicationGraph": 16,
     "ZugänglichkeitsZwerg": 16,
-    "StrukturZwerg": 11,
-    "NetzZwerg": 12,
+    "StrukturZwerg": 13,
+    "NetzZwerg": 15,
     "BrowserZwerg": 11
   },
   "capabilities": [
@@ -1560,6 +1560,78 @@
       "module": "analysis::security",
       "source_path": "src/analysis/security.rs",
       "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.content_type_mismatch",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.invalid_content_length",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.range_request_support",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "str.html.invalid_doctype",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "str.forms.invalid_association",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "such.meta.multiple_titles",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "such.canonical.multiple_declarations",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "such.ax.rendering_dependency",
+      "dwarf": "SuchZwerg",
+      "module": "analysis::seo",
+      "source_path": "src/analysis/seo.rs",
+      "evidence_level": "Source",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
     }

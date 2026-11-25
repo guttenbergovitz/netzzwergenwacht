@@ -23,6 +23,9 @@ const RULE_REDIRECT_HTTPS_DOWNGRADE: &str = "netz.redirect.https_downgrade";
 const RULE_REDIRECT_CROSS_ORIGIN: &str = "netz.redirect.cross_origin_chain";
 const RULE_ETAG_VALIDATION: &str = "netz.http.etag_validation";
 const RULE_RATE_LIMITING: &str = "netz.http.rate_limiting_observed";
+const RULE_CONTENT_TYPE_MISMATCH: &str = "netz.http.content_type_mismatch";
+const RULE_INVALID_CONTENT_LENGTH: &str = "netz.http.invalid_content_length";
+const RULE_RANGE_REQUEST_SUPPORT: &str = "netz.http.range_request_support";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTP_STATUS,
@@ -37,6 +40,9 @@ const ALL_RULES: &[&str] = &[
     RULE_REDIRECT_CROSS_ORIGIN,
     RULE_ETAG_VALIDATION,
     RULE_RATE_LIMITING,
+    RULE_CONTENT_TYPE_MISMATCH,
+    RULE_INVALID_CONTENT_LENGTH,
+    RULE_RANGE_REQUEST_SUPPORT,
 ];
 
 /// Evaluates HTTP response status and redirect-chain hygiene over `snapshot`.
@@ -67,6 +73,7 @@ pub fn analyse_with_document(
     check_url_hygiene(http, &mut findings, &mut checks);
     check_redirect_security_and_origin(snapshot, http, &mut findings, &mut checks);
     check_etag_and_rate_limiting(http, &mut findings, &mut checks);
+    check_http_integrity_headers(http, obs.is_some(), &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_soft_error(http, doc, &mut findings, &mut checks);
@@ -719,6 +726,175 @@ fn check_etag_and_rate_limiting(
     }
 }
 
+fn check_http_integrity_headers(
+    http: &HttpEvidence,
+    has_html_obs: bool,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    check_content_type_integrity(http, has_html_obs, findings, checks);
+    check_content_length_integrity(http, findings, checks);
+    check_range_request_support(http, findings, checks);
+}
+
+fn check_content_type_integrity(
+    http: &HttpEvidence,
+    has_html_obs: bool,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(ct) = (has_html_obs)
+        .then(|| header_value(http, "content-type"))
+        .flatten()
+    else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CONTENT_TYPE_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "Content-Type or HTML document observations unavailable".to_owned(),
+        });
+        return;
+    };
+
+    let mime = ct
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    if matches!(mime.as_str(), "text/html" | "application/xhtml+xml") {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CONTENT_TYPE_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_CONTENT_TYPE_MISMATCH.to_owned()),
+        category: FindingCategory::Reliability,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!("HTML document served with unexpected Content-Type `{mime}`"),
+        summary: format!("HTML response declared `Content-Type: {ct}` instead of `text/html`."),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
+            format!("content_type={ct}"),
+        )],
+        remediation: Some(
+            "Serve HTML documents with `Content-Type: text/html; charset=utf-8`.".to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_CONTENT_TYPE_MISMATCH.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_content_length_integrity(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(raw_cl) = header_value(http, "content-length") else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_INVALID_CONTENT_LENGTH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "Content-Length header absent".to_owned(),
+        });
+        return;
+    };
+
+    let mismatch = match raw_cl.trim().parse::<usize>() {
+        Ok(len) => {
+            !http.body_truncated
+                && header_value(http, "content-encoding").is_none()
+                && len != http.body_bytes
+        }
+        Err(_) => true,
+    };
+    if !mismatch {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INVALID_CONTENT_LENGTH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_INVALID_CONTENT_LENGTH.to_owned()),
+        category: FindingCategory::Reliability,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: "Invalid or mismatched Content-Length header".to_owned(),
+        summary: format!(
+            "Response `Content-Length: {raw_cl}` does not match observed payload ({} bytes).",
+            http.body_bytes
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
+            format!("content_length={raw_cl};body_bytes={}", http.body_bytes),
+        )],
+        remediation: Some(
+            "Ensure origin/proxy `Content-Length` matches the transmitted byte length.".to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_INVALID_CONTENT_LENGTH.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_range_request_support(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(accept_ranges) = header_value(http, "accept-ranges") else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_RANGE_REQUEST_SUPPORT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "Accept-Ranges header absent".to_owned(),
+        });
+        return;
+    };
+
+    let val = accept_ranges.trim().to_ascii_lowercase();
+    if matches!(val.as_str(), "bytes" | "none") {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_RANGE_REQUEST_SUPPORT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_RANGE_REQUEST_SUPPORT.to_owned()),
+        category: FindingCategory::Reliability,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Info,
+        confidence: Confidence::High,
+        title: format!("Non-standard Accept-Ranges header `{accept_ranges}`"),
+        summary: format!("Accept-Ranges `{accept_ranges}` is neither `bytes` nor `none`."),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
+            format!("accept_ranges={accept_ranges}"),
+        )],
+        remediation: Some("Use standard `Accept-Ranges: bytes` or `none`.".to_owned()),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_RANGE_REQUEST_SUPPORT.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -880,5 +1056,36 @@ mod tests {
         assert!(ids.contains(&RULE_REDIRECT_CROSS_ORIGIN));
         assert!(ids.contains(&RULE_ETAG_VALIDATION));
         assert!(ids.contains(&RULE_RATE_LIMITING));
+    }
+
+    #[test]
+    fn flags_content_type_mismatch_invalid_content_length_and_range_header() {
+        let mut snap = make_snapshot(200, 0);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.headers = vec![
+                crate::domain::HttpHeader {
+                    name: "content-type".to_owned(),
+                    value: "text/plain".to_owned(),
+                },
+                crate::domain::HttpHeader {
+                    name: "content-length".to_owned(),
+                    value: "9999".to_owned(),
+                },
+                crate::domain::HttpHeader {
+                    name: "accept-ranges".to_owned(),
+                    value: "kilobytes".to_owned(),
+                },
+            ];
+        }
+        let obs = DocumentObservations::from_html("<html><body><p>Hi</p></body></html>");
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_CONTENT_TYPE_MISMATCH));
+        assert!(ids.contains(&RULE_INVALID_CONTENT_LENGTH));
+        assert!(ids.contains(&RULE_RANGE_REQUEST_SUPPORT));
     }
 }

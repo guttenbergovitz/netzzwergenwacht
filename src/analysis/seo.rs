@@ -25,6 +25,9 @@ const RULE_CANONICAL_ABSOLUTE: &str = "such.meta.canonical_absolute";
 const RULE_FEED_AUTODISCOVERY: &str = "such.feeds.autodiscovery";
 const RULE_HREFLANG_SELF_REF: &str = "such.i18n.missing_self_reference";
 const RULE_SOCIAL_IMAGE: &str = "such.social.missing_preview_image";
+const RULE_MULTIPLE_TITLES: &str = "such.meta.multiple_titles";
+const RULE_MULTIPLE_CANONICALS: &str = "such.canonical.multiple_declarations";
+const RULE_AX_RENDERING_DEP: &str = "such.ax.rendering_dependency";
 
 /// All rule identifiers owned by `SuchZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -41,6 +44,9 @@ pub const ALL_RULES: &[&str] = &[
     RULE_FEED_AUTODISCOVERY,
     RULE_HREFLANG_SELF_REF,
     RULE_SOCIAL_IMAGE,
+    RULE_MULTIPLE_TITLES,
+    RULE_MULTIPLE_CANONICALS,
+    RULE_AX_RENDERING_DEP,
     schema::RULE_SCHEMA_TYPE_REQUIREMENTS,
     schema::RULE_SCHEMA_SAME_AS,
     schema::RULE_SCHEMA_ENTITY_REFS,
@@ -66,6 +72,8 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_feed_autodiscovery(obs, &mut findings, &mut checks);
     check_hreflang_self_reference(http, obs, &mut findings, &mut checks);
     check_social_preview_image(obs, &mut findings, &mut checks);
+    check_multiple_titles_and_canonicals(obs, &mut findings, &mut checks);
+    check_ax_rendering_dependency(http, obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Such,
@@ -759,6 +767,121 @@ fn check_social_preview_image(
     }
 }
 
+fn check_multiple_titles_and_canonicals(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.title_count > 1 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MULTIPLE_TITLES.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Multiple <title> elements ({})", obs.title_count),
+            summary: format!(
+                "Document declares {} <title> elements; crawlers expect a single `<title>`.",
+                obs.title_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("title_count={}", obs.title_count),
+            )],
+            remediation: Some("Emit only one `<title>` element in `<head>`.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MULTIPLE_TITLES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MULTIPLE_TITLES.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    if obs.canonical_count > 1 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_MULTIPLE_CANONICALS.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!("Multiple <link rel=\"canonical\"> declarations ({})", obs.canonical_count),
+            summary: format!(
+                "Document declares {} canonical links, which causes search engines to ignore canonicalisation.",
+                obs.canonical_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("canonical_count={}", obs.canonical_count),
+            )],
+            remediation: Some("Emit a single `<link rel=\"canonical\">` in `<head>`.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_MULTIPLE_CANONICALS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_MULTIPLE_CANONICALS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_ax_rendering_dependency(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if http.body_bytes > 512 && obs.visible_word_count < 20 && obs.scripts.len() >= 2 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_AX_RENDERING_DEP.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: "Primary content appears dependent on client-side JS rendering".to_owned(),
+            summary: format!(
+                "Source HTML ({} bytes, {} script(s)) contains only {} visible word(s), limiting non-JS crawler/agent extraction.",
+                http.body_bytes,
+                obs.scripts.len(),
+                obs.visible_word_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!(
+                    "visible_words={};scripts={}",
+                    obs.visible_word_count,
+                    obs.scripts.len()
+                ),
+            )],
+            remediation: Some(
+                "Provide server-side rendered (SSR) or pre-rendered HTML for primary content."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_AX_RENDERING_DEP.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_AX_RENDERING_DEP.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -865,5 +988,24 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_HREFLANG_SELF_REF));
         assert!(ids.contains(&RULE_SOCIAL_IMAGE));
+    }
+
+    #[test]
+    fn flags_multiple_titles_canonicals_and_js_rendering_dependency() {
+        let padding = "<!-- pad -->".repeat(50);
+        let html = format!(
+            r#"<html><head>
+                <title>One</title><title>Two</title>
+                <link rel="canonical" href="https://example.com/a">
+                <link rel="canonical" href="https://example.com/b">
+                <script src="/a.js"></script><script src="/b.js"></script>
+            </head><body><div id="root">{padding}</div></body></html>"#
+        );
+        let (http, obs) = http_with_html(&html);
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_MULTIPLE_TITLES));
+        assert!(ids.contains(&RULE_MULTIPLE_CANONICALS));
+        assert!(ids.contains(&RULE_AX_RENDERING_DEP));
     }
 }
