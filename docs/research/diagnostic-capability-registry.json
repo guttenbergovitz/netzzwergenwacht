@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 214,
+  "total_implemented_capabilities": 218,
   "by_dwarf": {
-    "LeistungsZwerg": 32,
-    "SicherheitsZwerg": 33,
+    "LeistungsZwerg": 34,
+    "SicherheitsZwerg": 35,
     "GestaltungsZwerg": 21,
     "SuchZwerg": 19,
     "InhaltsZwerg": 16,
@@ -1938,6 +1938,42 @@
       "module": "analysis::accessibility",
       "source_path": "src/analysis/accessibility.rs",
       "evidence_level": "Behavioural",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.js.cpu_execution_budget",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.js.single_script_cpu_hotspot",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.privacy.consent_banner_asymmetry",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "sec.privacy.tracking_without_consent_banner",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "evidence_level": "Rendered",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"
     }

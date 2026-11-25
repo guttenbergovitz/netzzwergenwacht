@@ -265,6 +265,8 @@ function findBrowser() {
     await call('Network.enable');
     try {
       await call('Profiler.enable');
+      await call('Profiler.setSamplingInterval', { interval: 1000 });
+      await call('Profiler.start');
       await call('Profiler.startPreciseCoverage', { callCount: false, detailed: true });
     } catch {}
     try {
@@ -432,6 +434,16 @@ function findBrowser() {
           session_storage_keys: safeCount(() => window.sessionStorage.length),
           document_cookie_count: safeCount(() => document.cookie ? document.cookie.split(';').filter((c) => c.trim().length > 0).length : 0),
         };
+        const consentBanner = (() => {
+          const vis = (el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 120 && r.height > 30 && st.visibility !== 'hidden' && st.display !== 'none'; };
+          const banner = Array.from(document.querySelectorAll('[id*=cookie],[class*=cookie],[id*=consent],[class*=consent],[aria-label*=cookie i],[aria-label*=consent i]')).find(vis);
+          if (!banner) return { banner_detected: false, has_accept_action: false, has_reject_action: false };
+          const btns = Array.from(banner.querySelectorAll('button, a[role=button], input[type=button], input[type=submit]'));
+          const textOf = (el) => ((el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.value || '')).trim();
+          const hasAccept = btns.some((b) => /accept|allow|agree|akzeptieren|zustimmen|alle annehmen|zgadzam|akceptuj/i.test(textOf(b)));
+          const hasReject = btns.some((b) => /reject|decline|deny|refuse|necessary only|essential|ablehnen|nur notwendige|odrzuc/i.test(textOf(b)));
+          return { banner_detected: true, has_accept_action: hasAccept, has_reject_action: hasReject };
+        })();
         return {
           rendered_dom_elements: document.querySelectorAll('*').length,
           rendered_images: imgs,
@@ -440,6 +452,7 @@ function findBrowser() {
           csp_violations: Array.isArray(window.__nzwCspViolations) ? window.__nzwCspViolations : [],
           performance: perfObs,
           storage_summary: storageSummary,
+          consent_banner: consentBanner,
         };
       })()`,
       returnByValue: true,
@@ -498,6 +511,38 @@ function findBrowser() {
       }
       return used;
     };
+    let cpuProfileSummary = null;
+    try {
+      const cpuRes = await call('Profiler.stop');
+      const prof = cpuRes?.profile;
+      const nodes = Array.isArray(prof?.nodes) ? prof.nodes : [];
+      if (nodes.length > 0) {
+        const byUrl = new Map();
+        let scriptEvalMs = 0;
+        let totalSampledMs = 0;
+        const totalUs = (typeof prof.startTime === 'number' && typeof prof.endTime === 'number' && prof.endTime > prof.startTime)
+          ? (prof.endTime - prof.startTime) : 0;
+        const totalHits = nodes.reduce((acc, n) => acc + Number(n.hitCount || 0), 0);
+        const msPerHit = totalHits > 0 && totalUs > 0 ? (totalUs / 1000) / totalHits : 1;
+        for (const n of nodes) {
+          const hits = Number(n.hitCount || 0);
+          if (hits <= 0) continue;
+          const fnName = n.callFrame?.functionName || '';
+          const url = n.callFrame?.url || '';
+          const ms = Math.round(hits * msPerHit);
+          if (fnName !== '(idle)') totalSampledMs += ms;
+          if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+            scriptEvalMs += ms;
+            const prev = byUrl.get(url) || { url, self_ms: 0, hit_count: 0 };
+            prev.self_ms += ms;
+            prev.hit_count += hits;
+            byUrl.set(url, prev);
+          }
+        }
+        const topCpu = Array.from(byUrl.values()).sort((a, b) => b.self_ms - a.self_ms).slice(0, 10);
+        cpuProfileSummary = { script_eval_ms: scriptEvalMs, total_sampled_ms: totalSampledMs, top_cpu_scripts: topCpu };
+      }
+    } catch {}
     let coverageSummary = {
       js_total_bytes: 0,
       js_used_bytes: 0,
@@ -736,6 +781,8 @@ function findBrowser() {
       storage_summary: domAndImages.storage_summary || null,
       coverage: hasCoverage ? coverageSummary : null,
       behavioural_a11y: hasBeh ? behObs : behaviouralA11y,
+      cpu_profile: cpuProfileSummary,
+      consent_banner: domAndImages.consent_banner || null,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',

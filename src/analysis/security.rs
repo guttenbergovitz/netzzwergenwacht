@@ -44,6 +44,8 @@ const RULE_PRIVACY_THIRD_PARTY_FLOW: &str = "sec.privacy.third_party_data_flow";
 const RULE_CSP_FORM_ACTION: &str = "sec.csp.missing_form_action";
 const RULE_CSP_WILDCARD: &str = "sec.csp.wildcard_source";
 const RULE_STACK_TRACE_LEAK: &str = "sec.headers.server_error_stack_trace";
+const RULE_CONSENT_ASYMMETRY: &str = "sec.privacy.consent_banner_asymmetry";
+const RULE_TRACKING_NO_BANNER: &str = "sec.privacy.tracking_without_consent_banner";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -79,6 +81,8 @@ const ALL_RULES: &[&str] = &[
     RULE_CSP_FORM_ACTION,
     RULE_CSP_WILDCARD,
     RULE_STACK_TRACE_LEAK,
+    RULE_CONSENT_ASYMMETRY,
+    RULE_TRACKING_NO_BANNER,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -2046,7 +2050,12 @@ fn check_privacy_browser_signals(
     let data = match browser {
         CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
         CollectorOutcome::Skipped { reason } => {
-            for rule in [RULE_PRIVACY_STORAGE, RULE_PRIVACY_THIRD_PARTY_FLOW] {
+            for rule in [
+                RULE_PRIVACY_STORAGE,
+                RULE_PRIVACY_THIRD_PARTY_FLOW,
+                RULE_CONSENT_ASYMMETRY,
+                RULE_TRACKING_NO_BANNER,
+            ] {
                 checks.push(CheckStatus::Skipped {
                     rule_id: RuleId((*rule).to_owned()),
                     evidence_level: EvidenceLevel::Rendered,
@@ -2056,7 +2065,12 @@ fn check_privacy_browser_signals(
             return;
         }
         CollectorOutcome::Failed { error } => {
-            for rule in [RULE_PRIVACY_STORAGE, RULE_PRIVACY_THIRD_PARTY_FLOW] {
+            for rule in [
+                RULE_PRIVACY_STORAGE,
+                RULE_PRIVACY_THIRD_PARTY_FLOW,
+                RULE_CONSENT_ASYMMETRY,
+                RULE_TRACKING_NO_BANNER,
+            ] {
                 checks.push(CheckStatus::Skipped {
                     rule_id: RuleId((*rule).to_owned()),
                     evidence_level: EvidenceLevel::Rendered,
@@ -2181,6 +2195,97 @@ fn check_privacy_tracker_requests(
         });
         checks.push(CheckStatus::Failed {
             rule_id: RuleId(RULE_PRIVACY_THIRD_PARTY_FLOW.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    check_consent_banner_signals(data, findings, checks);
+}
+
+fn check_consent_banner_signals(
+    data: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(banner) = data.consent_banner.as_ref() else {
+        for rule in [RULE_CONSENT_ASYMMETRY, RULE_TRACKING_NO_BANNER] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason: "consent banner probe unavailable".to_owned(),
+            });
+        }
+        return;
+    };
+
+    if !banner.banner_detected {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CONSENT_ASYMMETRY.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "no consent banner detected".to_owned(),
+        });
+    } else if banner.has_accept_action && !banner.has_reject_action {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CONSENT_ASYMMETRY.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::Medium,
+            title: "Consent banner offers Accept without visible Reject option".to_owned(),
+            summary: "Observed a visible consent banner with an accept button but no reject/decline button.".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                "consent_banner=detected;accept=true;reject=false",
+            )],
+            remediation: Some(
+                "Provide an equally prominent Reject/Essential-Only button alongside Accept."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CONSENT_ASYMMETRY.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CONSENT_ASYMMETRY.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    let has_cookies_or_storage = data
+        .storage_summary
+        .as_ref()
+        .is_some_and(|s| s.document_cookie_count > 0 || s.local_storage_keys > 0);
+    if !banner.banner_detected && has_cookies_or_storage {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_TRACKING_NO_BANNER.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::Medium,
+            title: "Client-side cookies/storage set without visible consent banner".to_owned(),
+            summary: "Fresh session populated cookies or localStorage without any detected consent banner.".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                "consent_banner=absent;storage_or_cookies=present",
+            )],
+            remediation: Some(
+                "Verify whether non-essential cookies/storage require prior user consent under GDPR/ePrivacy."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_TRACKING_NO_BANNER.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_TRACKING_NO_BANNER.to_owned()),
             evidence_level: EvidenceLevel::Rendered,
         });
     }
@@ -2507,5 +2612,46 @@ mod tests {
         assert!(ids.contains(&RULE_CSP_WILDCARD));
         assert!(ids.contains(&RULE_CSP_FORM_ACTION));
         assert!(ids.contains(&RULE_STACK_TRACE_LEAK));
+    }
+
+    #[test]
+    fn flags_consent_banner_asymmetry_and_tracking_without_banner() {
+        let mut snap = snapshot_with_headers("https://example.com/", Vec::new());
+        snap.browser = CollectorOutcome::Captured {
+            data: crate::domain::BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                consent_banner: Some(crate::domain::ConsentBannerObs {
+                    banner_detected: true,
+                    has_accept_action: true,
+                    has_reject_action: false,
+                }),
+                ..crate::domain::BrowserEvidence::default()
+            },
+        };
+        let res = analyse(&snap);
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_CONSENT_ASYMMETRY)
+        );
+
+        if let CollectorOutcome::Captured { data } = &mut snap.browser {
+            data.consent_banner = Some(crate::domain::ConsentBannerObs {
+                banner_detected: false,
+                has_accept_action: false,
+                has_reject_action: false,
+            });
+            data.storage_summary = Some(crate::domain::PrivacyStorageSummary {
+                local_storage_keys: 1,
+                session_storage_keys: 0,
+                document_cookie_count: 2,
+            });
+        }
+        let res2 = analyse(&snap);
+        assert!(
+            res2.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_TRACKING_NO_BANNER)
+        );
     }
 }

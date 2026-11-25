@@ -961,9 +961,52 @@ pub struct BrowserEvidence {
     /// Level 3 behavioural keyboard navigation, focus indicator, and dialog probe observations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub behavioural_a11y: Option<BehaviouralA11yObs>,
+    /// Level 2 CDP JavaScript CPU sampling profile summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_profile: Option<CpuProfileSummary>,
+    /// Level 2 observed cookie/consent banner presence and accept/reject symmetry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consent_banner: Option<ConsentBannerObs>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,
+}
+
+/// Per-script JavaScript CPU self-time sample from CDP `Profiler.stop`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CpuScriptSample {
+    /// Script URL (or `"inline"`).
+    pub url: String,
+    /// Estimated self CPU time in milliseconds (`hit_count * interval_us / 1000`).
+    pub self_ms: u64,
+    /// Raw V8 CPU profiler sample hit count.
+    pub hit_count: u64,
+}
+
+/// Level 2 CDP JavaScript CPU sampling profile summary.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct CpuProfileSummary {
+    /// Total sampled JS execution time in milliseconds across non-idle script nodes.
+    pub script_eval_ms: u64,
+    /// Total sampled profile duration in milliseconds.
+    pub total_sampled_ms: u64,
+    /// Top scripts ranked by self CPU execution time (up to 10).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_cpu_scripts: Vec<CpuScriptSample>,
+}
+
+/// Level 2 observed cookie/consent banner presence and button symmetry.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ConsentBannerObs {
+    /// Whether a visible cookie/consent banner container was detected.
+    pub banner_detected: bool,
+    /// Whether an accept/allow action button was observed inside the banner.
+    pub has_accept_action: bool,
+    /// Whether a reject/decline/essential-only action button was observed inside the banner.
+    pub has_reject_action: bool,
 }
 
 /// Level 3 behavioural keyboard navigation, focus visibility, and dialog observations.
