@@ -8,6 +8,7 @@ pub mod accessibility;
 pub mod browser;
 pub mod content;
 pub mod document;
+pub mod element_identity;
 pub mod graph;
 pub mod network;
 pub mod performance;

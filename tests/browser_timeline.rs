@@ -44,6 +44,21 @@ async fn spawn_fixture() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) 
                              for (let i = 0; i < 260; i++) document.querySelector('main').append(document.createElement('p'));
                            </script>"#,
                     ),
+                    "/identity-before" => (
+                        "200 OK",
+                        "",
+                        r#"<main><p id="stable-private-fixture-key">Before</p><section><p>Unlabelled</p></section>
+                          <article><p id="repeated-key">Repeated</p></article><div id="repeated-key">Outside paragraph</div>
+                          <footer><p>One</p><p>Two</p></footer></main>"#,
+                    ),
+                    "/identity-after" => (
+                        "200 OK",
+                        "",
+                        r#"<header>Banner</header><main><p id="stable-private-fixture-key">After</p><section><p>Unlabelled</p></section>
+                          <article><p id="repeated-key">Repeated again</p></article><div id="repeated-key">Outside paragraph</div>
+                          <footer><p>One</p><p>Two</p></footer></main>
+                          <script>history.replaceState(null, '', '/identity-before');</script>"#,
+                    ),
                     "/disconnect" => return,
                     "/missing" => ("404 Not Found", "", ""),
                     _ => ("204 No Content", "", ""),
@@ -240,4 +255,69 @@ async fn live_browser_preserves_evidence_when_rendered_content_hits_limits() {
     assert!(clipped.text_truncated);
     assert_eq!(clipped.visible_text, "x".repeat(511));
     assert_eq!(paragraphs.next().unwrap().visible_text, "");
+}
+
+#[tokio::test]
+#[ignore = "requires Node.js and Chromium"]
+async fn live_browser_matches_identity_across_banner_and_text_changes() {
+    use netzzwergenwacht::analysis::element_identity::{
+        ElementMatch, MatchBasis, match_rendered_blocks,
+    };
+
+    let (address, server) = spawn_fixture().await;
+    let mut captures = Vec::new();
+    for route in ["identity-before", "identity-after"] {
+        let policy = TargetPolicy::AllowPrivate;
+        let target = AuditTarget::parse(&format!("http://{address}/{route}"), policy).unwrap();
+        let result = run_browser_with_policy(&target, Duration::from_secs(35), policy).await;
+        let CollectorOutcome::Captured { data } = result else {
+            panic!("expected complete browser capture: {result:?}");
+        };
+        captures.push(data);
+    }
+    server.abort();
+
+    let matches = match_rendered_blocks(&captures[0], &captures[1]).unwrap();
+    let before = captures[0].rendered_content.as_ref().unwrap();
+    let after = captures[1].rendered_content.as_ref().unwrap();
+    let locate = |text: &str| {
+        before
+            .blocks
+            .iter()
+            .find(|block| {
+                block.visible_text == text
+                    && block.kind == netzzwergenwacht::domain::RenderedBlockKind::Paragraph
+            })
+            .unwrap()
+            .node
+    };
+
+    let ElementMatch::Matched {
+        current,
+        basis: MatchBasis::UniqueId,
+    } = matches[&locate("Before")]
+    else {
+        panic!("unique ID should survive changed text");
+    };
+    assert_ne!(current, locate("Before"));
+    assert!(
+        after
+            .blocks
+            .iter()
+            .any(|block| block.node == current && block.visible_text == "After")
+    );
+    assert!(matches!(
+        matches[&locate("Unlabelled")],
+        ElementMatch::Matched {
+            basis: MatchBasis::UniqueStructure,
+            ..
+        }
+    ));
+    assert_eq!(matches[&locate("Repeated")], ElementMatch::Ambiguous);
+    assert_eq!(matches[&locate("One")], ElementMatch::Ambiguous);
+    assert!(
+        !serde_json::to_string(after)
+            .unwrap()
+            .contains("stable-private-fixture-key")
+    );
 }

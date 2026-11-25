@@ -8,6 +8,29 @@ function collectRenderedContent() {
   const body = document.body;
   if (!body) return null;
 
+  const maxIdUnits = 128;
+  const ids = new Map();
+  const elements = document.createTreeWalker(document.documentElement);
+  let idCensusComplete = true;
+  let element = elements.currentNode;
+  for (let count = 0; element !== null; count++, element = elements.nextNode()) {
+    if (count === maxNodes) {
+      idCensusComplete = false;
+      break;
+    }
+    if (element.nodeType !== Node.ELEMENT_NODE) continue;
+    const id = element.getAttribute('id');
+    if (id && id.length <= maxIdUnits) ids.set(id, (ids.get(id) || 0) + 1);
+  }
+
+  function observeId(node) {
+    const value = node.getAttribute('id');
+    if (!value) return { status: 'absent' };
+    if (value.length > maxIdUnits) return { status: 'unavailable' };
+    if (ids.get(value) > 1) return { status: 'duplicate', key: value };
+    return idCensusComplete ? { status: 'unique', key: value } : { status: 'unavailable' };
+  }
+
   const tags = new Map([
     ['p', 'paragraph'], ['main', 'main'], ['nav', 'navigation'], ['header', 'header'],
     ['footer', 'footer'], ['aside', 'aside'], ['section', 'section'], ['article', 'article'],
@@ -60,7 +83,7 @@ function collectRenderedContent() {
   const stack = [{
     node: body, depth: 0, parentBlock: null,
     suppressed: suppressesSubtree(getComputedStyle(document.documentElement)),
-    visible: false,
+    visible: false, ancestors: [],
   }];
   while (stack.length > 0) {
     const entry = stack.pop();
@@ -86,6 +109,8 @@ function collectRenderedContent() {
     const suppressed = entry.suppressed || suppressesSubtree(style);
     const visible = !suppressed && style.visibility === 'visible';
     const kind = roles.get(node.getAttribute('role')) || tags.get(node.localName);
+    const path = entry.ancestors !== null && /^[a-z][a-z0-9-]{0,31}$/.test(node.localName)
+      ? [...entry.ancestors, node.localName] : null;
     const boundary = visible && (kind !== undefined && kind !== "paragraph"
       || node.localName === "p" || node.localName === "br"
       || ["block", "flex", "grid", "list-item", "table-cell"].includes(style.display));
@@ -101,6 +126,7 @@ function collectRenderedContent() {
         const block = {
           node: visited, kind, visibility: visible ? 'visible' : 'hidden',
           visible_text: '', text_truncated: false,
+          identity: { path, id: observeId(node) },
         };
         blocks.push(block);
         parentBlock = { block, parent: parentBlock, separator: false };
@@ -112,7 +138,7 @@ function collectRenderedContent() {
         const mask = style.getPropertyValue("-webkit-text-security");
         stack.push({
           node: node.firstChild, depth: depth + 1, parentBlock, suppressed,
-          visible: visible && (mask === "" || mask === "none"),
+          visible: visible && (mask === "" || mask === "none"), ancestors: path,
         });
       }
     }
@@ -124,5 +150,6 @@ function collectRenderedContent() {
     viewport_height: window.innerHeight,
     blocks,
     limits,
+    id_census_complete: idCensusComplete,
   };
 }

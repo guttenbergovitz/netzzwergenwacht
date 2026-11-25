@@ -31,7 +31,7 @@ evidence for bounded journey and consent scenarios. Extend the existing
 application graph and patrol history with comparable observation coverage before
 adding application-wide conclusions.
 
-Rendered DOM segmentation now captures bounded desktop paragraph and region
-observations. The live fixture compares source and rendered evidence. Stable
-element identity and content fingerprints are the next foundations for comparing
-blocks across captures.
+Rendered DOM segmentation captures bounded desktop paragraph and region
+observations. The live fixtures verify source and rendered evidence and
+conservative matching by unique ID or tag ancestry across captures.
+Content fingerprints are the next step for measuring text changes on matched blocks.

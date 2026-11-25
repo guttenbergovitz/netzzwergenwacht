@@ -98,3 +98,25 @@ and retains at most 512 per block. Limit flags identify partial evidence.
 A failed probe leaves segmentation unavailable. The serialised snapshot can
 contain visible page text. Current investigation prompts receive no excerpts
 from this collector.
+
+### Matching rendered elements between captures
+
+The renderer records tag ancestry without sibling positions. A separate
+bounded walk of up to 16,384 main-document light DOM nodes counts non-empty IDs
+of at most 128 UTF-16 units. The adapter stores a SHA-256 digest of the UTF-16LE
+ID instead of its literal value. The digest is a comparison key and can still
+reveal low-entropy IDs by guessing.
+
+The deterministic matcher requires the same final URL and viewport and complete
+structural coverage in both captures. The browser adapter discards segmentation
+if the URL changes between the session URL observation and the DOM probe.
+The matcher first uses a shared ID observed as
+unique in both documents. For blocks without IDs it requires a unique matching
+kind and tag path in both captures. Duplicates and repeated structures stay
+ambiguous. The matcher does not use text, so a text edit can preserve a match.
+These observations associate rendered blocks. Reused IDs and structurally
+equivalent replacements can still refer to different source components.
+
+The Rust API `analysis::element_identity::match_rendered_blocks` reads existing
+browser evidence. Older snapshots still load and report identity as unavailable.
+An unmatched key means the current capture supplies no comparable candidate.

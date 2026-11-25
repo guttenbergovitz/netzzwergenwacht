@@ -4,7 +4,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Semantic region or paragraph in the rendered document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RenderedBlockKind {
     /// An HTML paragraph.
@@ -48,6 +50,9 @@ pub struct RenderedContentBlock {
     pub visible_text: String,
     /// Whether text exceeded the per-block retention bound.
     pub text_truncated: bool,
+    /// Identity signals, absent in captures made before identity collection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<RenderedBlockIdentity>,
 }
 
 /// Limits reached during segmentation. Any set flag means coverage is partial.
@@ -80,12 +85,46 @@ pub struct RenderedContentSegmentation {
     pub blocks: Vec<RenderedContentBlock>,
     /// Structural collection limits that affected coverage.
     pub limits: RenderedContentLimits,
+    /// Whether all main-document light DOM elements were visited for ID counts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id_census_complete: Option<bool>,
 }
 
 impl RenderedContentSegmentation {
     /// Whether traversal or text retention was partial.
     #[must_use]
     pub fn is_partial(&self) -> bool {
-        self.limits.reached() || self.blocks.iter().any(|block| block.text_truncated)
+        self.limits.reached()
+            || self.id_census_complete == Some(false)
+            || self.blocks.iter().any(|block| block.text_truncated)
     }
+}
+
+/// Identity signals independent of the capture-local node position and text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RenderedBlockIdentity {
+    /// Body-relative ancestry and tag, without sibling ordinals.
+    pub path: Option<Vec<String>>,
+    /// ID presence and observed uniqueness in the main document.
+    pub id: RenderedBlockId,
+}
+
+/// Identity evidence for an HTML ID.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RenderedBlockId {
+    /// The element had no non-empty ID.
+    Absent,
+    /// The census observed a unique ID.
+    Unique {
+        /// SHA-256 digest of the UTF-16LE ID value.
+        key: String,
+    },
+    /// The census observed at least two occurrences.
+    Duplicate {
+        /// SHA-256 digest of the UTF-16LE ID value.
+        key: String,
+    },
+    /// The ID exceeded the field limit or uniqueness could not be established.
+    Unavailable,
 }

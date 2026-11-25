@@ -16,6 +16,7 @@ const CDP_HARNESS_JS: &str = concat!(
     include_str!("rendered_content.js"),
     r"
 const { spawn } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -480,11 +481,21 @@ function findBrowser() {
         worldName: 'nzw-rendered-content',
       });
       const result = await call('Runtime.evaluate', {
-        expression: '(' + collectRenderedContent.toString() + ')()',
+        expression: '({ url: location.href, content: (' + collectRenderedContent.toString() + ')() })',
         contextId: executionContextId,
         returnByValue: true,
       });
-      renderedContent = result?.result?.value || null;
+      const measurement = result?.result?.value;
+      if (measurement?.url === finalUrl && measurement.content) {
+        const captured = measurement.content;
+        for (const block of captured.blocks) {
+          const id = block.identity.id;
+          if (id.key !== undefined) {
+            id.key = createHash('sha256').update(id.key, 'utf16le').digest('hex');
+          }
+        }
+        renderedContent = captured;
+      }
     } catch {}
     let axTreeSummary = null;
     try {
