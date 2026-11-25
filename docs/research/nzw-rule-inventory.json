@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 180,
+  "total_rules": 188,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1542,6 +1542,70 @@
       "dwarf": "SuchZwerg",
       "module": "analysis::seo",
       "source_path": "src/analysis/seo.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.character_encoding_mismatch",
+      "constant": "RULE_CHARSET_MISMATCH",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.invalid_content_encoding",
+      "constant": "RULE_INVALID_CONTENT_ENCODING",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "netz.http.intermediary_error_response",
+      "constant": "RULE_INTERMEDIARY_ERROR",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.csp.missing_form_action",
+      "constant": "RULE_CSP_FORM_ACTION",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.csp.wildcard_source",
+      "constant": "RULE_CSP_WILDCARD",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.headers.server_error_stack_trace",
+      "constant": "RULE_STACK_TRACE_LEAK",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.forms.missing_submit_control",
+      "constant": "RULE_FORM_MISSING_SUBMIT",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "str.html.nested_interactive",
+      "constant": "RULE_NESTED_INTERACTIVE",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
       "status": "native_rust"
     }
   ]

@@ -26,6 +26,9 @@ const RULE_RATE_LIMITING: &str = "netz.http.rate_limiting_observed";
 const RULE_CONTENT_TYPE_MISMATCH: &str = "netz.http.content_type_mismatch";
 const RULE_INVALID_CONTENT_LENGTH: &str = "netz.http.invalid_content_length";
 const RULE_RANGE_REQUEST_SUPPORT: &str = "netz.http.range_request_support";
+const RULE_CHARSET_MISMATCH: &str = "netz.http.character_encoding_mismatch";
+const RULE_INVALID_CONTENT_ENCODING: &str = "netz.http.invalid_content_encoding";
+const RULE_INTERMEDIARY_ERROR: &str = "netz.http.intermediary_error_response";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTP_STATUS,
@@ -43,6 +46,9 @@ const ALL_RULES: &[&str] = &[
     RULE_CONTENT_TYPE_MISMATCH,
     RULE_INVALID_CONTENT_LENGTH,
     RULE_RANGE_REQUEST_SUPPORT,
+    RULE_CHARSET_MISMATCH,
+    RULE_INVALID_CONTENT_ENCODING,
+    RULE_INTERMEDIARY_ERROR,
 ];
 
 /// Evaluates HTTP response status and redirect-chain hygiene over `snapshot`.
@@ -74,12 +80,15 @@ pub fn analyse_with_document(
     check_redirect_security_and_origin(snapshot, http, &mut findings, &mut checks);
     check_etag_and_rate_limiting(http, &mut findings, &mut checks);
     check_http_integrity_headers(http, obs.is_some(), &mut findings, &mut checks);
+    check_content_encoding_integrity(http, &mut findings, &mut checks);
+    check_intermediary_error_response(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_soft_error(http, doc, &mut findings, &mut checks);
         check_link_hygiene(http, doc, &mut findings, &mut checks);
+        check_charset_mismatch(http, doc, &mut findings, &mut checks);
     } else {
-        for rule in [RULE_SOFT_ERROR, RULE_LINK_HYGIENE] {
+        for rule in [RULE_SOFT_ERROR, RULE_LINK_HYGIENE, RULE_CHARSET_MISMATCH] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
                 evidence_level: EvidenceLevel::Source,
@@ -895,6 +904,232 @@ fn check_range_request_support(
     });
 }
 
+fn check_charset_mismatch(
+    http: &HttpEvidence,
+    doc: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let header_charset = header_value(http, "content-type").and_then(|ct| {
+        ct.split(';')
+            .skip(1)
+            .find_map(|part| {
+                let (k, v) = part.split_once('=')?;
+                k.trim().eq_ignore_ascii_case("charset").then(|| {
+                    v.trim()
+                        .trim_matches('"')
+                        .trim_matches('\'')
+                        .to_ascii_lowercase()
+                })
+            })
+            .filter(|s| !s.is_empty())
+    });
+
+    let (Some(http_cs), Some(html_cs)) = (header_charset, doc.declared_charset.as_deref()) else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CHARSET_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "HTTP Content-Type charset or HTML meta charset unavailable".to_owned(),
+        });
+        return;
+    };
+
+    if http_cs == html_cs {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CHARSET_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_CHARSET_MISMATCH.to_owned()),
+        category: FindingCategory::Reliability,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!("Character encoding mismatch (`{http_cs}` vs `{html_cs}`)"),
+        summary: format!(
+            "HTTP `Content-Type` declares charset `{http_cs}` while HTML meta declares `{html_cs}`."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
+            format!("http_charset={http_cs};html_charset={html_cs}"),
+        )],
+        remediation: Some(
+            "Align the HTTP `Content-Type` charset parameter and HTML `<meta charset>` to `utf-8`."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_CHARSET_MISMATCH.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_content_encoding_integrity(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const VALID_CODINGS: &[&str] = &[
+        "gzip",
+        "x-gzip",
+        "br",
+        "deflate",
+        "zstd",
+        "compress",
+        "x-compress",
+        "identity",
+    ];
+    let Some(raw) = header_value(http, "content-encoding") else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_INVALID_CONTENT_ENCODING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "Content-Encoding header absent".to_owned(),
+        });
+        return;
+    };
+
+    let mut seen = HashSet::new();
+    let mut invalid = false;
+    let tokens: Vec<String> = raw
+        .split(',')
+        .map(|t| t.trim().to_ascii_lowercase())
+        .collect();
+    if tokens.is_empty() || tokens.iter().any(String::is_empty) {
+        invalid = true;
+    } else {
+        for token in &tokens {
+            if !VALID_CODINGS.contains(&token.as_str())
+                || (token != "identity" && !seen.insert(token.as_str()))
+            {
+                invalid = true;
+                break;
+            }
+        }
+    }
+
+    if !invalid {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INVALID_CONTENT_ENCODING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_INVALID_CONTENT_ENCODING.to_owned()),
+        category: FindingCategory::Reliability,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!("Invalid Content-Encoding header `{raw}`"),
+        summary: format!(
+            "`Content-Encoding: {raw}` contains unrecognised, empty, or duplicated codings."
+        ),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
+            format!("content_encoding={raw}"),
+        )],
+        remediation: Some(
+            "Emit only standard, non-duplicated HTTP content-codings such as `gzip`, `br`, or `zstd`."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_INVALID_CONTENT_ENCODING.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
+fn check_intermediary_error_response(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if http.status_code < 400 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_INTERMEDIARY_ERROR.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    let marker = [
+        "cf-ray",
+        "x-amz-cf-id",
+        "x-fastly-request-id",
+        "x-served-by",
+        "x-cache",
+        "x-akamai-transformed",
+        "via",
+    ]
+    .into_iter()
+    .find_map(|name| header_value(http, name).map(|v| format!("{name}={v}")))
+    .or_else(|| {
+        header_value(http, "server").and_then(|s| {
+            let low = s.to_ascii_lowercase();
+            [
+                "cloudflare",
+                "varnish",
+                "fastly",
+                "akamai",
+                "envoy",
+                "cloudfront",
+            ]
+            .iter()
+            .any(|cdn| low.contains(cdn))
+            .then(|| format!("server={s}"))
+        })
+    });
+
+    let Some(evidence) = marker else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_INTERMEDIARY_ERROR.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "error response lacks observable intermediary attribution headers".to_owned(),
+        });
+        return;
+    };
+
+    let severity = if http.status_code >= 500 {
+        Severity::Medium
+    } else {
+        Severity::Low
+    };
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_INTERMEDIARY_ERROR.to_owned()),
+        category: FindingCategory::Reliability,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity,
+        confidence: Confidence::Medium,
+        title: format!(
+            "HTTP {} error response with observable intermediary headers",
+            http.status_code
+        ),
+        summary: format!(
+            "Error status {} carried intermediary/proxy attribution ({evidence}).",
+            http.status_code
+        ),
+        evidence_refs: vec![EvidenceRef::new(EvidenceSource::HttpHeaders, evidence)],
+        remediation: Some(
+            "Inspect CDN/reverse-proxy and origin logs to isolate whether the failure occurred at the edge or origin."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_INTERMEDIARY_ERROR.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1087,5 +1322,38 @@ mod tests {
         assert!(ids.contains(&RULE_CONTENT_TYPE_MISMATCH));
         assert!(ids.contains(&RULE_INVALID_CONTENT_LENGTH));
         assert!(ids.contains(&RULE_RANGE_REQUEST_SUPPORT));
+    }
+
+    #[test]
+    fn flags_charset_mismatch_invalid_content_encoding_and_intermediary_error() {
+        let mut snap = make_snapshot(502, 0);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.headers = vec![
+                crate::domain::HttpHeader {
+                    name: "content-type".to_owned(),
+                    value: "text/html; charset=iso-8859-1".to_owned(),
+                },
+                crate::domain::HttpHeader {
+                    name: "content-encoding".to_owned(),
+                    value: "gzip, unknown-codec".to_owned(),
+                },
+                crate::domain::HttpHeader {
+                    name: "cf-ray".to_owned(),
+                    value: "8abc123-FRA".to_owned(),
+                },
+            ];
+        }
+        let obs = DocumentObservations::from_html(
+            r#"<!doctype html><html><head><meta charset="utf-8"></head><body><p>Err</p></body></html>"#,
+        );
+        let result = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_CHARSET_MISMATCH));
+        assert!(ids.contains(&RULE_INVALID_CONTENT_ENCODING));
+        assert!(ids.contains(&RULE_INTERMEDIARY_ERROR));
     }
 }
