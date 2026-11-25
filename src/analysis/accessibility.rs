@@ -33,6 +33,9 @@ const RULE_BEHAVIOURAL: &str = "a11y.behavioural.keyboard_and_focus";
 const RULE_DOC_TITLE_PRESENCE: &str = "a11y.doc.title_presence";
 const RULE_GENERIC_PAGE_TITLE: &str = "a11y.doc.generic_page_title";
 const RULE_AX_HIGH_IGNORED_RATIO: &str = "a11y.ax.high_ignored_ratio";
+const RULE_BEHAVIOURAL_FOCUS_TRAP: &str = "a11y.behavioural.focus_trap";
+const RULE_BEHAVIOURAL_FOCUS_INDICATOR: &str = "a11y.behavioural.missing_focus_indicator";
+const RULE_BEHAVIOURAL_UNREACHED_CONTROLS: &str = "a11y.behavioural.unreached_interactive_controls";
 
 /// Source-level rule identifiers owned by `ZugänglichkeitsZwerg`.
 pub const SOURCE_RULES: &[&str] = &[
@@ -97,13 +100,7 @@ pub fn analyse_with_browser(
 
     check_axe_violations(axe, &mut findings, &mut checks);
     check_ax_tree(browser, &mut findings, &mut checks);
-    checks.push(CheckStatus::Unavailable {
-        rule_id: RuleId(RULE_BEHAVIOURAL.to_owned()),
-        evidence_level: EvidenceLevel::Behavioural,
-        reason:
-            "Keyboard navigation and focus management require Level 3 behavioural browser testing"
-                .to_owned(),
-    });
+    check_behavioural_a11y(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Zugaenglichkeits,
@@ -214,6 +211,170 @@ fn check_ax_tree(
     }
 
     check_ax_ignored_ratio(tree, findings, checks);
+}
+
+fn check_behavioural_a11y(
+    browser: &CollectorOutcome<BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let beh = match browser {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+            data.behavioural_a11y.as_ref()
+        }
+        CollectorOutcome::Skipped { .. } | CollectorOutcome::Failed { .. } => None,
+    };
+
+    let Some(obs) = beh else {
+        for rule in [
+            RULE_BEHAVIOURAL,
+            RULE_BEHAVIOURAL_FOCUS_TRAP,
+            RULE_BEHAVIOURAL_FOCUS_INDICATOR,
+            RULE_BEHAVIOURAL_UNREACHED_CONTROLS,
+        ] {
+            checks.push(CheckStatus::Unavailable {
+                rule_id: RuleId(rule.to_owned()),
+                evidence_level: EvidenceLevel::Behavioural,
+                reason: "Level 3 behavioural keyboard/focus probe unavailable".to_owned(),
+            });
+        }
+        return;
+    };
+
+    emit_behavioural_check(
+        RULE_BEHAVIOURAL_FOCUS_TRAP,
+        obs.focus_trap_detected,
+        Severity::High,
+        "Keyboard focus trap detected during Tab traversal".to_owned(),
+        format!(
+            "Sequential `Tab` navigation became trapped after {} distinct stop(s).",
+            obs.tab_stops_observed
+        ),
+        format!(
+            "focus_trap_detected=true;tab_stops={}",
+            obs.tab_stops_observed
+        ),
+        "Ensure keyboard focus can move freely past all widgets or exit modals via `Escape`.",
+        findings,
+        checks,
+    );
+
+    emit_behavioural_check(
+        RULE_BEHAVIOURAL_FOCUS_INDICATOR,
+        obs.missing_focus_indicator_count > 0,
+        Severity::Medium,
+        format!(
+            "Focused controls without visible focus indicator ({})",
+            obs.missing_focus_indicator_count
+        ),
+        format!(
+            "{} control(s) matched `:focus-visible` with `outline: none` and no `box-shadow`.",
+            obs.missing_focus_indicator_count
+        ),
+        format!(
+            "missing_focus_indicator_count={}",
+            obs.missing_focus_indicator_count
+        ),
+        "Preserve or style a high-contrast `:focus-visible` outline on all interactive elements.",
+        findings,
+        checks,
+    );
+
+    let unreached = obs.tabbable_candidates > 0 && obs.tab_stops_observed == 0;
+    emit_behavioural_check(
+        RULE_BEHAVIOURAL_UNREACHED_CONTROLS,
+        unreached,
+        Severity::High,
+        "No tabbable controls reached during Tab traversal".to_owned(),
+        format!(
+            "Detected {} visible interactive candidate(s), but `Tab` traversal reached 0 controls.",
+            obs.tabbable_candidates
+        ),
+        format!(
+            "tabbable_candidates={};tab_stops_observed=0",
+            obs.tabbable_candidates
+        ),
+        "Ensure interactive elements are keyboard-focusable and not blocked by `inert` or `tabindex=\"-1\"`.",
+        findings,
+        checks,
+    );
+
+    emit_behavioural_summary(obs, unreached, findings, checks);
+}
+
+fn emit_behavioural_summary(
+    obs: &crate::domain::BehaviouralA11yObs,
+    unreached: bool,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let dialog_stuck = obs.dialog_escape_closed == Some(false);
+    emit_behavioural_check(
+        RULE_BEHAVIOURAL,
+        obs.focus_trap_detected
+            || obs.missing_focus_indicator_count > 0
+            || unreached
+            || dialog_stuck,
+        Severity::Medium,
+        "Keyboard and focus management defects observed".to_owned(),
+        format!(
+            "Behavioural probe observed tab_stops={}, candidates={}, focus_trap={}, missing_indicators={}, dialog_escape_closed={:?}.",
+            obs.tab_stops_observed,
+            obs.tabbable_candidates,
+            obs.focus_trap_detected,
+            obs.missing_focus_indicator_count,
+            obs.dialog_escape_closed
+        ),
+        format!(
+            "tab_stops={};candidates={}",
+            obs.tab_stops_observed, obs.tabbable_candidates
+        ),
+        "Verify sequential keyboard traversal, visible `:focus-visible` rings, and `Escape` dismissal for dialogs.",
+        findings,
+        checks,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_behavioural_check(
+    rule_id: &str,
+    failed: bool,
+    severity: Severity,
+    title: String,
+    summary: String,
+    evidence_detail: String,
+    remediation: &str,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if !failed {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(rule_id.to_owned()),
+            evidence_level: EvidenceLevel::Behavioural,
+        });
+        return;
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(rule_id.to_owned()),
+        category: FindingCategory::Accessibility,
+        evidence_level: EvidenceLevel::Behavioural,
+        kind: FindingKind::Deterministic,
+        severity,
+        confidence: Confidence::High,
+        title,
+        summary,
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::BrowserRuntime,
+            evidence_detail,
+        )],
+        remediation: Some(remediation.to_owned()),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(rule_id.to_owned()),
+        evidence_level: EvidenceLevel::Behavioural,
+    });
 }
 
 /// Evaluates only Level 2 `axe-core` evidence without re-running source HTML checks.
@@ -1112,5 +1273,32 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_GENERIC_PAGE_TITLE));
         assert!(ids.contains(&RULE_AX_HIGH_IGNORED_RATIO));
+    }
+
+    #[test]
+    fn flags_behavioural_focus_trap_missing_indicator_and_unreached_controls() {
+        let obs = DocumentObservations::from_html(
+            r#"<html lang="en"><head><title>Dashboard</title></head><body></body></html>"#,
+        );
+        let browser = CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                behavioural_a11y: Some(crate::domain::BehaviouralA11yObs {
+                    tab_stops_observed: 0,
+                    tabbable_candidates: 5,
+                    focus_trap_detected: true,
+                    missing_focus_indicator_count: 2,
+                    open_dialogs_count: 1,
+                    dialog_escape_closed: Some(false),
+                }),
+                ..BrowserEvidence::default()
+            },
+        };
+        let res = analyse_with_browser(&obs, &CollectorOutcome::default(), &browser);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_BEHAVIOURAL));
+        assert!(ids.contains(&RULE_BEHAVIOURAL_FOCUS_TRAP));
+        assert!(ids.contains(&RULE_BEHAVIOURAL_FOCUS_INDICATOR));
+        assert!(ids.contains(&RULE_BEHAVIOURAL_UNREACHED_CONTROLS));
     }
 }

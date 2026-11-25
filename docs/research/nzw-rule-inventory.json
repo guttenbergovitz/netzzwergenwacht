@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 206,
+  "total_rules": 209,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1750,6 +1750,30 @@
       "dwarf": "LeistungsZwerg",
       "module": "analysis::performance",
       "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.behavioural.focus_trap",
+      "constant": "RULE_BEHAVIOURAL_FOCUS_TRAP",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.behavioural.missing_focus_indicator",
+      "constant": "RULE_BEHAVIOURAL_FOCUS_INDICATOR",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.behavioural.unreached_interactive_controls",
+      "constant": "RULE_BEHAVIOURAL_UNREACHED_CONTROLS",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
       "status": "native_rust"
     }
   ]

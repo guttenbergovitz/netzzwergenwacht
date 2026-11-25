@@ -1518,7 +1518,7 @@ fn is_weak_cache_control(raw: &str) -> bool {
     let mut max_age_secs: Option<u64> = None;
     for directive in raw.split(',') {
         let token = directive.trim().to_ascii_lowercase();
-        if matches!(token.as_str(), "no-store" | "no-cache" | "must-revalidate") {
+        if matches!(token.as_str(), "no-store" | "no-cache") {
             return true;
         }
         if let Some(val) = token.strip_prefix("max-age=")
