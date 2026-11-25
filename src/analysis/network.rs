@@ -16,6 +16,9 @@ const RULE_REDIRECT_CHAIN: &str = "netz.http.redirect_chain";
 const RULE_REDIRECT_LOOP: &str = "netz.http.redirect_loop";
 const RULE_SOFT_ERROR: &str = "netz.http.soft_error";
 const RULE_LINK_HYGIENE: &str = "netz.links.hygiene";
+const RULE_URL_UPPERCASE: &str = "netz.url.uppercase_path";
+const RULE_URL_QUERY_HYGIENE: &str = "netz.url.query_hygiene";
+const RULE_URL_DEEP_PATH: &str = "netz.url.deep_path";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTP_STATUS,
@@ -23,6 +26,9 @@ const ALL_RULES: &[&str] = &[
     RULE_REDIRECT_LOOP,
     RULE_SOFT_ERROR,
     RULE_LINK_HYGIENE,
+    RULE_URL_UPPERCASE,
+    RULE_URL_QUERY_HYGIENE,
+    RULE_URL_DEEP_PATH,
 ];
 
 /// Evaluates HTTP response status and redirect-chain hygiene over `snapshot`.
@@ -50,6 +56,7 @@ pub fn analyse_with_document(
     check_status(http, &mut findings, &mut checks);
     check_redirects(snapshot, http, &mut findings, &mut checks);
     check_redirect_loop(http, &mut findings, &mut checks);
+    check_url_hygiene(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_soft_error(http, doc, &mut findings, &mut checks);
@@ -383,6 +390,148 @@ fn check_link_hygiene(
     }
 }
 
+fn check_url_hygiene(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Ok(parsed) = url::Url::parse(&http.final_url) else {
+        for rule in [
+            RULE_URL_UPPERCASE,
+            RULE_URL_QUERY_HYGIENE,
+            RULE_URL_DEEP_PATH,
+        ] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId((*rule).to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "final_url could not be parsed".to_owned(),
+            });
+        }
+        return;
+    };
+
+    check_url_uppercase(parsed.path(), findings, checks);
+    check_url_query_hygiene(&parsed, findings, checks);
+    check_url_deep_path(parsed.path(), findings, checks);
+}
+
+fn check_url_uppercase(path: &str, findings: &mut Vec<Finding>, checks: &mut Vec<CheckStatus>) {
+    if path.chars().any(|c| c.is_ascii_uppercase()) {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_URL_UPPERCASE.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::High,
+            title: "Uppercase characters in URL path".to_owned(),
+            summary: format!(
+                "URL path `{path}` contains uppercase letters, which can cause case-sensitivity duplicates."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpStatus,
+                format!("path={path}"),
+            )],
+            remediation: Some(
+                "Normalise URL paths to lowercase and redirect uppercase variants.".to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_URL_UPPERCASE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_URL_UPPERCASE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_url_query_hygiene(
+    parsed: &url::Url,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let query_pairs: Vec<(String, String)> = parsed
+        .query_pairs()
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let has_tracking_or_session = query_pairs.iter().any(|(k, _)| {
+        let lower = k.to_ascii_lowercase();
+        lower.starts_with("utm_")
+            || matches!(
+                lower.as_str(),
+                "fbclid" | "gclid" | "msclkid" | "jsessionid" | "phpsessid"
+            )
+    });
+    if query_pairs.len() > 3 || has_tracking_or_session {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_URL_QUERY_HYGIENE.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "Noisy or tracking query parameters on final URL".to_owned(),
+            summary: format!(
+                "Final URL carries {} query parameter(s) (tracking/session={has_tracking_or_session}).",
+                query_pairs.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpStatus,
+                format!("query_params={}", query_pairs.len()),
+            )],
+            remediation: Some(
+                "Strip tracking/session parameters from canonical URLs and internal links."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_URL_QUERY_HYGIENE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_URL_QUERY_HYGIENE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_url_deep_path(path: &str, findings: &mut Vec<Finding>, checks: &mut Vec<CheckStatus>) {
+    let depth = path.split('/').filter(|s| !s.is_empty()).count();
+    if depth > 5 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_URL_DEEP_PATH.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Heuristic,
+            severity: Severity::Info,
+            confidence: Confidence::Medium,
+            title: format!("Deeply nested URL path ({depth} segments)"),
+            summary: format!("URL path `{path}` has {depth} segments (> 5)."),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpStatus,
+                format!("path_depth={depth}"),
+            )],
+            remediation: Some("Keep URL hierarchy concise and shallow where practical.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_URL_DEEP_PATH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_URL_DEEP_PATH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -493,5 +642,23 @@ mod tests {
         assert!(ids.contains(&RULE_REDIRECT_LOOP));
         assert!(ids.contains(&RULE_SOFT_ERROR));
         assert!(ids.contains(&RULE_LINK_HYGIENE));
+    }
+
+    #[test]
+    fn flags_url_uppercase_query_hygiene_and_deep_path() {
+        let mut snap = make_snapshot(200, 0);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.final_url =
+                "https://example.com/a/b/c/d/e/MyPage?utm_source=x&a=1&b=2&c=3".to_owned();
+        }
+        let result = analyse(&snap);
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_URL_UPPERCASE));
+        assert!(ids.contains(&RULE_URL_QUERY_HYGIENE));
+        assert!(ids.contains(&RULE_URL_DEEP_PATH));
     }
 }

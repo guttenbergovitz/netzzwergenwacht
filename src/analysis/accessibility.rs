@@ -19,6 +19,10 @@ const RULE_IMAGE_ALT: &str = "a11y.images.alt";
 const RULE_FORM_LABELS: &str = "a11y.forms.labels";
 const RULE_ARIA_REFS: &str = "a11y.aria.broken_references";
 const RULE_INTERACTIVE_NAMES: &str = "a11y.interactive.accessible_name";
+const RULE_TABLE_HEADERS: &str = "a11y.tables.headers";
+const RULE_IFRAME_TITLE: &str = "a11y.iframes.title";
+const RULE_POSITIVE_TABINDEX: &str = "a11y.focus.positive_tabindex";
+const RULE_AUTOPLAY_MEDIA: &str = "a11y.media.autoplay_unmuted";
 const RULE_RENDERED_AXE: &str = "a11y.rendered.contrast_and_axe";
 const RULE_BEHAVIOURAL: &str = "a11y.behavioural.keyboard_and_focus";
 
@@ -29,6 +33,10 @@ pub const SOURCE_RULES: &[&str] = &[
     RULE_FORM_LABELS,
     RULE_ARIA_REFS,
     RULE_INTERACTIVE_NAMES,
+    RULE_TABLE_HEADERS,
+    RULE_IFRAME_TITLE,
+    RULE_POSITIVE_TABINDEX,
+    RULE_AUTOPLAY_MEDIA,
 ];
 
 /// Evaluates source-level accessibility checks and records higher-level gaps.
@@ -53,6 +61,10 @@ pub fn analyse_with_axe(
     check_form_labels(obs, &mut findings, &mut checks);
     check_aria_references(obs, &mut findings, &mut checks);
     check_interactive_names(obs, &mut findings, &mut checks);
+    check_table_headers(obs, &mut findings, &mut checks);
+    check_iframe_titles(obs, &mut findings, &mut checks);
+    check_positive_tabindex(obs, &mut findings, &mut checks);
+    check_autoplay_media(obs, &mut findings, &mut checks);
 
     check_axe_violations(axe, &mut findings, &mut checks);
     checks.push(CheckStatus::Unavailable {
@@ -403,6 +415,154 @@ fn check_interactive_names(
     }
 }
 
+struct CountRuleSpec<'a> {
+    rule_id: &'a str,
+    count: usize,
+    severity: Severity,
+    title: String,
+    summary: String,
+    evidence_detail: String,
+    remediation: &'a str,
+}
+
+fn check_count_rule(
+    spec: CountRuleSpec<'_>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if spec.count == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(spec.rule_id.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(spec.rule_id.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: spec.severity,
+            confidence: Confidence::High,
+            title: spec.title,
+            summary: spec.summary,
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                spec.evidence_detail,
+            )],
+            remediation: Some(spec.remediation.to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(spec.rule_id.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_table_headers(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    check_count_rule(
+        CountRuleSpec {
+            rule_id: RULE_TABLE_HEADERS,
+            count: obs.tables_without_headers,
+            severity: Severity::Medium,
+            title: format!(
+                "Data tables without <th> headers ({})",
+                obs.tables_without_headers
+            ),
+            summary: format!(
+                "{} non-presentational <table> element(s) lack <th> header cells.",
+                obs.tables_without_headers
+            ),
+            evidence_detail: format!("tables_without_headers={}", obs.tables_without_headers),
+            remediation: "Add <th> header cells (with `scope`) to data tables, or `role=\"presentation\"` for layout tables.",
+        },
+        findings,
+        checks,
+    );
+}
+
+fn check_iframe_titles(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    check_count_rule(
+        CountRuleSpec {
+            rule_id: RULE_IFRAME_TITLE,
+            count: obs.iframes_without_title,
+            severity: Severity::Medium,
+            title: format!(
+                "<iframe> elements missing accessible title ({})",
+                obs.iframes_without_title
+            ),
+            summary: format!(
+                "{} visible <iframe> element(s) lack a `title` or `aria-label` attribute.",
+                obs.iframes_without_title
+            ),
+            evidence_detail: format!("iframes_without_title={}", obs.iframes_without_title),
+            remediation: "Provide a descriptive `title` attribute on every non-hidden <iframe>.",
+        },
+        findings,
+        checks,
+    );
+}
+
+fn check_positive_tabindex(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    check_count_rule(
+        CountRuleSpec {
+            rule_id: RULE_POSITIVE_TABINDEX,
+            count: obs.positive_tabindex_count,
+            severity: Severity::Medium,
+            title: format!(
+                "Positive tabindex values detected ({})",
+                obs.positive_tabindex_count
+            ),
+            summary: format!(
+                "{} element(s) use `tabindex > 0`, which disrupts natural keyboard focus order.",
+                obs.positive_tabindex_count
+            ),
+            evidence_detail: format!("positive_tabindex_count={}", obs.positive_tabindex_count),
+            remediation: "Remove positive `tabindex` values and rely on DOM order with `tabindex=\"0\"` or `-1`.",
+        },
+        findings,
+        checks,
+    );
+}
+
+fn check_autoplay_media(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    check_count_rule(
+        CountRuleSpec {
+            rule_id: RULE_AUTOPLAY_MEDIA,
+            count: obs.autoplay_unmuted_media,
+            severity: Severity::Medium,
+            title: format!(
+                "Unmuted autoplay media elements ({})",
+                obs.autoplay_unmuted_media
+            ),
+            summary: format!(
+                "{} <video>/<audio> element(s) declare `autoplay` without `muted`.",
+                obs.autoplay_unmuted_media
+            ),
+            evidence_detail: format!("autoplay_unmuted_media={}", obs.autoplay_unmuted_media),
+            remediation: "Avoid auto-playing unmuted audio/video; require explicit user interaction or add `muted`.",
+        },
+        findings,
+        checks,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,5 +646,22 @@ mod tests {
                 .any(|f| f.rule_id.0 == "a11y.rendered.axe.color-contrast"
                     && !f.evidence_refs.is_empty())
         );
+    }
+
+    #[test]
+    fn flags_wave5_table_iframe_tabindex_and_autoplay_issues() {
+        let html = r#"<html lang="en"><body>
+            <table><tr><td>No header</td></tr></table>
+            <iframe src="/widget"></iframe>
+            <button tabindex="3">Jump</button>
+            <video autoplay src="/promo.mp4"></video>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let res = analyse(&obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_TABLE_HEADERS));
+        assert!(ids.contains(&RULE_IFRAME_TITLE));
+        assert!(ids.contains(&RULE_POSITIVE_TABINDEX));
+        assert!(ids.contains(&RULE_AUTOPLAY_MEDIA));
     }
 }

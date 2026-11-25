@@ -242,6 +242,18 @@ pub struct DocumentObservations {
     pub preconnect_count: usize,
     /// Count of inline `<svg>` elements lacking `aria-hidden="true"` and an accessible label.
     pub inline_svg_without_a11y: usize,
+    /// Trimmed `<meta http-equiv="refresh" content="...">`, if present.
+    pub meta_refresh: Option<String>,
+    /// Count of data `<table>` elements lacking any `<th>` header cell.
+    pub tables_without_headers: usize,
+    /// Count of visible `<iframe>` elements lacking a `title` or `aria-label`.
+    pub iframes_without_title: usize,
+    /// Count of elements with a positive `tabindex` (`> 0`).
+    pub positive_tabindex_count: usize,
+    /// Count of `<video>` or `<audio>` elements with `autoplay` and without `muted`.
+    pub autoplay_unmuted_media: usize,
+    /// Detected author or publication/modification date metadata signal, if present.
+    pub author_or_date_signal: Option<&'static str>,
 }
 
 impl DocumentObservations {
@@ -271,6 +283,7 @@ impl DocumentObservations {
                 &doc,
                 r#"link[rel="preconnect"], link[rel="dns-prefetch"]"#,
             ),
+            meta_refresh: first_attr(&doc, r#"meta[http-equiv="refresh"]"#, "content"),
             ..Self::default()
         };
 
@@ -281,6 +294,7 @@ impl DocumentObservations {
         extract_scripts_and_styles(&doc, &mut obs);
         extract_interactive_and_aria(&doc, &mut obs);
         extract_visible_text_stats(&doc, &mut obs);
+        extract_wave5_observations(&doc, &mut obs);
 
         obs
     }
@@ -336,6 +350,79 @@ fn extract_social_meta(doc: &Html) -> SocialMetaObs {
         twitter_title: first_attr(doc, r#"meta[name="twitter:title"]"#, "content"),
         twitter_description: first_attr(doc, r#"meta[name="twitter:description"]"#, "content"),
     }
+}
+
+fn extract_wave5_observations(doc: &Html, obs: &mut DocumentObservations) {
+    if let Ok(table_sel) = Selector::parse("table") {
+        let th_sel = Selector::parse("th").ok();
+        for el in doc.select(&table_sel) {
+            let role = el.value().attr("role").map(str::trim);
+            if matches!(role, Some("presentation" | "none")) {
+                continue;
+            }
+            let has_th = th_sel
+                .as_ref()
+                .is_some_and(|s| el.select(s).next().is_some());
+            if !has_th {
+                obs.tables_without_headers += 1;
+            }
+        }
+    }
+
+    if let Ok(iframe_sel) = Selector::parse("iframe") {
+        for el in doc.select(&iframe_sel) {
+            let hidden = el
+                .value()
+                .attr("aria-hidden")
+                .is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
+            let role = el.value().attr("role").map(str::trim);
+            if hidden || matches!(role, Some("presentation" | "none")) {
+                continue;
+            }
+            let has_title = non_empty_attr(&el, "title").is_some()
+                || non_empty_attr(&el, "aria-label").is_some()
+                || non_empty_attr(&el, "aria-labelledby").is_some();
+            if !has_title {
+                obs.iframes_without_title += 1;
+            }
+        }
+    }
+
+    if let Ok(tab_sel) = Selector::parse("[tabindex]") {
+        for el in doc.select(&tab_sel) {
+            if let Some(raw) = el.value().attr("tabindex").map(str::trim)
+                && let Ok(val) = raw.parse::<i32>()
+                && val > 0
+            {
+                obs.positive_tabindex_count += 1;
+            }
+        }
+    }
+
+    if let Ok(media_sel) = Selector::parse("video[autoplay], audio[autoplay]") {
+        for el in doc.select(&media_sel) {
+            if el.value().attr("muted").is_none() {
+                obs.autoplay_unmuted_media += 1;
+            }
+        }
+    }
+
+    let has_meta_author = first_attr(doc, r#"meta[name="author"]"#, "content").is_some()
+        || first_attr(doc, r#"meta[property="article:published_time"]"#, "content").is_some()
+        || first_attr(doc, r#"meta[property="article:modified_time"]"#, "content").is_some();
+    let has_time_el = count_selector(doc, "time[datetime]") > 0;
+    let has_json_ld_date = obs.json_ld_blocks.iter().any(|b| {
+        b.contains("datePublished") || b.contains("dateModified") || b.contains("\"author\"")
+    });
+    obs.author_or_date_signal = if has_meta_author {
+        Some("meta")
+    } else if has_time_el {
+        Some("time[datetime]")
+    } else if has_json_ld_date {
+        Some("json-ld")
+    } else {
+        None
+    };
 }
 
 fn extract_scripts_and_styles(doc: &Html, obs: &mut DocumentObservations) {
@@ -789,5 +876,28 @@ mod tests {
         assert_eq!(obs.forms.len(), 1);
         assert_eq!(obs.forms[0].method.as_deref(), Some("post"));
         assert!(obs.visible_text_sample.contains("Skip to main content"));
+    }
+
+    #[test]
+    fn extracts_wave5_accessibility_and_trust_observations() {
+        let html = r#"<!doctype html><html lang="en-GB"><head>
+            <meta http-equiv="refresh" content="5;url=/next">
+            <meta name="author" content="Krzysztof">
+        </head><body>
+            <table><tr><td>Cell</td></tr></table>
+            <table role="presentation"><tr><td>Layout</td></tr></table>
+            <iframe src="/embed"></iframe>
+            <iframe src="/ok" title="Embedded map"></iframe>
+            <div tabindex="2">Jump</div>
+            <video autoplay src="/clip.mp4"></video>
+            <video autoplay muted src="/bg.mp4"></video>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        assert_eq!(obs.meta_refresh.as_deref(), Some("5;url=/next"));
+        assert_eq!(obs.tables_without_headers, 1);
+        assert_eq!(obs.iframes_without_title, 1);
+        assert_eq!(obs.positive_tabindex_count, 1);
+        assert_eq!(obs.autoplay_unmuted_media, 1);
+        assert_eq!(obs.author_or_date_signal, Some("meta"));
     }
 }
