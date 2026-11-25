@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::analysis::document::DocumentObservations;
-use crate::analysis::{require_http, skip_all};
+use crate::analysis::{header_value, require_http, skip_all};
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot,
@@ -19,6 +19,10 @@ const RULE_LINK_HYGIENE: &str = "netz.links.hygiene";
 const RULE_URL_UPPERCASE: &str = "netz.url.uppercase_path";
 const RULE_URL_QUERY_HYGIENE: &str = "netz.url.query_hygiene";
 const RULE_URL_DEEP_PATH: &str = "netz.url.deep_path";
+const RULE_REDIRECT_HTTPS_DOWNGRADE: &str = "netz.redirect.https_downgrade";
+const RULE_REDIRECT_CROSS_ORIGIN: &str = "netz.redirect.cross_origin_chain";
+const RULE_ETAG_VALIDATION: &str = "netz.http.etag_validation";
+const RULE_RATE_LIMITING: &str = "netz.http.rate_limiting_observed";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTP_STATUS,
@@ -29,6 +33,10 @@ const ALL_RULES: &[&str] = &[
     RULE_URL_UPPERCASE,
     RULE_URL_QUERY_HYGIENE,
     RULE_URL_DEEP_PATH,
+    RULE_REDIRECT_HTTPS_DOWNGRADE,
+    RULE_REDIRECT_CROSS_ORIGIN,
+    RULE_ETAG_VALIDATION,
+    RULE_RATE_LIMITING,
 ];
 
 /// Evaluates HTTP response status and redirect-chain hygiene over `snapshot`.
@@ -57,6 +65,8 @@ pub fn analyse_with_document(
     check_redirects(snapshot, http, &mut findings, &mut checks);
     check_redirect_loop(http, &mut findings, &mut checks);
     check_url_hygiene(http, &mut findings, &mut checks);
+    check_redirect_security_and_origin(snapshot, http, &mut findings, &mut checks);
+    check_etag_and_rate_limiting(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_soft_error(http, doc, &mut findings, &mut checks);
@@ -532,6 +542,183 @@ fn check_url_deep_path(path: &str, findings: &mut Vec<Finding>, checks: &mut Vec
     }
 }
 
+fn check_redirect_security_and_origin(
+    snapshot: &EvidenceSnapshot,
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let has_https_downgrade = http
+        .redirect_chain
+        .iter()
+        .any(|h| h.from_url.starts_with("https://") && h.to_url.starts_with("http://"))
+        || (snapshot.target.as_str().starts_with("https://")
+            && http.final_url.starts_with("http://"));
+
+    if has_https_downgrade {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_REDIRECT_HTTPS_DOWNGRADE.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Redirect chain downgrades HTTPS to HTTP".to_owned(),
+            summary: "An HTTP redirect transitioned from `https://` to unencrypted `http://`."
+                .to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpStatus,
+                format!("final_url={}", http.final_url),
+            )],
+            remediation: Some(
+                "Ensure all redirect targets preserve `https://` without downgrading transport."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_REDIRECT_HTTPS_DOWNGRADE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_REDIRECT_HTTPS_DOWNGRADE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+
+    let seed_host = url::Url::parse(snapshot.target.as_str())
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+    let cross_hosts: Vec<String> = http
+        .redirect_chain
+        .iter()
+        .filter_map(|h| url::Url::parse(&h.to_url).ok())
+        .filter_map(|u| u.host_str().map(str::to_ascii_lowercase))
+        .filter(|h| seed_host.as_deref() != Some(h.as_str()))
+        .collect();
+
+    if cross_hosts.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_REDIRECT_CROSS_ORIGIN.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_REDIRECT_CROSS_ORIGIN.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "Cross-origin redirect chain observed".to_owned(),
+            summary: format!(
+                "Redirect chain crossed to external host(s): {}.",
+                cross_hosts.join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpStatus,
+                format!("cross_origin_redirects={}", cross_hosts.len()),
+            )],
+            remediation: Some(
+                "Confirm cross-host redirects are intentional and update canonical links accordingly."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_REDIRECT_CROSS_ORIGIN.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_etag_and_rate_limiting(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if let Some(etag) = header_value(http, "etag") {
+        let trimmed = etag.trim();
+        let valid_quoted =
+            (trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2)
+                || (trimmed.starts_with("W/\"") && trimmed.ends_with('"') && trimmed.len() >= 4);
+        if valid_quoted {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_ETAG_VALIDATION.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        } else {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_ETAG_VALIDATION.to_owned()),
+                category: FindingCategory::Reliability,
+                evidence_level: EvidenceLevel::Source,
+                kind: FindingKind::Deterministic,
+                severity: Severity::Low,
+                confidence: Confidence::High,
+                title: "Malformed ETag response header".to_owned(),
+                summary: format!(
+                    "ETag header `{trimmed}` does not follow RFC 9110 quoted entity-tag syntax (`\"...\"` or `W/\"...\"`)."
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::HttpHeaders,
+                    format!("etag={trimmed}"),
+                )],
+                remediation: Some("Quote entity-tag values per RFC 9110.".to_owned()),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_ETAG_VALIDATION.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        }
+    } else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_ETAG_VALIDATION.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "ETag header absent".to_owned(),
+        });
+    }
+
+    let rate_limited = http.status_code == 429
+        || header_value(http, "retry-after").is_some()
+        || header_value(http, "x-ratelimit-remaining").is_some_and(|v| v.trim() == "0");
+    if rate_limited {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_RATE_LIMITING.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Rate limiting or Retry-After observed (HTTP {})", http.status_code),
+            summary: format!(
+                "Origin or intermediary signalled rate limiting / backoff (status={}, retry_after={}).",
+                http.status_code,
+                header_value(http, "retry-after").unwrap_or("<absent>")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
+                format!("status={};rate_limited=true", http.status_code),
+            )],
+            remediation: Some(
+                "Respect `Retry-After` backoff and reduce crawl concurrency for this target."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_RATE_LIMITING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_RATE_LIMITING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -660,5 +847,38 @@ mod tests {
         assert!(ids.contains(&RULE_URL_UPPERCASE));
         assert!(ids.contains(&RULE_URL_QUERY_HYGIENE));
         assert!(ids.contains(&RULE_URL_DEEP_PATH));
+    }
+
+    #[test]
+    fn flags_https_downgrade_cross_origin_malformed_etag_and_rate_limiting() {
+        let mut snap = make_snapshot(429, 0);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.final_url = "http://other.example.net/".to_owned();
+            data.redirect_chain = vec![RedirectHop {
+                from_url: "https://example.com/".to_owned(),
+                status_code: 302,
+                to_url: "http://other.example.net/".to_owned(),
+            }];
+            data.headers = vec![
+                crate::domain::HttpHeader {
+                    name: "etag".to_owned(),
+                    value: "unquoted-tag".to_owned(),
+                },
+                crate::domain::HttpHeader {
+                    name: "retry-after".to_owned(),
+                    value: "30".to_owned(),
+                },
+            ];
+        }
+        let result = analyse(&snap);
+        let ids: Vec<&str> = result
+            .findings
+            .iter()
+            .map(|f| f.rule_id.0.as_str())
+            .collect();
+        assert!(ids.contains(&RULE_REDIRECT_HTTPS_DOWNGRADE));
+        assert!(ids.contains(&RULE_REDIRECT_CROSS_ORIGIN));
+        assert!(ids.contains(&RULE_ETAG_VALIDATION));
+        assert!(ids.contains(&RULE_RATE_LIMITING));
     }
 }

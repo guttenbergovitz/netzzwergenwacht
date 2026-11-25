@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 157,
+  "total_implemented_capabilities": 163,
   "by_dwarf": {
     "LeistungsZwerg": 24,
     "SicherheitsZwerg": 26,
@@ -10,8 +10,8 @@
     "InhaltsZwerg": 14,
     "ApplicationGraph": 16,
     "ZugänglichkeitsZwerg": 16,
-    "StrukturZwerg": 9,
-    "NetzZwerg": 8,
+    "StrukturZwerg": 11,
+    "NetzZwerg": 12,
     "BrowserZwerg": 11
   },
   "capabilities": [
@@ -1424,6 +1424,60 @@
       "dwarf": "InhaltsZwerg",
       "module": "analysis::content",
       "source_path": "src/analysis/content.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.redirect.https_downgrade",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.redirect.cross_origin_chain",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.etag_validation",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "netz.http.rate_limiting_observed",
+      "dwarf": "NetzZwerg",
+      "module": "analysis::network",
+      "source_path": "src/analysis/network.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "str.landmarks.duplicate_main",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
+      "evidence_level": "Source",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "str.headings.empty_heading",
+      "dwarf": "StrukturZwerg",
+      "module": "analysis::semantics",
+      "source_path": "src/analysis/semantics.rs",
       "evidence_level": "Source",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"

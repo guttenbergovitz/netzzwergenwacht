@@ -19,6 +19,8 @@ const RULE_CHARSET: &str = "str.doc.charset";
 const RULE_SKIP_LINK: &str = "str.nav.skip_link";
 const RULE_META_REFRESH: &str = "str.doc.meta_refresh";
 const RULE_FAVICON: &str = "str.doc.favicon";
+const RULE_DUPLICATE_MAIN: &str = "str.landmarks.duplicate_main";
+const RULE_EMPTY_HEADING: &str = "str.headings.empty_heading";
 
 /// All rule identifiers owned by `StrukturZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -31,6 +33,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_SKIP_LINK,
     RULE_META_REFRESH,
     RULE_FAVICON,
+    RULE_DUPLICATE_MAIN,
+    RULE_EMPTY_HEADING,
 ];
 
 /// Evaluates semantic HTML structure and element integrity over `obs`.
@@ -48,6 +52,8 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
     check_skip_link(obs, &mut findings, &mut checks);
     check_meta_refresh(obs, &mut findings, &mut checks);
     check_favicon(obs, &mut findings, &mut checks);
+    check_duplicate_main(obs, &mut findings, &mut checks);
+    check_empty_headings(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Struktur,
@@ -527,6 +533,87 @@ fn check_favicon(
     }
 }
 
+fn check_duplicate_main(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if obs.landmarks.main_count <= 1 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DUPLICATE_MAIN.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DUPLICATE_MAIN.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Multiple <main> landmarks ({})", obs.landmarks.main_count),
+            summary: format!(
+                "Document contains {} <main> elements; HTML5 permits only one visible primary `<main>` landmark.",
+                obs.landmarks.main_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("main_count={}", obs.landmarks.main_count),
+            )],
+            remediation: Some("Retain a single visible `<main>` landmark per document.".to_owned()),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DUPLICATE_MAIN.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_empty_headings(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let empty_count = obs
+        .headings
+        .iter()
+        .filter(|h| h.text.trim().is_empty())
+        .count();
+    if empty_count == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_EMPTY_HEADING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_EMPTY_HEADING.to_owned()),
+            category: FindingCategory::Semantics,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Empty heading elements ({empty_count})"),
+            summary: format!(
+                "{empty_count} heading element(s) (`<h1>`–`<h6>`) contain no visible text."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("empty_headings={empty_count}"),
+            )],
+            remediation: Some(
+                "Provide meaningful heading text or replace empty spacing headings with CSS."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_EMPTY_HEADING.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -588,5 +675,16 @@ mod tests {
                 .any(|f| f.rule_id.0 == RULE_META_REFRESH)
         );
         assert!(!res.findings.iter().any(|f| f.rule_id.0 == RULE_FAVICON));
+    }
+
+    #[test]
+    fn flags_duplicate_main_and_empty_headings() {
+        let html = r#"<html><head><meta charset="utf-8"><link rel="icon" href="/f.ico"></head>
+            <body><main><h1>Main</h1></main><main><h2></h2></main></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let res = analyse(&obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_DUPLICATE_MAIN));
+        assert!(ids.contains(&RULE_EMPTY_HEADING));
     }
 }
