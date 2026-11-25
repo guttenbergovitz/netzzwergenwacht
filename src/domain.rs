@@ -894,6 +894,18 @@ pub struct PerformanceRuntimeObs {
     pub max_long_task_ms: u64,
 }
 
+/// Level 2 client-side storage and cookie count summary (counts only, never values).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PrivacyStorageSummary {
+    /// Number of keys in `window.localStorage` observed on load.
+    pub local_storage_keys: usize,
+    /// Number of keys in `window.sessionStorage` observed on load.
+    pub session_storage_keys: usize,
+    /// Number of cookies visible to `document.cookie`.
+    pub document_cookie_count: usize,
+}
+
 /// Level 2 browser runtime and visual layout evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct BrowserEvidence {
@@ -934,6 +946,9 @@ pub struct BrowserEvidence {
     /// Level 2 Navigation Timing, LCP, CLS, and Long Task telemetry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub performance: Option<PerformanceRuntimeObs>,
+    /// Level 2 client-side storage and cookie counts (without values).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_summary: Option<PrivacyStorageSummary>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,

@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 137,
+  "total_rules": 145,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1198,6 +1198,70 @@
       "dwarf": "LeistungsZwerg",
       "module": "analysis::performance",
       "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.csp.missing_object_restriction",
+      "constant": "RULE_CSP_OBJECT",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.csp.missing_base_uri_restriction",
+      "constant": "RULE_CSP_BASE_URI",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.csp.report_only_without_enforcement",
+      "constant": "RULE_CSP_REPORT_ONLY",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.csp.unsafe_eval",
+      "constant": "RULE_CSP_UNSAFE_EVAL",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.cookies.prefix_violation",
+      "constant": "RULE_COOKIE_PREFIX",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.cookies.excessive_lifetime",
+      "constant": "RULE_COOKIE_LIFETIME",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.forms.cross_origin_submission",
+      "constant": "RULE_FORM_CROSS_ORIGIN",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "sec.exposure.sensitive_url_parameters",
+      "constant": "RULE_SENSITIVE_URL_PARAMS",
+      "dwarf": "SicherheitsZwerg",
+      "module": "analysis::security",
+      "source_path": "src/analysis/security.rs",
       "status": "native_rust"
     }
   ]

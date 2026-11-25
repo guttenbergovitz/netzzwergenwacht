@@ -392,6 +392,12 @@ function findBrowser() {
           long_task_total_ms: p.longTaskTotalMs || 0,
           max_long_task_ms: p.maxLongTaskMs || 0,
         } : null;
+        let safeCount = (fn) => { try { return fn(); } catch { return 0; } };
+        const storageSummary = {
+          local_storage_keys: safeCount(() => window.localStorage.length),
+          session_storage_keys: safeCount(() => window.sessionStorage.length),
+          document_cookie_count: safeCount(() => document.cookie ? document.cookie.split(';').filter((c) => c.trim().length > 0).length : 0),
+        };
         return {
           rendered_dom_elements: document.querySelectorAll('*').length,
           rendered_images: imgs,
@@ -399,6 +405,7 @@ function findBrowser() {
           rendered_word_count: renderedWords,
           csp_violations: Array.isArray(window.__nzwCspViolations) ? window.__nzwCspViolations : [],
           performance: perfObs,
+          storage_summary: storageSummary,
         };
       })()`,
       returnByValue: true,
@@ -459,6 +466,7 @@ function findBrowser() {
       rendered_word_count: typeof domAndImages.rendered_word_count === 'number' ? domAndImages.rendered_word_count : null,
       ax_tree: axTreeSummary,
       performance: domAndImages.performance || null,
+      storage_summary: domAndImages.storage_summary || null,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',
