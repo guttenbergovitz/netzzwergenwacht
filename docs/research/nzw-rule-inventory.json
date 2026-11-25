@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 131,
+  "total_rules": 137,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1150,6 +1150,54 @@
       "dwarf": "BrowserZwerg",
       "module": "analysis::browser",
       "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.ax.missing_accessible_name",
+      "constant": "RULE_AX_MISSING_NAME",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "a11y.ax.hidden_focusable_element",
+      "constant": "RULE_AX_HIDDEN_FOCUSABLE",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.lcp.slow_ttfb",
+      "constant": "RULE_LCP_SLOW_TTFB",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.js.long_tasks",
+      "constant": "RULE_JS_LONG_TASKS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.waterfall.redirect_overhead",
+      "constant": "RULE_WATERFALL_REDIRECTS",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "perf.cache.zero_max_age",
+      "constant": "RULE_CACHE_ZERO_MAX_AGE",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
       "status": "native_rust"
     }
   ]

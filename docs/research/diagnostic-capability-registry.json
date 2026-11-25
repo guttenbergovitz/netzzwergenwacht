@@ -1,15 +1,15 @@
 {
   "schema_version": "1.0.0",
   "initiative": "Operation Aufrüstung III",
-  "total_implemented_capabilities": 131,
+  "total_implemented_capabilities": 137,
   "by_dwarf": {
-    "LeistungsZwerg": 20,
+    "LeistungsZwerg": 24,
     "SicherheitsZwerg": 18,
     "GestaltungsZwerg": 16,
     "SuchZwerg": 14,
     "InhaltsZwerg": 12,
     "ApplicationGraph": 12,
-    "ZugänglichkeitsZwerg": 11,
+    "ZugänglichkeitsZwerg": 13,
     "StrukturZwerg": 9,
     "NetzZwerg": 8,
     "BrowserZwerg": 11
@@ -1190,6 +1190,60 @@
       "dwarf": "BrowserZwerg",
       "module": "analysis::browser",
       "source_path": "src/analysis/browser.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "a11y.ax.missing_accessible_name",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "a11y.ax.hidden_focusable_element",
+      "dwarf": "ZugänglichkeitsZwerg",
+      "module": "analysis::accessibility",
+      "source_path": "src/analysis/accessibility.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.lcp.slow_ttfb",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.js.long_tasks",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.waterfall.redirect_overhead",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
+      "evidence_level": "Rendered",
+      "implementation_status": "implemented",
+      "validation_status": "unit_tested"
+    },
+    {
+      "id": "perf.cache.zero_max_age",
+      "dwarf": "LeistungsZwerg",
+      "module": "analysis::performance",
+      "source_path": "src/analysis/performance.rs",
       "evidence_level": "Rendered",
       "implementation_status": "implemented",
       "validation_status": "unit_tested"

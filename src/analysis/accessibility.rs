@@ -9,9 +9,9 @@
 use crate::analysis::document::DocumentObservations;
 use crate::brigade::DwarfId;
 use crate::domain::{
-    AnalyserResult, AxeEvidence, CheckStatus, CollectorOutcome, Confidence, EvidenceLevel,
-    EvidenceRef, EvidenceSource, Finding, FindingCategory, FindingFingerprint, FindingKind, RuleId,
-    Severity,
+    AnalyserResult, AxeEvidence, BrowserEvidence, CheckStatus, CollectorOutcome, Confidence,
+    EvidenceLevel, EvidenceRef, EvidenceSource, Finding, FindingCategory, FindingFingerprint,
+    FindingKind, RuleId, Severity,
 };
 
 const RULE_DOC_LANG: &str = "a11y.doc.lang";
@@ -24,6 +24,8 @@ const RULE_IFRAME_TITLE: &str = "a11y.iframes.title";
 const RULE_POSITIVE_TABINDEX: &str = "a11y.focus.positive_tabindex";
 const RULE_AUTOPLAY_MEDIA: &str = "a11y.media.autoplay_unmuted";
 const RULE_RENDERED_AXE: &str = "a11y.rendered.contrast_and_axe";
+const RULE_AX_MISSING_NAME: &str = "a11y.ax.missing_accessible_name";
+const RULE_AX_HIDDEN_FOCUSABLE: &str = "a11y.ax.hidden_focusable_element";
 const RULE_BEHAVIOURAL: &str = "a11y.behavioural.keyboard_and_focus";
 
 /// Source-level rule identifiers owned by `ZugänglichkeitsZwerg`.
@@ -53,6 +55,18 @@ pub fn analyse_with_axe(
     obs: &DocumentObservations,
     axe: &CollectorOutcome<AxeEvidence>,
 ) -> AnalyserResult {
+    analyse_with_browser(obs, axe, &CollectorOutcome::default())
+}
+
+/// Evaluates source-level accessibility checks together with optional Level 2
+/// `axe-core` and Chromium Accessibility Tree evidence, while explicitly marking
+/// Level 3 behavioural checks as unavailable.
+#[must_use]
+pub fn analyse_with_browser(
+    obs: &DocumentObservations,
+    axe: &CollectorOutcome<AxeEvidence>,
+    browser: &CollectorOutcome<BrowserEvidence>,
+) -> AnalyserResult {
     let mut findings = Vec::new();
     let mut checks = Vec::new();
 
@@ -67,6 +81,7 @@ pub fn analyse_with_axe(
     check_autoplay_media(obs, &mut findings, &mut checks);
 
     check_axe_violations(axe, &mut findings, &mut checks);
+    check_ax_tree(browser, &mut findings, &mut checks);
     checks.push(CheckStatus::Unavailable {
         rule_id: RuleId(RULE_BEHAVIOURAL.to_owned()),
         evidence_level: EvidenceLevel::Behavioural,
@@ -79,6 +94,104 @@ pub fn analyse_with_axe(
         dwarf_id: DwarfId::Zugaenglichkeits,
         findings,
         checks,
+    }
+}
+
+fn check_ax_tree(
+    browser: &CollectorOutcome<BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let ax = match browser {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+            data.ax_tree.as_ref()
+        }
+        CollectorOutcome::Skipped { .. } | CollectorOutcome::Failed { .. } => None,
+    };
+
+    let Some(tree) = ax else {
+        for rule in [RULE_AX_MISSING_NAME, RULE_AX_HIDDEN_FOCUSABLE] {
+            checks.push(CheckStatus::Unavailable {
+                rule_id: RuleId(rule.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason: "Level 2 Chromium Accessibility Tree unavailable".to_owned(),
+            });
+        }
+        return;
+    };
+
+    if tree.interactive_without_name == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_AX_MISSING_NAME.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_AX_MISSING_NAME.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!(
+                "Interactive AX nodes missing accessible name ({})",
+                tree.interactive_without_name
+            ),
+            summary: format!(
+                "Chromium Accessibility Tree reported {} interactive node(s) without a computed accessible name.",
+                tree.interactive_without_name
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("ax_interactive_without_name={}", tree.interactive_without_name),
+            )],
+            remediation: Some(
+                "Ensure every interactive control has a visible label, `aria-label`, or `aria-labelledby`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_AX_MISSING_NAME.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    if tree.hidden_focusable_count == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_AX_HIDDEN_FOCUSABLE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_AX_HIDDEN_FOCUSABLE.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!(
+                "Focusable elements inside ignored/aria-hidden subtrees ({})",
+                tree.hidden_focusable_count
+            ),
+            summary: format!(
+                "Chromium Accessibility Tree found {} focusable node(s) inside ignored/`aria-hidden` containers.",
+                tree.hidden_focusable_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("ax_hidden_focusable={}", tree.hidden_focusable_count),
+            )],
+            remediation: Some(
+                "Set `tabindex=\"-1\"` or `inert` on hidden containers so keyboard users cannot focus invisible controls."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_AX_HIDDEN_FOCUSABLE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
     }
 }
 
@@ -663,5 +776,27 @@ mod tests {
         assert!(ids.contains(&RULE_IFRAME_TITLE));
         assert!(ids.contains(&RULE_POSITIVE_TABINDEX));
         assert!(ids.contains(&RULE_AUTOPLAY_MEDIA));
+    }
+
+    #[test]
+    fn flags_ax_tree_missing_names_and_hidden_focusable() {
+        let obs = DocumentObservations::from_html("<html lang=\"en\"><body></body></html>");
+        let browser = CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                ax_tree: Some(crate::domain::AccessibilityTreeSummary {
+                    total_nodes: 20,
+                    ignored_nodes: 2,
+                    interactive_without_name: 3,
+                    hidden_focusable_count: 1,
+                    truncated: false,
+                }),
+                ..BrowserEvidence::default()
+            },
+        };
+        let res = analyse_with_browser(&obs, &CollectorOutcome::default(), &browser);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_AX_MISSING_NAME));
+        assert!(ids.contains(&RULE_AX_HIDDEN_FOCUSABLE));
     }
 }

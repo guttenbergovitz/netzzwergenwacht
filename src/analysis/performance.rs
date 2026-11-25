@@ -33,6 +33,10 @@ const RULE_RENDERED_DOM_SIZE: &str = "perf.runtime.rendered_dom_size";
 const RULE_EXCESSIVE_STYLESHEETS: &str = "perf.dom.excessive_stylesheets";
 const RULE_FONT_DISPLAY_SWAP: &str = "perf.assets.font_display_swap";
 const RULE_RUNTIME_THIRD_PARTY_REQUESTS: &str = "perf.runtime.third_party_requests";
+const RULE_LCP_SLOW_TTFB: &str = "perf.lcp.slow_ttfb";
+const RULE_JS_LONG_TASKS: &str = "perf.js.long_tasks";
+const RULE_WATERFALL_REDIRECTS: &str = "perf.waterfall.redirect_overhead";
+const RULE_CACHE_ZERO_MAX_AGE: &str = "perf.cache.zero_max_age";
 
 const ALL_SOURCE_RULES: &[&str] = &[
     RULE_EXCHANGE_DURATION,
@@ -140,6 +144,8 @@ fn analyse_with_thresholds_and_document(
     check_core_web_vitals(&snapshot.lighthouse, &mut findings, &mut checks);
     check_runtime_resources(&snapshot.browser, &mut findings, &mut checks);
     check_runtime_third_party(&snapshot.browser, &mut findings, &mut checks);
+    check_runtime_perf_metrics(&snapshot.browser, &mut findings, &mut checks);
+    check_waterfall_and_cache_semantics(&snapshot.browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Leistungs,
@@ -1300,6 +1306,207 @@ fn check_runtime_third_party(
     }
 }
 
+fn check_runtime_perf_metrics(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let perf = match browser {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+            data.performance.as_ref()
+        }
+        CollectorOutcome::Skipped { .. } | CollectorOutcome::Failed { .. } => None,
+    };
+    let Some(perf) = perf else {
+        return;
+    };
+
+    if let Some(ttfb) = perf.ttfb_ms {
+        if ttfb > 800 {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_LCP_SLOW_TTFB.to_owned()),
+                category: FindingCategory::Performance,
+                evidence_level: EvidenceLevel::Rendered,
+                kind: FindingKind::Deterministic,
+                severity: if ttfb > 1_800 {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                },
+                confidence: Confidence::High,
+                title: format!("Slow navigation TTFB ({ttfb} ms)"),
+                summary: format!(
+                    "Browser navigation timing recorded TTFB of {ttfb} ms (> 800 ms threshold)."
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::BrowserRuntime,
+                    format!("ttfb_ms={ttfb}"),
+                )],
+                remediation: Some(
+                    "Optimise server response latency, edge caching, and database queries."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_LCP_SLOW_TTFB.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        } else {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_LCP_SLOW_TTFB.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        }
+    }
+
+    if perf.max_long_task_ms > 200 || perf.long_task_total_ms > 300 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Main-thread JS long tasks ({} tasks, max {} ms)",
+                perf.long_task_count, perf.max_long_task_ms
+            ),
+            summary: format!(
+                "Observed {} long task(s) totalling {} ms on the main thread (max {} ms).",
+                perf.long_task_count, perf.long_task_total_ms, perf.max_long_task_ms
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!(
+                    "long_tasks={};total_ms={};max_ms={}",
+                    perf.long_task_count, perf.long_task_total_ms, perf.max_long_task_ms
+                ),
+            )],
+            remediation: Some(
+                "Break up long-running JavaScript tasks, code-split bundles, and yield to the main thread."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_waterfall_and_cache_semantics(
+    browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) = browser
+    else {
+        return;
+    };
+
+    let redirected: Vec<&str> = data
+        .resources
+        .iter()
+        .filter(|r| r.status_code.is_some_and(|s| (300..400).contains(&s)))
+        .map(|r| r.url.as_str())
+        .collect();
+    if redirected.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_WATERFALL_REDIRECTS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_WATERFALL_REDIRECTS.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Subresource redirects in waterfall ({})", redirected.len()),
+            summary: format!(
+                "{} subresource request(s) returned 3xx redirects, adding round-trip latency.",
+                redirected.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("redirected_subresources={}", redirected.len()),
+            )],
+            remediation: Some(
+                "Update subresource URLs to point directly to their final canonical destination."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_WATERFALL_REDIRECTS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    let zero_max_age: Vec<&str> = data
+        .resources
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.resource_type.as_str(),
+                "script" | "stylesheet" | "image" | "font"
+            )
+        })
+        .filter(|r| {
+            r.cache_control.as_deref().is_some_and(|cc| {
+                cc.split(',')
+                    .map(|d| d.trim().to_ascii_lowercase())
+                    .any(|d| d == "max-age=0" || d == "no-store" || d == "no-cache")
+            })
+        })
+        .map(|r| r.url.as_str())
+        .collect();
+    if zero_max_age.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CACHE_ZERO_MAX_AGE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CACHE_ZERO_MAX_AGE.to_owned()),
+            category: FindingCategory::Performance,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!(
+                "Static subresources with zero-cache directives ({})",
+                zero_max_age.len()
+            ),
+            summary: format!(
+                "{} static subresource(s) explicitly specify `max-age=0`, `no-cache`, or `no-store`.",
+                zero_max_age.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("zero_max_age_static_resources={}", zero_max_age.len()),
+            )],
+            remediation: Some(
+                "Serve static assets with positive `max-age` caching rather than `max-age=0`/`no-store`."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CACHE_ZERO_MAX_AGE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1627,5 +1834,62 @@ mod tests {
         assert!(ids.contains(&RULE_EXCESSIVE_STYLESHEETS));
         assert!(ids.contains(&RULE_FONT_DISPLAY_SWAP));
         assert!(ids.contains(&RULE_RUNTIME_THIRD_PARTY_REQUESTS));
+    }
+
+    #[test]
+    fn flags_slow_ttfb_long_tasks_waterfall_redirects_and_zero_max_age() {
+        let snap = EvidenceSnapshot {
+            target: AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "content-encoding".to_owned(),
+                        value: "br".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 512,
+                    body_truncated: false,
+                    body_text: "<html></html>".to_owned(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    resources: vec![crate::domain::ResourceTimingObs {
+                        url: "https://example.com/old-bundle.js".to_owned(),
+                        resource_type: "script".to_owned(),
+                        status_code: Some(302),
+                        cache_control: Some("public, max-age=0".to_owned()),
+                        ..crate::domain::ResourceTimingObs::default()
+                    }],
+                    performance: Some(crate::domain::PerformanceRuntimeObs {
+                        ttfb_ms: Some(1_150),
+                        long_task_count: 2,
+                        long_task_total_ms: 420,
+                        max_long_task_ms: 260,
+                        ..crate::domain::PerformanceRuntimeObs::default()
+                    }),
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_LCP_SLOW_TTFB));
+        assert!(ids.contains(&RULE_JS_LONG_TASKS));
+        assert!(ids.contains(&RULE_WATERFALL_REDIRECTS));
+        assert!(ids.contains(&RULE_CACHE_ZERO_MAX_AGE));
     }
 }

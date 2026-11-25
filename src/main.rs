@@ -375,7 +375,7 @@ async fn main() -> ExitCode {
             format,
             audience,
         } => {
-            run_patrol_cmd(
+            Box::pin(run_patrol_cmd(
                 url.as_deref(),
                 config_path.as_deref(),
                 targets.as_deref(),
@@ -385,7 +385,7 @@ async fn main() -> ExitCode {
                 allow_private,
                 format,
                 audience,
-            )
+            ))
             .await
         }
         Command::Report {

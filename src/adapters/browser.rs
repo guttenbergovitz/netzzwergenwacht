@@ -258,7 +258,31 @@ function findBrowser() {
     await call('Runtime.enable');
     await call('Network.enable');
     await call('Page.addScriptToEvaluateOnNewDocument', {
-      source: `window.__nzwCspViolations = []; window.addEventListener('securitypolicyviolation', (e) => { if (window.__nzwCspViolations.length < 50) window.__nzwCspViolations.push({ directive: e.violatedDirective || '', blocked_uri: e.blockedURI || '', source_file: e.sourceFile || null, line_number: e.lineNumber || null }); });`,
+      source: `window.__nzwCspViolations = [];
+      window.addEventListener('securitypolicyviolation', (e) => { if (window.__nzwCspViolations.length < 50) window.__nzwCspViolations.push({ directive: e.violatedDirective || '', blocked_uri: e.blockedURI || '', source_file: e.sourceFile || null, line_number: e.lineNumber || null }); });
+      window.__nzwPerf = { lcpMs: null, lcpElement: null, lcpUrl: null, cls: 0, shiftCount: 0, longTaskCount: 0, longTaskTotalMs: 0, maxLongTaskMs: 0 };
+      try {
+        new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) {
+            window.__nzwPerf.lcpMs = Math.round(e.startTime);
+            window.__nzwPerf.lcpElement = e.element ? (e.element.tagName.toLowerCase() + (e.element.id ? '#' + e.element.id : '')) : null;
+            window.__nzwPerf.lcpUrl = e.url || null;
+          }
+        }).observe({ type: 'largest-contentful-paint', buffered: true });
+        new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) {
+            if (!e.hadRecentInput) { window.__nzwPerf.cls += e.value || 0; window.__nzwPerf.shiftCount++; }
+          }
+        }).observe({ type: 'layout-shift', buffered: true });
+        new PerformanceObserver((list) => {
+          for (const e of list.getEntries()) {
+            const d = Math.round(e.duration || 0);
+            window.__nzwPerf.longTaskCount++;
+            window.__nzwPerf.longTaskTotalMs += d;
+            if (d > window.__nzwPerf.maxLongTaskMs) window.__nzwPerf.maxLongTaskMs = d;
+          }
+        }).observe({ type: 'longtask', buffered: true });
+      } catch {}`,
     });
     if (process.env.NZW_BROWSER_POLICY === 'public_only') {
       await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
@@ -347,17 +371,65 @@ function findBrowser() {
         });
         const renderedText = (document.body?.innerText || '').trim();
         const renderedWords = renderedText ? renderedText.split(/\s+/).length : 0;
+        const nav = performance.getEntriesByType('navigation')[0];
+        const p = window.__nzwPerf || {};
+        const pos = (v) => (typeof v === 'number' && v >= 0 ? Math.round(v) : null);
+        const perfObs = nav ? {
+          dns_ms: pos(nav.domainLookupEnd - nav.domainLookupStart),
+          tcp_ms: pos(nav.connectEnd - nav.connectStart),
+          tls_ms: nav.secureConnectionStart > 0 ? pos(nav.connectEnd - nav.secureConnectionStart) : null,
+          ttfb_ms: pos(nav.responseStart - nav.requestStart),
+          download_ms: pos(nav.responseEnd - nav.responseStart),
+          dom_interactive_ms: pos(nav.domInteractive),
+          dom_content_loaded_ms: pos(nav.domContentLoadedEventEnd),
+          load_event_ms: pos(nav.loadEventEnd),
+          lcp_ms: p.lcpMs ?? null,
+          lcp_element: p.lcpElement || null,
+          lcp_url: p.lcpUrl || null,
+          cls_thousandths: typeof p.cls === 'number' ? Math.round(p.cls * 1000) : null,
+          layout_shift_count: p.shiftCount || 0,
+          long_task_count: p.longTaskCount || 0,
+          long_task_total_ms: p.longTaskTotalMs || 0,
+          max_long_task_ms: p.maxLongTaskMs || 0,
+        } : null;
         return {
           rendered_dom_elements: document.querySelectorAll('*').length,
           rendered_images: imgs,
           rendered_images_truncated: document.images.length > 100,
           rendered_word_count: renderedWords,
           csp_violations: Array.isArray(window.__nzwCspViolations) ? window.__nzwCspViolations : [],
+          performance: perfObs,
         };
       })()`,
       returnByValue: true,
     });
     const domAndImages = domAndImagesRes?.result?.value || {};
+    let axTreeSummary = null;
+    try {
+      await call('Accessibility.enable');
+      const axRes = await call('Accessibility.getFullAXTree');
+      const nodes = Array.isArray(axRes?.nodes) ? axRes.nodes : [];
+      const capped = nodes.slice(0, 5000);
+      const interactiveRoles = new Set(['button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'menuitem', 'tab', 'switch', 'slider']);
+      let ignoredNodes = 0;
+      let interactiveWithoutName = 0;
+      let hiddenFocusable = 0;
+      for (const n of capped) {
+        if (n.ignored) ignoredNodes++;
+        const role = String(n.role?.value || '').toLowerCase();
+        const name = String(n.name?.value || '').trim();
+        if (!n.ignored && interactiveRoles.has(role) && !name) interactiveWithoutName++;
+        const isFocusable = Array.isArray(n.properties) && n.properties.some((pr) => pr.name === 'focusable' && pr.value?.value === true);
+        if (n.ignored && isFocusable) hiddenFocusable++;
+      }
+      axTreeSummary = {
+        total_nodes: capped.length,
+        ignored_nodes: ignoredNodes,
+        interactive_without_name: interactiveWithoutName,
+        hidden_focusable_count: hiddenFocusable,
+        truncated: nodes.length > 5000,
+      };
+    } catch {}
     for (const v of Array.isArray(domAndImages.csp_violations) ? domAndImages.csp_violations : []) {
       consoleErrors.push({
         level: 'error',
@@ -385,6 +457,8 @@ function findBrowser() {
       rendered_images_truncated: Boolean(domAndImages.rendered_images_truncated),
       rendered_dom_elements: typeof domAndImages.rendered_dom_elements === 'number' ? domAndImages.rendered_dom_elements : null,
       rendered_word_count: typeof domAndImages.rendered_word_count === 'number' ? domAndImages.rendered_word_count : null,
+      ax_tree: axTreeSummary,
+      performance: domAndImages.performance || null,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',
@@ -485,6 +559,16 @@ pub fn parse_browser_outcome(raw: &str) -> CollectorOutcome<BrowserEvidence> {
         warnings.push(
             "Rendered image list truncated at 100 entries; image geometry analysis is partial"
                 .to_owned(),
+        );
+    }
+    if parsed
+        .evidence
+        .ax_tree
+        .as_ref()
+        .is_some_and(|t| t.truncated)
+    {
+        warnings.push(
+            "Accessibility tree truncated at 5000 nodes; AX tree analysis is partial".to_owned(),
         );
     }
     if warnings.is_empty() {
