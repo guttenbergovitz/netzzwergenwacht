@@ -963,13 +963,25 @@ pub struct BrowserEvidence {
     pub provenance: Option<MeasurementProvenance>,
 }
 
+/// Per-resource CDP code coverage breakdown (uncompressed source offsets during initial load).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ResourceCoverageEntry {
+    /// Script or stylesheet URL (or `"inline"` when unnamed).
+    pub url: String,
+    /// Total sampled source bytes/characters.
+    pub total_bytes: u64,
+    /// Executed or matched source bytes/characters during initial load.
+    pub used_bytes: u64,
+}
+
 /// Level 2 CDP JavaScript and CSS rule/byte coverage summary.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct CoverageSummary {
-    /// Total sampled JavaScript bytes across loaded scripts.
+    /// Total sampled JavaScript source bytes/characters across loaded scripts.
     pub js_total_bytes: u64,
-    /// Executed JavaScript bytes during initial page load.
+    /// Executed JavaScript source bytes/characters during initial page load (disjoint intervals).
     pub js_used_bytes: u64,
     /// Total sampled CSS rule bytes across loaded stylesheets.
     pub css_total_bytes: u64,
@@ -979,6 +991,12 @@ pub struct CoverageSummary {
     pub js_scripts_sampled: usize,
     /// Number of CSS rule ranges sampled.
     pub css_rules_sampled: usize,
+    /// Top scripts by unused source bytes (up to 5).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_unused_scripts: Vec<ResourceCoverageEntry>,
+    /// Top stylesheets by unused rule bytes (up to 5).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub top_unused_stylesheets: Vec<ResourceCoverageEntry>,
 }
 
 /// Execution provenance attached to Level 2 browser/lab measurements.

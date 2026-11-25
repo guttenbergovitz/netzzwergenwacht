@@ -100,6 +100,7 @@ function findBrowser() {
     const reqUrls = new Map();
     const reqMeta = new Map();
     const resourcesByReqId = new Map();
+    const stylesheetUrls = new Map();
     let navStartTs = null;
     let loadResolve = null;
 
@@ -159,6 +160,11 @@ function findBrowser() {
           priority: msg.params.request?.initialPriority || null,
           start_ts: typeof msg.params.timestamp === 'number' ? msg.params.timestamp : null,
         });
+      } else if (msg.method === 'CSS.styleSheetAdded') {
+        const hdr = msg.params?.header;
+        if (hdr?.styleSheetId) {
+          stylesheetUrls.set(hdr.styleSheetId, hdr.sourceURL || 'inline');
+        }
       } else if (msg.method === 'Network.loadingFailed') {
         failedRequests.push({
           url: reqUrls.get(msg.params.requestId) || '',
@@ -465,6 +471,33 @@ function findBrowser() {
         truncated: nodes.length > 5000,
       };
     } catch {}
+    const computeDisjointUsedBytes = (flatRanges) => {
+      if (flatRanges.length === 0) return 0;
+      flatRanges.sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
+      const stack = [];
+      let pos = 0;
+      let used = 0;
+      for (const r of flatRanges) {
+        while (stack.length > 0 && stack[stack.length - 1].end <= r.start) {
+          const top = stack.pop();
+          if (top.end > pos && top.count > 0) used += (top.end - pos);
+          if (top.end > pos) pos = top.end;
+        }
+        if (stack.length > 0 && r.start > pos) {
+          if (stack[stack.length - 1].count > 0) used += (r.start - pos);
+          pos = r.start;
+        } else if (r.start > pos) {
+          pos = r.start;
+        }
+        stack.push(r);
+      }
+      while (stack.length > 0) {
+        const top = stack.pop();
+        if (top.end > pos && top.count > 0) used += (top.end - pos);
+        if (top.end > pos) pos = top.end;
+      }
+      return used;
+    };
     let coverageSummary = {
       js_total_bytes: 0,
       js_used_bytes: 0,
@@ -472,42 +505,58 @@ function findBrowser() {
       css_used_bytes: 0,
       js_scripts_sampled: 0,
       css_rules_sampled: 0,
+      top_unused_scripts: [],
+      top_unused_stylesheets: [],
     };
     let hasCoverage = false;
     try {
       const jsCov = await call('Profiler.takePreciseCoverage');
       const scripts = Array.isArray(jsCov?.result) ? jsCov.result : [];
+      const perScript = [];
       for (const s of scripts) {
         let maxEnd = 0;
-        let used = 0;
+        const flat = [];
         for (const fn of Array.isArray(s.functions) ? s.functions : []) {
           for (const r of Array.isArray(fn.ranges) ? fn.ranges : []) {
-            if (typeof r.endOffset === 'number' && r.endOffset > maxEnd) maxEnd = r.endOffset;
-            if (r.count > 0 && typeof r.startOffset === 'number' && typeof r.endOffset === 'number' && r.endOffset > r.startOffset) {
-              used += (r.endOffset - r.startOffset);
+            if (typeof r.startOffset === 'number' && typeof r.endOffset === 'number' && r.endOffset > r.startOffset) {
+              if (r.endOffset > maxEnd) maxEnd = r.endOffset;
+              flat.push({ start: r.startOffset, end: r.endOffset, count: Number(r.count || 0) });
             }
           }
         }
         if (maxEnd > 0) {
+          const used = computeDisjointUsedBytes(flat);
           coverageSummary.js_scripts_sampled++;
           coverageSummary.js_total_bytes += maxEnd;
-          coverageSummary.js_used_bytes += Math.min(used, maxEnd);
+          coverageSummary.js_used_bytes += used;
+          perScript.push({ url: s.url || 'inline', total_bytes: maxEnd, used_bytes: used });
         }
       }
+      perScript.sort((a, b) => (b.total_bytes - b.used_bytes) - (a.total_bytes - a.used_bytes));
+      coverageSummary.top_unused_scripts = perScript.slice(0, 5);
       await call('Profiler.stopPreciseCoverage');
       hasCoverage = true;
     } catch {}
     try {
       const cssCov = await call('CSS.stopRuleUsageTracking');
       const rules = Array.isArray(cssCov?.ruleUsage) ? cssCov.ruleUsage : [];
+      const bySheet = new Map();
       for (const r of rules) {
         if (typeof r.startOffset === 'number' && typeof r.endOffset === 'number' && r.endOffset > r.startOffset) {
           const len = r.endOffset - r.startOffset;
           coverageSummary.css_rules_sampled++;
           coverageSummary.css_total_bytes += len;
           if (r.used) coverageSummary.css_used_bytes += len;
+          const sid = r.styleSheetId || 'inline';
+          const entry = bySheet.get(sid) || { url: stylesheetUrls.get(sid) || 'inline', total_bytes: 0, used_bytes: 0 };
+          entry.total_bytes += len;
+          if (r.used) entry.used_bytes += len;
+          bySheet.set(sid, entry);
         }
       }
+      const perSheet = Array.from(bySheet.values());
+      perSheet.sort((a, b) => (b.total_bytes - b.used_bytes) - (a.total_bytes - a.used_bytes));
+      coverageSummary.top_unused_stylesheets = perSheet.slice(0, 5);
       hasCoverage = true;
     } catch {}
     for (const v of Array.isArray(domAndImages.csp_violations) ? domAndImages.csp_violations : []) {

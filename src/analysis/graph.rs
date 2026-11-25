@@ -1442,12 +1442,10 @@ fn check_heavy_shared_assets(
                     .or_insert_with(|| (BTreeSet::new(), 0, false));
                 entry.0.insert(page.url.clone());
                 entry.1 = entry.1.max(bytes);
-                let weak_cache = res.cache_control.as_deref().is_some_and(|cc| {
-                    let low = cc.to_ascii_lowercase();
-                    low.contains("no-store")
-                        || low.contains("no-cache")
-                        || !low.contains("max-age=")
-                });
+                let weak_cache = res
+                    .cache_control
+                    .as_deref()
+                    .is_some_and(is_weak_cache_control);
                 entry.2 |= weak_cache;
             }
         }
@@ -1514,6 +1512,22 @@ fn check_heavy_shared_assets(
             evidence_level: EvidenceLevel::Rendered,
         });
     }
+}
+
+fn is_weak_cache_control(raw: &str) -> bool {
+    let mut max_age_secs: Option<u64> = None;
+    for directive in raw.split(',') {
+        let token = directive.trim().to_ascii_lowercase();
+        if matches!(token.as_str(), "no-store" | "no-cache" | "must-revalidate") {
+            return true;
+        }
+        if let Some(val) = token.strip_prefix("max-age=")
+            && let Ok(secs) = val.trim().trim_matches('"').parse::<u64>()
+        {
+            max_age_secs = Some(secs);
+        }
+    }
+    max_age_secs.is_none_or(|secs| secs < 3_600)
 }
 
 #[cfg(test)]

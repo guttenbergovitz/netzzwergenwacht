@@ -530,7 +530,7 @@ async fn run_patrol_cmd(
             return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
         }
     };
-    let report = netzzwergenwacht::patrol::run_patrol_with_router(
+    let report = Box::pin(netzzwergenwacht::patrol::run_patrol_with_router(
         target,
         policy,
         exec_budget,
@@ -538,7 +538,7 @@ async fn run_patrol_cmd(
         Some(memory_dir),
         Some(router.as_ref()),
         backend,
-    )
+    ))
     .await;
 
     match format {

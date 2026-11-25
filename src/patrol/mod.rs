@@ -279,7 +279,7 @@ pub async fn run_patrol(
     backend: Arc<dyn DiagnosticBackend>,
 ) -> PatrolReport {
     let router = SingleProviderRouter(llm);
-    run_patrol_with_router(
+    Box::pin(run_patrol_with_router(
         seed,
         policy,
         exec_budget,
@@ -287,7 +287,7 @@ pub async fn run_patrol(
         memory_dir,
         Some(&router),
         backend,
-    )
+    ))
     .await
 }
 

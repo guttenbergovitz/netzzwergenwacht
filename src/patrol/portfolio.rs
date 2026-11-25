@@ -183,7 +183,7 @@ pub async fn run_portfolio_patrol(
                     .max(1),
                 ..base_patrol_budget
             };
-            let report = run_patrol_with_router(
+            let report = Box::pin(run_patrol_with_router(
                 target,
                 policy,
                 exec_budget,
@@ -191,7 +191,7 @@ pub async fn run_portfolio_patrol(
                 mem_dir_task.as_deref(),
                 router_task.as_deref(),
                 backend_task,
-            )
+            ))
             .await;
             (
                 order_idx,
