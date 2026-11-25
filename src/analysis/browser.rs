@@ -20,6 +20,10 @@ const RULE_HYDRATION_ERRORS: &str = "browser.runtime.hydration_errors";
 const RULE_SOURCE_RENDERED_DIVERGENCE: &str = "browser.runtime.source_rendered_divergence";
 const RULE_ANALYTICS_BLOAT: &str = "browser.analytics.tracking_bloat";
 const RULE_EXCESSIVE_SUBRESOURCES: &str = "browser.runtime.excessive_subresources";
+const RULE_UNCAUGHT_EXCEPTION: &str = "browser.js.uncaught_exception";
+const RULE_UNHANDLED_REJECTION: &str = "browser.js.unhandled_rejection";
+const RULE_CSP_VIOLATION: &str = "browser.js.csp_violation";
+const RULE_CORS_BLOCK: &str = "browser.network.cors_block";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -30,6 +34,10 @@ pub const ALL_RULES: &[&str] = &[
     RULE_SOURCE_RENDERED_DIVERGENCE,
     RULE_ANALYTICS_BLOAT,
     RULE_EXCESSIVE_SUBRESOURCES,
+    RULE_UNCAUGHT_EXCEPTION,
+    RULE_UNHANDLED_REJECTION,
+    RULE_CSP_VIOLATION,
+    RULE_CORS_BLOCK,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -64,6 +72,10 @@ pub fn analyse_with_document(
     check_source_rendered_divergence(browser, obs, &mut findings, &mut checks);
     check_analytics_bloat(browser, &mut findings, &mut checks);
     check_excessive_subresources(browser, &mut findings, &mut checks);
+    check_uncaught_exceptions(browser, &mut findings, &mut checks);
+    check_unhandled_rejections(browser, &mut findings, &mut checks);
+    check_csp_violations(browser, &mut findings, &mut checks);
+    check_cors_blocks(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -445,6 +457,229 @@ fn check_excessive_subresources(
     }
 }
 
+fn check_uncaught_exceptions(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let exceptions: Vec<&crate::domain::ConsoleErrorEvent> = browser
+        .console_errors
+        .iter()
+        .filter(|e| {
+            e.error_kind.as_deref() == Some("uncaught_exception")
+                || (e.error_kind.is_none()
+                    && e.level == "exception"
+                    && !e.text.to_ascii_lowercase().contains("in promise"))
+        })
+        .collect();
+
+    if exceptions.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_UNCAUGHT_EXCEPTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        let sample = exceptions
+            .iter()
+            .take(3)
+            .map(|e| e.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_UNCAUGHT_EXCEPTION.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!("Uncaught JavaScript exceptions ({})", exceptions.len()),
+            summary: format!(
+                "{} uncaught runtime exception(s) thrown during page execution: {sample}.",
+                exceptions.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("uncaught_exceptions={}", exceptions.len()),
+            )],
+            remediation: Some(
+                "Inspect stack traces and fix unhandled runtime exceptions in client scripts."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_UNCAUGHT_EXCEPTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_unhandled_rejections(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let rejections: Vec<&crate::domain::ConsoleErrorEvent> = browser
+        .console_errors
+        .iter()
+        .filter(|e| {
+            e.error_kind.as_deref() == Some("unhandled_rejection")
+                || e.text.to_ascii_lowercase().contains("unhandledrejection")
+                || e.text.to_ascii_lowercase().contains("in promise")
+        })
+        .collect();
+
+    if rejections.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_UNHANDLED_REJECTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_UNHANDLED_REJECTION.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Unhandled Promise rejections ({})", rejections.len()),
+            summary: format!(
+                "{} unhandled asynchronous Promise rejection(s) observed during load.",
+                rejections.len()
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("unhandled_rejections={}", rejections.len()),
+            )],
+            remediation: Some(
+                "Add `.catch()` / `try-catch` error handling around async client operations."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_UNHANDLED_REJECTION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_csp_violations(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let csp_errors: Vec<&str> = browser
+        .console_errors
+        .iter()
+        .filter(|e| {
+            e.error_kind.as_deref() == Some("csp_violation")
+                || e.text
+                    .to_ascii_lowercase()
+                    .contains("content security policy")
+        })
+        .map(|e| e.text.as_str())
+        .collect();
+    let csp_reqs: Vec<&str> = browser
+        .failed_requests
+        .iter()
+        .filter(|r| r.error_text.contains("ERR_BLOCKED_BY_CSP"))
+        .map(|r| r.url.as_str())
+        .collect();
+
+    let total = csp_errors.len() + csp_reqs.len();
+    if total == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CSP_VIOLATION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CSP_VIOLATION.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!("Runtime Content Security Policy violations ({total})"),
+            summary: format!(
+                "Browser reported {total} runtime CSP violation(s) blocking scripts, styles, or subresources."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("csp_violations={total}"),
+            )],
+            remediation: Some(
+                "Align Content-Security-Policy directives with legitimate application origins or remove unauthorised embeds."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CSP_VIOLATION.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_cors_blocks(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let cors_blocked: Vec<&str> = browser
+        .failed_requests
+        .iter()
+        .filter(|r| {
+            let lower = r.error_text.to_ascii_lowercase();
+            lower.contains("cors")
+                || lower.contains("access-control-allow-origin")
+                || lower.contains("err_blocked_by_orb")
+        })
+        .map(|r| r.url.as_str())
+        .collect();
+
+    if cors_blocked.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CORS_BLOCK.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CORS_BLOCK.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!("CORS-blocked subresource requests ({})", cors_blocked.len()),
+            summary: format!(
+                "{} subresource/API request(s) failed due to CORS or ORB policy: {}.",
+                cors_blocked.len(),
+                cors_blocked
+                    .iter()
+                    .take(3)
+                    .copied()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("cors_blocked_requests={}", cors_blocked.len()),
+            )],
+            remediation: Some(
+                "Configure explicit `Access-Control-Allow-Origin` headers for authorised client origins."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CORS_BLOCK.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,6 +746,7 @@ mod tests {
                 console_errors: vec![ConsoleErrorEvent {
                     level: "error".to_owned(),
                     text: "Uncaught ReferenceError: app is not defined".to_owned(),
+                    ..ConsoleErrorEvent::default()
                 }],
                 failed_requests: vec![FailedNetworkRequest {
                     url: "https://example.com/app.js".to_owned(),
@@ -564,24 +800,16 @@ mod tests {
         .map(|u| crate::domain::ResourceTimingObs {
             url: u.to_owned(),
             resource_type: "script".to_owned(),
-            mime_type: None,
             transfer_size: Some(512),
-            duration_ms: None,
-            protocol: None,
-            cache_control: None,
-            content_encoding: None,
+            ..crate::domain::ResourceTimingObs::default()
         })
         .collect();
         for i in 0..80 {
             requests.push(crate::domain::ResourceTimingObs {
                 url: format!("https://example.com/chunk-{i}.js"),
                 resource_type: "script".to_owned(),
-                mime_type: None,
                 transfer_size: Some(256),
-                duration_ms: None,
-                protocol: None,
-                cache_control: None,
-                content_encoding: None,
+                ..crate::domain::ResourceTimingObs::default()
             });
         }
         let snap = base_snapshot(CollectorOutcome::Captured {
@@ -595,5 +823,48 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_ANALYTICS_BLOAT));
         assert!(ids.contains(&RULE_EXCESSIVE_SUBRESOURCES));
+    }
+
+    #[test]
+    fn flags_uncaught_exceptions_rejections_csp_and_cors_blocks() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                console_errors: vec![
+                    ConsoleErrorEvent {
+                        level: "exception".to_owned(),
+                        text: "TypeError: Cannot read properties of null".to_owned(),
+                        error_kind: Some("uncaught_exception".to_owned()),
+                        source_url: Some("https://example.com/app.js".to_owned()),
+                        line_number: Some(42),
+                    },
+                    ConsoleErrorEvent {
+                        level: "exception".to_owned(),
+                        text: "Uncaught (in promise) Error: boom".to_owned(),
+                        error_kind: Some("unhandled_rejection".to_owned()),
+                        ..ConsoleErrorEvent::default()
+                    },
+                    ConsoleErrorEvent {
+                        level: "error".to_owned(),
+                        text: "CSP violation (script-src): blocked https://evil.test/x.js"
+                            .to_owned(),
+                        error_kind: Some("csp_violation".to_owned()),
+                        ..ConsoleErrorEvent::default()
+                    },
+                ],
+                failed_requests: vec![FailedNetworkRequest {
+                    url: "https://api.other.test/data".to_owned(),
+                    error_text: "Blocked by CORS policy: No Access-Control-Allow-Origin".to_owned(),
+                    status_code: None,
+                }],
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_UNCAUGHT_EXCEPTION));
+        assert!(ids.contains(&RULE_UNHANDLED_REJECTION));
+        assert!(ids.contains(&RULE_CSP_VIOLATION));
+        assert!(ids.contains(&RULE_CORS_BLOCK));
     }
 }

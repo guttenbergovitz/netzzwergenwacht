@@ -702,13 +702,22 @@ impl<T> CollectorOutcome<T> {
     }
 }
 
-/// JavaScript console error observed during Level 2 browser execution.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// JavaScript console error or runtime exception observed during Level 2 browser execution.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ConsoleErrorEvent {
-    /// Console severity level (for example `"error"`).
+    /// Console severity level (for example `"error"`, `"exception"`).
     pub level: String,
-    /// Console message text.
+    /// Console message text or sanitised exception description.
     pub text: String,
+    /// Classified error kind (`"uncaught_exception"`, `"unhandled_rejection"`, `"csp_violation"`, `"console_error"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<String>,
+    /// Source script or document URL where the error originated, if available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    /// 1-based line number in `source_url`, if available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_number: Option<u32>,
 }
 
 /// Subresource request failure observed during Level 2 browser execution.
@@ -755,12 +764,30 @@ pub struct ViewportLayoutObs {
 }
 
 /// Network resource timing and HTTP header observation from Level 2 browser execution.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ResourceTimingObs {
     /// Requested resource URL.
     pub url: String,
     /// Initiator or CDP resource type (for example `"script"`, `"stylesheet"`, `"image"`, `"font"`).
     pub resource_type: String,
+    /// CDP request identifier for waterfall correlation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    /// Initiator category (`"parser"`, `"script"`, `"preload"`, `"other"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initiator_type: Option<String>,
+    /// Initiator script or document URL, if available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initiator_url: Option<String>,
+    /// Request start offset in milliseconds relative to navigation start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_time_ms: Option<u64>,
+    /// Observed HTTP status code from response headers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_code: Option<u16>,
+    /// Initial browser fetch priority (for example `"VeryHigh"`, `"High"`, `"Low"`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
     /// Observed MIME type from response headers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type: Option<String>,
@@ -817,9 +844,15 @@ pub struct BrowserEvidence {
     /// Captured subresource network timings, transfer sizes, and response headers.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<ResourceTimingObs>,
+    /// Whether `resources` was truncated due to collector sampling limits.
+    #[serde(default)]
+    pub resources_truncated: bool,
     /// Rendered image geometry and viewport intersection observations.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rendered_images: Vec<RenderedImageObs>,
+    /// Whether `rendered_images` was truncated due to collector sampling limits.
+    #[serde(default)]
+    pub rendered_images_truncated: bool,
     /// Total element count in the rendered DOM (`document.querySelectorAll('*').length`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rendered_dom_elements: Option<usize>,

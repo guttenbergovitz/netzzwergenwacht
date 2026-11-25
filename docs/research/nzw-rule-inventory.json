@@ -1,7 +1,7 @@
 {
   "repository": "guttenbergovitz/netzzwergenwacht",
   "branch": "develop",
-  "total_rules": 127,
+  "total_rules": 131,
   "rules": [
     {
       "rule_id": "a11y.doc.lang",
@@ -1118,6 +1118,38 @@
       "dwarf": "ApplicationGraph",
       "module": "analysis::graph",
       "source_path": "src/analysis/graph.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.js.uncaught_exception",
+      "constant": "RULE_UNCAUGHT_EXCEPTION",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.js.unhandled_rejection",
+      "constant": "RULE_UNHANDLED_REJECTION",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.js.csp_violation",
+      "constant": "RULE_CSP_VIOLATION",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
+      "status": "native_rust"
+    },
+    {
+      "rule_id": "browser.network.cors_block",
+      "constant": "RULE_CORS_BLOCK",
+      "dwarf": "BrowserZwerg",
+      "module": "analysis::browser",
+      "source_path": "src/analysis/browser.rs",
       "status": "native_rust"
     }
   ]

@@ -1588,6 +1588,7 @@ mod tests {
                     console_errors: vec![ConsoleErrorEvent {
                         level: "error".to_owned(),
                         text: "ReferenceError: app is not defined".to_owned(),
+                        ..ConsoleErrorEvent::default()
                     }],
                     failed_requests: Vec::new(),
                     viewports: Vec::new(),

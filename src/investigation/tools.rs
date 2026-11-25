@@ -752,7 +752,8 @@ pub fn registered_tool_definitions(
     let security =
         InspectSecurityPostureTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
     let prev = InspectPreviousFindingsTool::new(target.clone(), policy);
-    let verify = VerifyFindingTool::new(target.clone(), policy, timeout, backend);
+    let verify = VerifyFindingTool::new(target.clone(), policy, timeout, Arc::clone(&backend));
+    let query_browser = QueryBrowserEvidenceTool::new(target.clone(), policy, timeout, backend);
     vec![
         portable_tool_definition(&browser),
         portable_tool_definition(&axe),
@@ -762,5 +763,147 @@ pub fn registered_tool_definitions(
         portable_tool_definition(&security),
         portable_tool_definition(&prev),
         portable_tool_definition(&verify),
+        portable_tool_definition(&query_browser),
     ]
+}
+
+/// Compact waterfall and runtime-error summary returned by [`QueryBrowserEvidenceTool`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryBrowserEvidenceOutput {
+    /// Status of the browser collection (`"captured"`, `"partial"`, `"failed"`, `"skipped"`).
+    pub collection_status: String,
+    /// Explicit completeness warnings (for example truncation or load timeout).
+    pub warnings: Vec<String>,
+    /// Total captured subresource count.
+    pub resource_count: usize,
+    /// Whether the subresource list was truncated at the collector cap.
+    pub resources_truncated: bool,
+    /// Total encoded transfer bytes across captured subresources.
+    pub total_transfer_bytes: u64,
+    /// Distinct third-party hostnames observed in subresource requests.
+    pub third_party_hosts: Vec<String>,
+    /// Count of runtime errors grouped by `error_kind`.
+    pub runtime_error_counts: std::collections::BTreeMap<String, usize>,
+    /// Sample of up to 10 slowest subresources (`url`, `resource_type`, `duration_ms`, `transfer_size`, `initiator_type`).
+    pub slowest_resources: Vec<crate::domain::ResourceTimingObs>,
+}
+
+/// `rig-core` [`PortableTool`] for selective querying of structured browser waterfall and error telemetry.
+pub struct QueryBrowserEvidenceTool {
+    authorised_target: AuditTarget,
+    policy: TargetPolicy,
+    timeout: Duration,
+    backend: Arc<dyn DiagnosticBackend>,
+}
+
+impl QueryBrowserEvidenceTool {
+    /// Constructs a new scoped browser evidence query tool.
+    #[must_use]
+    pub fn new(
+        authorised_target: AuditTarget,
+        policy: TargetPolicy,
+        timeout: Duration,
+        backend: Arc<dyn DiagnosticBackend>,
+    ) -> Self {
+        Self {
+            authorised_target,
+            policy,
+            timeout,
+            backend,
+        }
+    }
+}
+
+impl PortableTool for QueryBrowserEvidenceTool {
+    const NAME: &'static str = "query_browser_evidence";
+    type Args = TargetToolArgs;
+    type Output = QueryBrowserEvidenceOutput;
+    type Error = DiagnosticToolError;
+
+    fn description(&self) -> String {
+        "Query structured browser waterfall summary, third-party origins, categorised runtime \
+errors, and collection completeness flags without returning unbounded raw arrays."
+            .to_owned()
+    }
+
+    fn parameters(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "url": { "type": "string", "description": "Authorised target URL" }
+            },
+            "required": ["url"]
+        })
+    }
+
+    async fn call(&self, arguments: Self::Args) -> Result<Self::Output, Self::Error> {
+        let parsed = AuditTarget::parse(&arguments.url, self.policy)
+            .map_err(|e| DiagnosticToolError::UnauthorisedTarget(e.to_string()))?;
+        let scope = InvestigationScope::for_target(&self.authorised_target, self.policy);
+        if !scope.permits_target(&parsed) {
+            return Err(DiagnosticToolError::UnauthorisedTarget(format!(
+                "target '{}' is outside authorised origin",
+                parsed.as_str()
+            )));
+        }
+
+        let outcome = self.backend.collect_browser(&parsed, self.timeout).await;
+        let (status, detail) = outcome.status_summary();
+        let warnings = detail.into_iter().collect();
+
+        let Some(data) = (match &outcome {
+            CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+                Some(data)
+            }
+            CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => None,
+        }) else {
+            return Ok(QueryBrowserEvidenceOutput {
+                collection_status: status.to_owned(),
+                warnings,
+                resource_count: 0,
+                resources_truncated: false,
+                total_transfer_bytes: 0,
+                third_party_hosts: Vec::new(),
+                runtime_error_counts: std::collections::BTreeMap::new(),
+                slowest_resources: Vec::new(),
+            });
+        };
+
+        let page_host = url::Url::parse(&data.final_url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
+        let mut third_party_hosts = std::collections::BTreeSet::new();
+        let mut total_transfer_bytes = 0_u64;
+        for res in &data.resources {
+            total_transfer_bytes =
+                total_transfer_bytes.saturating_add(res.transfer_size.unwrap_or(0));
+            if let Ok(u) = url::Url::parse(&res.url)
+                && let Some(h) = u.host_str().map(str::to_ascii_lowercase)
+                && page_host.as_deref() != Some(h.as_str())
+            {
+                third_party_hosts.insert(h);
+            }
+        }
+
+        let mut runtime_error_counts = std::collections::BTreeMap::new();
+        for err in &data.console_errors {
+            let kind = err.error_kind.clone().unwrap_or_else(|| err.level.clone());
+            *runtime_error_counts.entry(kind).or_insert(0) += 1;
+        }
+
+        let mut slowest = data.resources.clone();
+        slowest.sort_by_key(|a| std::cmp::Reverse(a.duration_ms.unwrap_or(0)));
+        slowest.truncate(10);
+
+        Ok(QueryBrowserEvidenceOutput {
+            collection_status: status.to_owned(),
+            warnings,
+            resource_count: data.resources.len(),
+            resources_truncated: data.resources_truncated,
+            total_transfer_bytes,
+            third_party_hosts: third_party_hosts.into_iter().collect(),
+            runtime_error_counts,
+            slowest_resources: slowest,
+        })
+    }
 }
