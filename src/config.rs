@@ -22,11 +22,29 @@ pub enum ConfigError {
     /// Failed to parse TOML syntax or fields.
     #[error("invalid TOML configuration: {0}")]
     Toml(#[from] toml::de::Error),
+    /// The file parsed but contains values that cannot be used.
+    #[error("invalid configuration at `{field}`: {message}")]
+    Validation {
+        /// Dotted path of the offending field.
+        field: String,
+        /// Why the value is unusable.
+        message: String,
+    },
+}
+
+impl ConfigError {
+    /// Builds a [`ConfigError::Validation`] for `field`.
+    fn validation(field: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Validation {
+            field: field.into(),
+            message: message.into(),
+        }
+    }
 }
 
 /// Top-level application configuration loaded from TOML.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct AppConfig {
     /// Resource governance limits.
     pub budget: BudgetConfig,
@@ -108,9 +126,13 @@ pub enum ProviderKind {
 
 /// Provider and model selection for an agent role or specific dwarf.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ModelSpec {
     /// Provider family (`openai`, `anthropic`, `ollama`).
+    ///
+    /// The historical `kind` spelling is accepted as an alias so configuration files
+    /// written against the older documentation keep working.
+    #[serde(alias = "kind")]
     pub provider: ProviderKind,
     /// Model identifier (for example `"gpt-4o-mini"` or `"claude-3-5-sonnet-latest"`).
     pub model: String,
@@ -137,7 +159,7 @@ impl Default for ModelSpec {
 /// endpoint is configured here. The endpoint is recorded with the observation so
 /// a reader can tell which resolver produced the answer.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct DnsConfig {
     /// Optional DNS-over-HTTPS JSON endpoint used for CAA lookups.
     ///
@@ -149,7 +171,7 @@ pub struct DnsConfig {
 
 /// Per-role and per-dwarf model routing configuration (`[models]`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct ModelRoutingConfig {
     /// Default fallback model used when no role or dwarf override is set.
     pub default: ModelSpec,
@@ -167,20 +189,7 @@ impl ModelRoutingConfig {
     /// Resolves the effective [`ModelSpec`] for `dwarf_id`.
     #[must_use]
     pub fn resolve_for_dwarf(&self, dwarf_id: DwarfId) -> &ModelSpec {
-        let key = match dwarf_id {
-            DwarfId::Netz => "netz",
-            DwarfId::Sicherheits => "sicherheits",
-            DwarfId::Leistungs => "leistungs",
-            DwarfId::Struktur => "struktur",
-            DwarfId::Zugaenglichkeits => "zugaenglichkeits",
-            DwarfId::Such => "such",
-            DwarfId::Inhalts => "inhalts",
-            DwarfId::Gestaltungs => "gestaltungs",
-            DwarfId::Browser => "browser",
-            DwarfId::Dokumentations => "dokumentations",
-            DwarfId::Kommandant => "kommandant",
-        };
-        if let Some(specific) = self.dwarfs.get(key) {
+        if let Some(specific) = self.dwarfs.get(dwarf_id.config_key()) {
             return specific;
         }
         match dwarf_id {
@@ -189,11 +198,28 @@ impl ModelRoutingConfig {
             _ => self.specialist.as_ref().unwrap_or(&self.default),
         }
     }
+
+    /// Describes where the effective specification for `dwarf_id` came from.
+    ///
+    /// The label is stable and safe to display: it names the configuration table that
+    /// supplied the value, never a credential.
+    #[must_use]
+    pub fn resolve_origin_for_dwarf(&self, dwarf_id: DwarfId) -> &'static str {
+        if self.dwarfs.contains_key(dwarf_id.config_key()) {
+            return "models.dwarfs";
+        }
+        match dwarf_id {
+            DwarfId::Kommandant if self.kommandant.is_some() => "models.kommandant",
+            DwarfId::Dokumentations if self.dokumentation.is_some() => "models.dokumentation",
+            _ if self.specialist.is_some() => "models.specialist",
+            _ => "models.default",
+        }
+    }
 }
 
 /// Resource budget configuration section (`[budget]`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct BudgetConfig {
     /// End-to-end collection deadline in seconds.
     pub audit_timeout_secs: Option<u64>,
@@ -209,7 +235,7 @@ pub struct BudgetConfig {
 
 /// Policy quality-gate thresholds (`[policy]`).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PolicyConfig {
     /// Fail quality gate if any finding has severity `>= fail_on_severity`.
     pub fail_on_severity: Option<Severity>,
@@ -327,6 +353,464 @@ pub fn evaluate_policy(report: &AuditReport, policy: &PolicyConfig) -> PolicyEva
     PolicyEvaluation {
         passed: violations.is_empty(),
         violations,
+    }
+}
+
+/// Where the effective configuration came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigSource {
+    /// A file named explicitly with `--config`.
+    ExplicitFile(std::path::PathBuf),
+    /// A file named by the `NZW_CONFIG` environment variable.
+    EnvironmentFile(std::path::PathBuf),
+    /// `nzw.toml` found in the current working directory.
+    WorkingDirectory(std::path::PathBuf),
+    /// The user configuration file under `$XDG_CONFIG_HOME` or `$HOME/.config`.
+    UserConfig(std::path::PathBuf),
+    /// No file was found; built-in defaults are in effect.
+    BuiltInDefaults,
+}
+
+impl ConfigSource {
+    /// Returns a human-readable description suitable for `nzw config show`.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::ExplicitFile(path) => format!("explicit file {}", path.display()),
+            Self::EnvironmentFile(path) => format!("NZW_CONFIG {}", path.display()),
+            Self::WorkingDirectory(path) => format!("working directory {}", path.display()),
+            Self::UserConfig(path) => format!("user configuration {}", path.display()),
+            Self::BuiltInDefaults => "built-in defaults".to_owned(),
+        }
+    }
+}
+
+/// A parsed configuration together with the source that produced it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoadedConfig {
+    /// Validated configuration.
+    pub config: AppConfig,
+    /// Where it came from.
+    pub source: ConfigSource,
+}
+
+/// Configuration discovery inputs, resolved in precedence order.
+///
+/// The struct is explicit so discovery is testable without mutating process-wide
+/// environment variables.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigDiscovery {
+    /// Path supplied with `--config`.
+    pub explicit: Option<std::path::PathBuf>,
+    /// Path supplied by `NZW_CONFIG`.
+    pub environment: Option<std::path::PathBuf>,
+    /// Directory searched for `nzw.toml`.
+    pub working_directory: std::path::PathBuf,
+    /// User configuration path, when one can be determined.
+    pub user_config: Option<std::path::PathBuf>,
+}
+
+impl ConfigDiscovery {
+    /// Collects discovery inputs from the current process environment.
+    #[must_use]
+    pub fn from_process() -> Self {
+        let environment = std::env::var("NZW_CONFIG")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(std::path::PathBuf::from);
+        let user_config = std::env::var("XDG_CONFIG_HOME")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|home| std::path::PathBuf::from(home).join(".config"))
+            })
+            .map(|root| root.join("netzzwergenwacht").join("nzw.toml"));
+        Self {
+            explicit: None,
+            environment,
+            working_directory: std::env::current_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from(".")),
+            user_config,
+        }
+    }
+
+    /// Resolves the configuration that applies to this invocation.
+    ///
+    /// A missing discovered file is not an error: built-in defaults apply and the
+    /// source says so. A file that exists but cannot be parsed or validated is an
+    /// error, because silently ignoring an operator's configuration would be worse
+    /// than refusing to start.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError`] when a named or existing file cannot be read, parsed or
+    /// validated.
+    pub fn resolve(&self) -> Result<LoadedConfig, ConfigError> {
+        if let Some(path) = &self.explicit {
+            return Ok(LoadedConfig {
+                config: load_validated(path)?,
+                source: ConfigSource::ExplicitFile(path.clone()),
+            });
+        }
+        if let Some(path) = &self.environment {
+            return Ok(LoadedConfig {
+                config: load_validated(path)?,
+                source: ConfigSource::EnvironmentFile(path.clone()),
+            });
+        }
+        let local = self.working_directory.join("nzw.toml");
+        if local.is_file() {
+            return Ok(LoadedConfig {
+                config: load_validated(&local)?,
+                source: ConfigSource::WorkingDirectory(local),
+            });
+        }
+        if let Some(user) = &self.user_config
+            && user.is_file()
+        {
+            return Ok(LoadedConfig {
+                config: load_validated(user)?,
+                source: ConfigSource::UserConfig(user.clone()),
+            });
+        }
+        let config = AppConfig::default();
+        config.validate()?;
+        Ok(LoadedConfig {
+            config,
+            source: ConfigSource::BuiltInDefaults,
+        })
+    }
+}
+
+fn load_validated(path: &Path) -> Result<AppConfig, ConfigError> {
+    let config = AppConfig::from_toml_file(path)?;
+    config.validate()?;
+    Ok(config)
+}
+
+/// Resolved provider and model for one agent, with its configuration origin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EffectiveRoute {
+    /// Lowercase configuration key of the agent.
+    pub agent: String,
+    /// German display name (`KommandantZwerg`, `NetzZwerg`, …).
+    pub display_name: String,
+    /// Provider family.
+    pub provider: String,
+    /// Model identifier.
+    pub model: String,
+    /// Configured endpoint override, if any.
+    pub base_url: Option<String>,
+    /// Where the credential is expected to come from, without revealing it.
+    pub credential_reference: String,
+    /// Configuration table that supplied this route.
+    pub origin: String,
+}
+
+/// Redacted, resolved view of an [`AppConfig`].
+///
+/// Secrets never appear: routes name the credential *source* only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EffectiveConfiguration {
+    /// Human-readable configuration source.
+    pub source: String,
+    /// Effective target policy (`public_only` or `allow_private`).
+    pub target_policy: String,
+    /// End-to-end collection deadline in seconds.
+    pub audit_timeout_secs: u64,
+    /// Per-request HTTP timeout in seconds.
+    pub http_timeout_secs: u64,
+    /// Maximum redirects.
+    pub max_redirects: usize,
+    /// Maximum response bytes.
+    pub max_response_bytes: usize,
+    /// Maximum concurrency.
+    pub max_concurrency: usize,
+    /// Collectors the policy gate requires.
+    pub require_collectors: Vec<String>,
+    /// Configured DNS-over-HTTPS endpoint for CAA, if any.
+    pub dns_caa_endpoint: Option<String>,
+    /// Resolved model route per agent.
+    pub routes: Vec<EffectiveRoute>,
+}
+
+impl EffectiveConfiguration {
+    /// Renders the configuration as terminal lines for `nzw config show` and the
+    /// Mission Review panel.
+    #[must_use]
+    pub fn render_lines(&self) -> Vec<String> {
+        let mut lines = vec![
+            format!("Configuration source : {}", self.source),
+            format!("Target policy        : {}", self.target_policy),
+            format!(
+                "Budget               : audit {} s, http {} s, redirects {}, response {} B, concurrency {}",
+                self.audit_timeout_secs,
+                self.http_timeout_secs,
+                self.max_redirects,
+                self.max_response_bytes,
+                self.max_concurrency
+            ),
+            format!(
+                "Required collectors  : {}",
+                if self.require_collectors.is_empty() {
+                    "none".to_owned()
+                } else {
+                    self.require_collectors.join(", ")
+                }
+            ),
+            format!(
+                "DNS CAA endpoint     : {}",
+                self.dns_caa_endpoint.as_deref().unwrap_or("not configured")
+            ),
+            "Model routing        :".to_owned(),
+        ];
+        for route in &self.routes {
+            let endpoint = route.base_url.as_deref().unwrap_or("provider default");
+            lines.push(format!(
+                "  {:<18} {:<22} {:>8} / {}  [{}] endpoint={} credential={}",
+                route.agent,
+                route.display_name,
+                route.provider,
+                route.model,
+                route.origin,
+                endpoint,
+                route.credential_reference
+            ));
+        }
+        lines
+    }
+}
+
+impl ProviderKind {
+    /// Returns the canonical configuration spelling of this provider.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenAi => "openai",
+            Self::Anthropic => "anthropic",
+            Self::Ollama => "ollama",
+        }
+    }
+}
+
+fn is_local_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
+fn validate_endpoint(field: &str, raw: &str) -> Result<(), ConfigError> {
+    let url = url::Url::parse(raw)
+        .map_err(|err| ConfigError::validation(field, format!("not a valid URL: {err}")))?;
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(ConfigError::validation(
+            field,
+            "must not contain embedded credentials",
+        ));
+    }
+    let Some(host) = url.host_str() else {
+        return Err(ConfigError::validation(field, "must name a host"));
+    };
+    match url.scheme() {
+        "https" => {}
+        "http" if is_local_host(host) => {}
+        "http" => {
+            return Err(ConfigError::validation(
+                field,
+                "plain http is only permitted for loopback endpoints; use https",
+            ));
+        }
+        other => {
+            return Err(ConfigError::validation(
+                field,
+                format!("unsupported scheme `{other}`"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_model_spec(field: &str, spec: &ModelSpec) -> Result<(), ConfigError> {
+    if spec.model.trim().is_empty() {
+        return Err(ConfigError::validation(
+            format!("{field}.model"),
+            "model identifier must not be empty",
+        ));
+    }
+    if spec.model.len() > 200 || spec.model.chars().any(char::is_control) {
+        return Err(ConfigError::validation(
+            format!("{field}.model"),
+            "model identifier must be at most 200 characters and free of control characters",
+        ));
+    }
+    if let Some(base_url) = &spec.base_url {
+        validate_endpoint(&format!("{field}.base_url"), base_url)?;
+    }
+    if let Some(env) = &spec.api_key_env {
+        let valid = !env.is_empty()
+            && env
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+        if !valid {
+            return Err(ConfigError::validation(
+                format!("{field}.api_key_env"),
+                "must be an environment variable name (A-Z, 0-9, underscore)",
+            ));
+        }
+    }
+    Ok(())
+}
+
+impl AppConfig {
+    /// Validates values that TOML syntax alone cannot reject.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ConfigError::Validation`] naming the offending field.
+    pub fn validate(&self) -> Result<(), ConfigError> {
+        if self.budget.audit_timeout_secs == Some(0) {
+            return Err(ConfigError::validation(
+                "budget.audit_timeout_secs",
+                "must be at least 1 second",
+            ));
+        }
+        if let Some(secs) = self.budget.audit_timeout_secs
+            && secs > 3_600
+        {
+            return Err(ConfigError::validation(
+                "budget.audit_timeout_secs",
+                "must not exceed 3600 seconds",
+            ));
+        }
+        if self.budget.http_timeout_secs == Some(0) {
+            return Err(ConfigError::validation(
+                "budget.http_timeout_secs",
+                "must be at least 1 second",
+            ));
+        }
+        if let Some(secs) = self.budget.http_timeout_secs
+            && secs > 3_600
+        {
+            return Err(ConfigError::validation(
+                "budget.http_timeout_secs",
+                "must not exceed 3600 seconds",
+            ));
+        }
+        if let Some(redirects) = self.budget.max_redirects
+            && redirects > 100
+        {
+            return Err(ConfigError::validation(
+                "budget.max_redirects",
+                "must not exceed 100",
+            ));
+        }
+        if self.budget.max_response_bytes == Some(0) {
+            return Err(ConfigError::validation(
+                "budget.max_response_bytes",
+                "must be at least 1 byte",
+            ));
+        }
+        if self.budget.max_concurrency == Some(0) {
+            return Err(ConfigError::validation(
+                "budget.max_concurrency",
+                "must be at least 1",
+            ));
+        }
+        if let Some(concurrency) = self.budget.max_concurrency
+            && concurrency > 64
+        {
+            return Err(ConfigError::validation(
+                "budget.max_concurrency",
+                "must not exceed 64",
+            ));
+        }
+
+        for collector in &self.policy.require_collectors {
+            let name = collector.trim().to_ascii_lowercase();
+            if !matches!(name.as_str(), "browser" | "lighthouse" | "axe") {
+                return Err(ConfigError::validation(
+                    "policy.require_collectors",
+                    format!(
+                        "unknown collector `{collector}`; supported names are browser, lighthouse and axe"
+                    ),
+                ));
+            }
+        }
+
+        if let Some(endpoint) = &self.dns.caa_doh_endpoint {
+            validate_endpoint("dns.caa_doh_endpoint", endpoint)?;
+        }
+
+        validate_model_spec("models.default", &self.models.default)?;
+        if let Some(spec) = &self.models.kommandant {
+            validate_model_spec("models.kommandant", spec)?;
+        }
+        if let Some(spec) = &self.models.specialist {
+            validate_model_spec("models.specialist", spec)?;
+        }
+        if let Some(spec) = &self.models.dokumentation {
+            validate_model_spec("models.dokumentation", spec)?;
+        }
+        for (key, spec) in &self.models.dwarfs {
+            if DwarfId::from_config_key(key).is_none() {
+                return Err(ConfigError::validation(
+                    format!("models.dwarfs.{key}"),
+                    "unknown dwarf key; see `nzw config show` for the supported keys",
+                ));
+            }
+            validate_model_spec(&format!("models.dwarfs.{key}"), spec)?;
+        }
+        Ok(())
+    }
+
+    /// Resolves the effective route for every agent in the brigade registry.
+    #[must_use]
+    pub fn effective_routes(&self) -> Vec<EffectiveRoute> {
+        crate::brigade::ZWERGENBRIGADE
+            .iter()
+            .map(|profile| {
+                let spec = self.models.resolve_for_dwarf(profile.id);
+                EffectiveRoute {
+                    agent: profile.id.config_key().to_owned(),
+                    display_name: profile.display_name.to_owned(),
+                    provider: spec.provider.as_str().to_owned(),
+                    model: spec.model.clone(),
+                    base_url: spec.base_url.clone(),
+                    credential_reference: spec
+                        .api_key_env
+                        .as_ref()
+                        .map_or_else(|| "provider default".to_owned(), |env| format!("env:{env}")),
+                    origin: self.models.resolve_origin_for_dwarf(profile.id).to_owned(),
+                }
+            })
+            .collect()
+    }
+
+    /// Returns a redacted, resolved view of this configuration.
+    #[must_use]
+    pub fn effective(&self, source: &ConfigSource) -> EffectiveConfiguration {
+        let budget = self.execution_budget();
+        EffectiveConfiguration {
+            source: source.label(),
+            target_policy: match self.target_policy() {
+                TargetPolicy::PublicOnly => "public_only".to_owned(),
+                TargetPolicy::AllowPrivate => "allow_private".to_owned(),
+            },
+            audit_timeout_secs: budget.audit_timeout.as_secs(),
+            http_timeout_secs: budget.http_timeout.as_secs(),
+            max_redirects: budget.max_redirects,
+            max_response_bytes: budget.max_response_bytes,
+            max_concurrency: budget.max_concurrency,
+            require_collectors: self.policy.require_collectors.clone(),
+            dns_caa_endpoint: self.dns.caa_doh_endpoint.clone(),
+            routes: self.effective_routes(),
+        }
     }
 }
 

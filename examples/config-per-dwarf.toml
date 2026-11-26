@@ -1,0 +1,16 @@
+# Per-dwarf routing. Keys are the lowercase identifiers from the brigade
+# registry: netz, sicherheits, leistungs, struktur, zugaenglichkeits, such,
+# inhalts, gestaltungs, browser, dokumentations, kommandant.
+
+[models.default]
+provider = "openai"
+model = "your-default-model-id"
+
+[models.dwarfs.sicherheits]
+provider = "anthropic"
+model = "your-security-model-id"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[models.dwarfs.inhalts]
+provider = "openai"
+model = "your-content-model-id"

@@ -1,0 +1,5 @@
+# CAA lookups need an explicitly configured DNS-over-HTTPS endpoint.
+# Without this section no external resolver is contacted.
+
+[dns]
+caa_doh_endpoint = "https://cloudflare-dns.com/dns-query"

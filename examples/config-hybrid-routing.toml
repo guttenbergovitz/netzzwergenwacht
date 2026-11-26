@@ -1,0 +1,20 @@
+# Role-based routing: one model coordinates, another does specialist work and
+# reporting. Every other specialist inherits `models.specialist`.
+
+[models.default]
+provider = "openai"
+model = "your-default-model-id"
+
+[models.kommandant]
+provider = "anthropic"
+model = "your-coordinator-model-id"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[models.specialist]
+provider = "openai"
+model = "your-specialist-model-id"
+
+[models.dokumentation]
+provider = "ollama"
+model = "your-local-model-id"
+base_url = "http://127.0.0.1:11434"

@@ -1,0 +1,6 @@
+# Local Ollama server. Loopback HTTP is permitted; remote endpoints must use https.
+
+[models.default]
+provider = "ollama"
+model = "your-local-model-id"
+base_url = "http://127.0.0.1:11434"

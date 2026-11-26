@@ -103,6 +103,11 @@ enum Command {
         #[arg(long)]
         history: Option<PathBuf>,
     },
+    /// Inspect the resolved configuration without starting a run.
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
     /// Validate a target URL against target and SSRF policies without fetching.
     Validate {
         /// Target URL to validate.
@@ -232,6 +237,9 @@ enum Command {
         /// Allow loopback and private network targets (for local testing only).
         #[arg(long)]
         allow_private: bool,
+        /// Optional path to a TOML configuration file.
+        #[arg(long)]
+        config: Option<PathBuf>,
         /// Force monochrome rendering (`NO_COLOR` mode).
         #[arg(long)]
         monochrome: bool,
@@ -290,6 +298,19 @@ enum OutputFormat {
     Markdown,
 }
 
+#[derive(Debug, Subcommand)]
+enum ConfigAction {
+    /// Print the effective configuration with credentials redacted.
+    Show {
+        /// Optional path to a TOML configuration file.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+    },
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum FailOnSeverity {
     Critical,
@@ -343,6 +364,38 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
+        Command::Config { action } => match action {
+            ConfigAction::Show { config, format } => {
+                let discovery = config::ConfigDiscovery {
+                    explicit: config,
+                    ..config::ConfigDiscovery::from_process()
+                };
+                match discovery.resolve() {
+                    Ok(loaded) => {
+                        let effective = loaded.config.effective(&loaded.source);
+                        match format {
+                            OutputFormat::Json => match serde_json::to_string_pretty(&effective) {
+                                Ok(json) => println!("{json}"),
+                                Err(err) => {
+                                    eprintln!("failed to render configuration: {err}");
+                                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                                }
+                            },
+                            OutputFormat::Text | OutputFormat::Markdown => {
+                                for line in effective.render_lines() {
+                                    println!("{line}");
+                                }
+                            }
+                        }
+                        ExitCode::from(EXIT_OK)
+                    }
+                    Err(err) => {
+                        eprintln!("{err}");
+                        ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+                    }
+                }
+            }
+        },
         Command::Validate { url, allow_private } => {
             let policy = target_policy(allow_private);
             match AuditTarget::parse(&url, policy) {
@@ -510,11 +563,25 @@ async fn main() -> ExitCode {
             axe,
             lighthouse,
             allow_private,
+            config,
             monochrome,
             high_contrast,
             ascii,
             memory_dir,
         } => {
+            let discovery = config::ConfigDiscovery {
+                explicit: config,
+                ..config::ConfigDiscovery::from_process()
+            };
+            let loaded = match discovery.resolve() {
+                Ok(loaded) => loaded,
+                Err(err) => {
+                    eprintln!("{err}");
+                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                }
+            };
+            let configured_policy = loaded.config.target_policy();
+            let budget = loaded.config.execution_budget();
             let theme_mode = if monochrome {
                 Some(ThemeMode::Monochrome)
             } else if high_contrast {
@@ -531,7 +598,12 @@ async fn main() -> ExitCode {
                 report_path: report,
                 history_path: history,
                 output_path: output,
-                policy: target_policy(allow_private),
+                policy: if allow_private {
+                    TargetPolicy::AllowPrivate
+                } else {
+                    configured_policy
+                },
+                budget,
                 memory_dir,
                 theme_mode,
                 ascii_only: ascii,

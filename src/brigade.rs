@@ -217,6 +217,39 @@ impl DwarfId {
     pub fn display_name(self) -> &'static str {
         profile(self).display_name
     }
+
+    /// Returns the lowercase configuration key used in `[models.dwarfs.<key>]`.
+    ///
+    /// The key is ASCII without umlauts so it can appear in TOML table names and
+    /// command-line arguments without escaping.
+    #[must_use]
+    pub const fn config_key(self) -> &'static str {
+        match self {
+            Self::Netz => "netz",
+            Self::Sicherheits => "sicherheits",
+            Self::Leistungs => "leistungs",
+            Self::Struktur => "struktur",
+            Self::Zugaenglichkeits => "zugaenglichkeits",
+            Self::Such => "such",
+            Self::Inhalts => "inhalts",
+            Self::Gestaltungs => "gestaltungs",
+            Self::Browser => "browser",
+            Self::Dokumentations => "dokumentations",
+            Self::Kommandant => "kommandant",
+        }
+    }
+
+    /// Resolves a configuration key back into a [`DwarfId`].
+    ///
+    /// Returns `None` for unknown keys so configuration validation can report the
+    /// offending key instead of silently ignoring it.
+    #[must_use]
+    pub fn from_config_key(key: &str) -> Option<Self> {
+        ZWERGENBRIGADE
+            .iter()
+            .find(|profile| profile.id.config_key() == key)
+            .map(|profile| profile.id)
+    }
 }
 
 #[cfg(test)]

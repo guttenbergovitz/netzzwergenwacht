@@ -1,0 +1,12 @@
+# CI quality gate thresholds and required Level 2 collectors.
+
+[policy]
+fail_on_severity = "high"
+max_critical = 0
+max_high = 2
+allow_private = false
+require_collectors = ["browser", "axe"]
+
+[budget]
+audit_timeout_secs = 120
+http_timeout_secs = 30

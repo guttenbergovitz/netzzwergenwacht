@@ -1,0 +1,7 @@
+# OpenRouter is an OpenAI-compatible endpoint, not a native provider.
+
+[models.default]
+provider = "openai"
+model = "your-openrouter-model-id"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"

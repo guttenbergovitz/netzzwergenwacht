@@ -1,0 +1,7 @@
+# Minimal configuration: built-in budgets, public-target policy and one model.
+# Credentials are never stored here; supply them through the environment or the
+# Zwergenleitstand session store (see CONFIG.md).
+
+[models.default]
+provider = "openai"
+model = "your-model-id"
