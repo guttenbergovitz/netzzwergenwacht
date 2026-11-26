@@ -97,6 +97,12 @@ pub enum AppAction {
     RunFailed(String),
     /// Background report save completed.
     ReportSaved(Result<PathBuf, String>),
+    /// The background task observed a cancellation request and has fully stopped,
+    /// or the escalation deadline expired and the task was force-terminated.
+    CancellationSettled {
+        /// `true` when the cooperative deadline expired before the task stopped.
+        escalated: bool,
+    },
 }
 
 /// Side-effects requested by the pure state reducer and executed by the runtime.
@@ -104,7 +110,7 @@ pub enum AppAction {
 pub enum AppEffect {
     /// Spawn a background diagnostic run with the given specification.
     StartRun(RunLaunchSpec),
-    /// Signal the active cancellation token to abort the running diagnostic task.
+    /// Signal the active cancellation token to stop the running diagnostic task.
     CancelActiveRun,
     /// Persist the current [`crate::analysis::AuditReport`] to the specified path.
     SaveReport(PathBuf),

@@ -17,7 +17,8 @@ use netzzwergenwacht::persistence;
 use netzzwergenwacht::tui::{
     AppAction, AppEffect, AppState, DiagnosticArtefacts, EvidenceCategory, GlyphSet, RunLaunchSpec,
     RunLifecycleState, ThemeMode, UserAction, WorkbenchView, execute_diagnostic_run,
-    load_offline_history, load_offline_report, reduce, render, save_current_report,
+    execute_diagnostic_run_cancellable, load_offline_history, load_offline_report, reduce, render,
+    save_current_report,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -503,4 +504,36 @@ fn responsive_layouts_render_narrow_standard_and_wide_without_panicking() {
                 .expect("render view at responsive size");
         }
     }
+}
+
+#[tokio::test]
+async fn cancelled_run_stops_before_acquisition() {
+    let target =
+        AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).expect("target");
+    let (sink, _events) = diagnostic_event_channel(RunId::new("run-cancel"));
+    let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    cancel_tx.send(true).expect("pre-cancel the run");
+
+    let spec = RunLaunchSpec {
+        target,
+        mode: DiagnosticRunMode::DeterministicCheck,
+        enable_browser: true,
+        enable_axe: true,
+        enable_lighthouse: true,
+    };
+    let outcome = execute_diagnostic_run_cancellable(
+        spec,
+        TargetPolicy::PublicOnly,
+        ExecutionBudget::default(),
+        String::from("cancel probe"),
+        sink,
+        cancel_rx,
+    )
+    .await;
+
+    let error = outcome.expect_err("a pre-cancelled run must not complete");
+    assert!(
+        error.contains("cancelled by operator"),
+        "unexpected cancellation error: {error}"
+    );
 }

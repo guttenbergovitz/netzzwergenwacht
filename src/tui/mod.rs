@@ -23,8 +23,8 @@ pub use self::action::{AppAction, AppEffect, RunLaunchSpec, UserAction};
 pub use self::keymap::translate_key_event;
 pub use self::reducer::reduce;
 pub use self::runtime::{
-    TuiStartupOptions, execute_diagnostic_run, initialize_state, load_offline_history,
-    load_offline_report, run_tui, save_current_report,
+    TuiStartupOptions, execute_diagnostic_run, execute_diagnostic_run_cancellable,
+    initialize_state, load_offline_history, load_offline_report, run_tui, save_current_report,
 };
 pub use self::sanitize::{sanitize_line, sanitize_multiline, sanitize_url_for_display};
 pub use self::state::{

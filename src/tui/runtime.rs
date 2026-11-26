@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::adapters;
@@ -33,6 +33,9 @@ use crate::tui::theme::{GlyphSet, ThemeMode};
 use crate::tui::views::render;
 
 static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+/// Time the runtime waits for cooperative shutdown before force-terminating a task.
+const CANCELLATION_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Startup configuration passed from the CLI (`nzw tui` or `--tui`) into the workbench runtime.
 #[allow(clippy::struct_excessive_bools)]
@@ -277,6 +280,22 @@ struct ActiveBackgroundTask {
     handle: JoinHandle<()>,
     event_rx: DiagnosticEventReceiver,
     result_rx: mpsc::Receiver<Result<DiagnosticArtefacts, String>>,
+    /// Cooperative cancellation token observed by the background runner.
+    cancel: watch::Sender<bool>,
+    /// Deadline after which the runtime stops waiting for a cooperative shutdown.
+    cancel_deadline: Option<Instant>,
+}
+
+impl ActiveBackgroundTask {
+    /// Requests cooperative cancellation and arms the escalation deadline.
+    ///
+    /// The task is not aborted here: the runtime only reports `Cancelled` once the
+    /// join handle finishes, so child processes and browser sessions are confirmed
+    /// gone rather than merely assumed to be.
+    fn request_cancellation(&mut self) {
+        let _ = self.cancel.send(true);
+        self.cancel_deadline = Some(Instant::now() + CANCELLATION_DEADLINE);
+    }
 }
 
 /// Runs the interactive Zwergenleitstand TUI session until the operator exits.
@@ -304,7 +323,8 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
         while let Some(effect) = pending_effects.pop() {
             match effect {
                 AppEffect::StartRun(spec) => {
-                    if let Some(prev) = active_task.take() {
+                    if let Some(mut prev) = active_task.take() {
+                        prev.request_cancellation();
                         prev.handle.abort();
                     }
                     let seq = RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
@@ -319,8 +339,8 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                     ));
                 }
                 AppEffect::CancelActiveRun => {
-                    if let Some(prev) = active_task.take() {
-                        prev.handle.abort();
+                    if let Some(task) = &mut active_task {
+                        task.request_cancellation();
                     }
                 }
                 AppEffect::SaveReport(path) => {
@@ -329,7 +349,8 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                     pending_effects.extend(follow_up);
                 }
                 AppEffect::Quit => {
-                    if let Some(prev) = active_task.take() {
+                    if let Some(mut prev) = active_task.take() {
+                        prev.request_cancellation();
                         prev.handle.abort();
                     }
                     return Ok(());
@@ -338,10 +359,35 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
         }
 
         if state.should_quit {
-            if let Some(prev) = active_task.take() {
+            if let Some(mut prev) = active_task.take() {
+                prev.request_cancellation();
                 prev.handle.abort();
             }
             return Ok(());
+        }
+
+        // Confirm cancellation only once the background task has actually stopped.
+        //
+        // `Cancelled` is never reported from the operator's request alone: the join
+        // handle must have finished, or the escalation deadline must have expired and
+        // the task been force-terminated.
+        if state.lifecycle == RunLifecycleState::Cancelling {
+            let settlement = active_task.as_ref().and_then(|task| {
+                if task.handle.is_finished() {
+                    Some(false)
+                } else {
+                    task.cancel_deadline
+                        .is_some_and(|deadline| Instant::now() >= deadline)
+                        .then_some(true)
+                }
+            });
+            if let Some(escalated) = settlement {
+                if let Some(task) = active_task.take() {
+                    task.handle.abort();
+                }
+                let effs = reduce(&mut state, AppAction::CancellationSettled { escalated });
+                pending_effects.extend(effs);
+            }
         }
 
         // Drain bounded diagnostic events from active background run.
@@ -425,10 +471,11 @@ fn spawn_background_run(
 ) -> ActiveBackgroundTask {
     let (sink, event_rx) = diagnostic_event_channel(run_id);
     let (result_tx, result_rx) = mpsc::channel(1);
+    let (cancel_tx, cancel_rx) = watch::channel(false);
 
     let handle = tokio::spawn(async move {
-        let outcome = Box::pin(execute_diagnostic_run(
-            spec, policy, budget, objective, sink,
+        let outcome = Box::pin(execute_diagnostic_run_cancellable(
+            spec, policy, budget, objective, sink, cancel_rx,
         ))
         .await;
         let _ = Box::pin(result_tx.send(outcome)).await;
@@ -438,6 +485,8 @@ fn spawn_background_run(
         handle,
         event_rx,
         result_rx,
+        cancel: cancel_tx,
+        cancel_deadline: None,
     }
 }
 
@@ -446,13 +495,37 @@ fn spawn_background_run(
 /// # Errors
 ///
 /// Returns an error string if target resolution or mandatory execution steps fail.
-#[allow(clippy::too_many_lines)]
 pub async fn execute_diagnostic_run(
     spec: RunLaunchSpec,
     policy: TargetPolicy,
     budget: ExecutionBudget,
     objective: String,
     sink: DiagnosticEventSink,
+) -> Result<DiagnosticArtefacts, String> {
+    let (_cancel, cancel_rx) = watch::channel(false);
+    execute_diagnostic_run_cancellable(spec, policy, budget, objective, sink, cancel_rx).await
+}
+
+/// Executes a diagnostic run with a cooperative cancellation token.
+///
+/// The runner checks the token at phase boundaries (before acquisition, before
+/// analysis, before investigation and before patrol) and returns an error as soon
+/// as cancellation is observed. Long-running collectors may therefore finish their
+/// current bounded step before yielding; the runtime only reports `Cancelled` once
+/// this future has returned and every guard has been dropped.
+///
+/// # Errors
+///
+/// Returns an error string if target resolution, mandatory execution steps fail, or
+/// the operator cancels the run.
+#[allow(clippy::too_many_lines)]
+pub async fn execute_diagnostic_run_cancellable(
+    spec: RunLaunchSpec,
+    policy: TargetPolicy,
+    budget: ExecutionBudget,
+    objective: String,
+    sink: DiagnosticEventSink,
+    cancel: watch::Receiver<bool>,
 ) -> Result<DiagnosticArtefacts, String> {
     let start = Instant::now();
     let target_str = spec.target.as_str().to_owned();
@@ -469,9 +542,15 @@ pub async fn execute_diagnostic_run(
 
     match spec.mode {
         DiagnosticRunMode::DeterministicCheck | DiagnosticRunMode::OfflineExploration => {
+            if *cancel.borrow() {
+                return Err(String::from("cancelled by operator before acquisition"));
+            }
             let snapshot =
                 collect_snapshot_with_events(&target, &spec, &budget, policy, &sink).await;
 
+            if *cancel.borrow() {
+                return Err(String::from("cancelled by operator before analysis"));
+            }
             let report = analysis::run_all_with_events(&snapshot, &sink);
             let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
             let total_findings = report.summary.critical_findings
@@ -501,6 +580,9 @@ pub async fn execute_diagnostic_run(
             })
         }
         DiagnosticRunMode::AgenticInvestigation => {
+            if *cancel.borrow() {
+                return Err(String::from("cancelled by operator before investigation"));
+            }
             if let Ok(llm) = OpenAiCompatibleProvider::from_env() {
                 let backend = Arc::new(LiveDiagnosticBackend);
                 let inv_budget = InvestigationBudget::default();
@@ -563,6 +645,9 @@ pub async fn execute_diagnostic_run(
             }
         }
         DiagnosticRunMode::AutonomousPatrol => {
+            if *cancel.borrow() {
+                return Err(String::from("cancelled by operator before patrol"));
+            }
             sink.emit(
                 EventContext::new()
                     .with_target(&target_str)

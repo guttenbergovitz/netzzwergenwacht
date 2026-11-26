@@ -57,6 +57,22 @@ pub fn reduce(state: &mut AppState, action: AppAction) -> Vec<AppEffect> {
             state.status_message = format!("Diagnostic run failed: {clean}");
             Vec::new()
         }
+        AppAction::CancellationSettled { escalated } => {
+            if escalated {
+                state.lifecycle = RunLifecycleState::TerminationEscalated;
+                state.push_activity(
+                    "Cancellation deadline exceeded; background task force-terminated.",
+                );
+                state.status_message = String::from(
+                    "Cancellation escalated: task cleanup did not confirm before the deadline.",
+                );
+            } else {
+                state.lifecycle = RunLifecycleState::Cancelled;
+                state.push_activity("Run cancelled; background task and child processes stopped.");
+                state.status_message = String::from("Run cancelled.");
+            }
+            Vec::new()
+        }
         AppAction::ReportSaved(result) => {
             match result {
                 Ok(path) => {
@@ -928,5 +944,48 @@ mod tests {
         assert_eq!(state.system_metrics.last_event_sequence, 4);
         assert_eq!(state.system_metrics.sequence_gap_events, 2);
         assert_eq!(state.system_metrics.dropped_events, 2);
+    }
+
+    #[test]
+    fn cancellation_is_only_reported_after_the_task_settles() {
+        let mut state = AppState {
+            lifecycle: RunLifecycleState::Running,
+            ..AppState::default()
+        };
+        state.launcher.open = false;
+
+        let effects = reduce(&mut state, AppAction::User(UserAction::CancelRun));
+        assert_eq!(state.lifecycle, RunLifecycleState::Cancelling);
+        assert_eq!(effects, vec![AppEffect::CancelActiveRun]);
+
+        let effects = reduce(
+            &mut state,
+            AppAction::CancellationSettled { escalated: false },
+        );
+        assert_eq!(state.lifecycle, RunLifecycleState::Cancelled);
+        assert_eq!(effects.len(), 0, "settlement must not request new effects");
+        assert_eq!(
+            state.lifecycle.operational_status(),
+            crate::tui::theme::OperationalStatus::Cancelled
+        );
+    }
+
+    #[test]
+    fn cancellation_that_outlives_the_deadline_is_reported_as_escalated() {
+        let mut state = AppState {
+            lifecycle: RunLifecycleState::Cancelling,
+            ..AppState::default()
+        };
+
+        reduce(
+            &mut state,
+            AppAction::CancellationSettled { escalated: true },
+        );
+
+        assert_eq!(state.lifecycle, RunLifecycleState::TerminationEscalated);
+        assert_eq!(
+            state.lifecycle.operational_status(),
+            crate::tui::theme::OperationalStatus::Failed
+        );
     }
 }

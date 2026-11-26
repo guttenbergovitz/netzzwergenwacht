@@ -290,8 +290,11 @@ pub enum RunLifecycleState {
     Partial,
     /// Diagnostic run failed with an error.
     Failed,
-    /// Diagnostic run was cancelled by the operator.
+    /// Diagnostic run was cancelled by the operator and cleanup has been confirmed.
     Cancelled,
+    /// Cancellation was requested but the task did not stop before the deadline and
+    /// had to be force-terminated. Cleanup is not confirmed.
+    TerminationEscalated,
 }
 
 impl RunLifecycleState {
@@ -303,7 +306,7 @@ impl RunLifecycleState {
             Self::Running | Self::Cancelling => OperationalStatus::Running,
             Self::Completed => OperationalStatus::Done,
             Self::Partial => OperationalStatus::Partial,
-            Self::Failed => OperationalStatus::Failed,
+            Self::Failed | Self::TerminationEscalated => OperationalStatus::Failed,
             Self::Cancelled => OperationalStatus::Cancelled,
         }
     }
