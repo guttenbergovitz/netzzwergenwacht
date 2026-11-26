@@ -15,7 +15,9 @@ use netzzwergenwacht::config::{self, AppConfig, PolicyConfig, PolicyEvaluation};
 use netzzwergenwacht::domain::{
     AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, Measurement, Severity, TargetPolicy,
 };
+use netzzwergenwacht::events::DiagnosticRunMode;
 use netzzwergenwacht::persistence::{self, RegressionReport, RenderedTextDiff};
+use netzzwergenwacht::tui::{self, ThemeMode, TuiStartupOptions};
 
 const EXIT_OK: u8 = 0;
 const EXIT_FINDINGS: u8 = 1;
@@ -74,6 +76,9 @@ enum Command {
         /// Run optional `KommandantZwerg` AI synthesis (requires `NZW_LLM_API_KEY`).
         #[arg(long)]
         ai: bool,
+        /// Launch the interactive Zwergenleitstand TUI workbench for this check.
+        #[arg(long)]
+        tui: bool,
     },
     /// Run a bounded deterministic audit over a list of URLs (one per line, `#` comments allowed).
     Batch {
@@ -138,6 +143,9 @@ enum Command {
         /// Include chronological `InvestigationEvent` trace in text output.
         #[arg(long)]
         events: bool,
+        /// Launch the interactive Zwergenleitstand TUI workbench for this investigation.
+        #[arg(long)]
+        tui: bool,
     },
     /// Re-audit a target and verify whether baseline findings are resolved or unverified.
     Verify {
@@ -181,6 +189,9 @@ enum Command {
         /// Target stakeholder perspective for Markdown output.
         #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
         audience: AudienceArg,
+        /// Launch the interactive Zwergenleitstand TUI workbench for this patrol.
+        #[arg(long)]
+        tui: bool,
     },
     /// Present a stored Patrol, Investigation, or Audit JSON/JSONL report.
     Report {
@@ -193,6 +204,61 @@ enum Command {
         #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
         audience: AudienceArg,
     },
+    /// Launch Zwergenleitstand, the interactive Ratatui investigation workbench.
+    Tui {
+        /// Optional target HTTP or HTTPS URL to audit or investigate immediately.
+        url: Option<String>,
+        /// Optional path to a saved JSON report (`AuditReport`, `InvestigationReport`, or `PatrolReport`) to explore offline.
+        #[arg(long)]
+        report: Option<PathBuf>,
+        /// Optional path to a JSONL audit history file for offline regression analysis.
+        #[arg(long)]
+        history: Option<PathBuf>,
+        /// Optional default output path when saving reports from the workbench (`w`).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Initial diagnostic mode (`check`, `investigate`, `patrol`).
+        #[arg(short, long, value_enum, default_value_t = TuiModeArg::Check)]
+        mode: TuiModeArg,
+        /// Enable Level 2 headless Chromium collection (`BrowserZwerg` & `GestaltungsZwerg`).
+        #[arg(long)]
+        browser: bool,
+        /// Enable Level 2 `axe-core` collection (`ZugänglichkeitsZwerg`).
+        #[arg(long)]
+        axe: bool,
+        /// Enable Level 2 Lighthouse collection (`LeistungsZwerg`).
+        #[arg(long)]
+        lighthouse: bool,
+        /// Allow loopback and private network targets (for local testing only).
+        #[arg(long)]
+        allow_private: bool,
+        /// Force monochrome rendering (`NO_COLOR` mode).
+        #[arg(long)]
+        monochrome: bool,
+        /// Force high-contrast rendering.
+        #[arg(long)]
+        high_contrast: bool,
+        /// Force ASCII-only borders and indicators.
+        #[arg(long)]
+        ascii: bool,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum TuiModeArg {
+    Check,
+    Investigate,
+    Patrol,
+}
+
+impl From<TuiModeArg> for DiagnosticRunMode {
+    fn from(value: TuiModeArg) -> Self {
+        match value {
+            TuiModeArg::Check => Self::DeterministicCheck,
+            TuiModeArg::Investigate => Self::AgenticInvestigation,
+            TuiModeArg::Patrol => Self::AutonomousPatrol,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -305,7 +371,21 @@ async fn main() -> ExitCode {
             browser,
             axe,
             ai,
+            tui: use_tui,
         } => {
+            if use_tui {
+                let options = TuiStartupOptions {
+                    target: Some(url),
+                    mode: DiagnosticRunMode::DeterministicCheck,
+                    enable_browser: browser,
+                    enable_axe: axe,
+                    enable_lighthouse: lighthouse,
+                    history_path: history,
+                    policy: target_policy(allow_private),
+                    ..TuiStartupOptions::default()
+                };
+                return run_tui_cmd(options).await;
+            }
             run_check(
                 &url,
                 config_path.as_deref(),
@@ -357,7 +437,20 @@ async fn main() -> ExitCode {
             format,
             audience,
             events,
-        } => run_investigate(&url, objective, allow_private, format, audience, events).await,
+            tui: use_tui,
+        } => {
+            if use_tui {
+                let options = TuiStartupOptions {
+                    target: Some(url),
+                    mode: DiagnosticRunMode::AgenticInvestigation,
+                    objective,
+                    policy: target_policy(allow_private),
+                    ..TuiStartupOptions::default()
+                };
+                return run_tui_cmd(options).await;
+            }
+            run_investigate(&url, objective, allow_private, format, audience, events).await
+        }
         Command::Verify {
             baseline,
             url,
@@ -374,7 +467,18 @@ async fn main() -> ExitCode {
             allow_private,
             format,
             audience,
+            tui: use_tui,
         } => {
+            if use_tui {
+                let options = TuiStartupOptions {
+                    target: url,
+                    mode: DiagnosticRunMode::AutonomousPatrol,
+                    enable_browser: browser,
+                    policy: target_policy(allow_private),
+                    ..TuiStartupOptions::default()
+                };
+                return run_tui_cmd(options).await;
+            }
             Box::pin(run_patrol_cmd(
                 url.as_deref(),
                 config_path.as_deref(),
@@ -393,7 +497,52 @@ async fn main() -> ExitCode {
             format,
             audience,
         } => run_report_cmd(&file, format, audience),
+        Command::Tui {
+            url,
+            report,
+            history,
+            output,
+            mode,
+            browser,
+            axe,
+            lighthouse,
+            allow_private,
+            monochrome,
+            high_contrast,
+            ascii,
+        } => {
+            let theme_mode = if monochrome {
+                Some(ThemeMode::Monochrome)
+            } else if high_contrast {
+                Some(ThemeMode::HighContrast)
+            } else {
+                None
+            };
+            let options = TuiStartupOptions {
+                target: url,
+                mode: mode.into(),
+                enable_browser: browser,
+                enable_axe: axe,
+                enable_lighthouse: lighthouse,
+                report_path: report,
+                history_path: history,
+                output_path: output,
+                policy: target_policy(allow_private),
+                theme_mode,
+                ascii_only: ascii,
+                ..TuiStartupOptions::default()
+            };
+            run_tui_cmd(options).await
+        }
     }
+}
+
+async fn run_tui_cmd(options: TuiStartupOptions) -> ExitCode {
+    if let Err(err) = Box::pin(tui::run_tui(options)).await {
+        eprintln!("tui error: {err}");
+        return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+    }
+    ExitCode::from(EXIT_OK)
 }
 
 fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> ExitCode {

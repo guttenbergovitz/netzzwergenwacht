@@ -15,6 +15,8 @@ path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+ratatui = "0.30"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
 rig-core = { version = "0.42.0", features = ["reqwest"] }
 schemars = "0.8"

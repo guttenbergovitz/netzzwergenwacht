@@ -1,0 +1,890 @@
+//! Pure state reducer for Zwergenleitstand (`(AppState, AppAction) -> Vec<AppEffect>`).
+//!
+//! All state transitions are deterministic and free of I/O so they can be
+//! verified in unit tests without spawning a terminal or network tasks.
+
+use std::path::PathBuf;
+
+use crate::brigade::DwarfId;
+use crate::domain::AuditTarget;
+use crate::events::{DiagnosticEvent, DiagnosticEventPayload, DiagnosticRunMode};
+use crate::investigation::HypothesisStatus;
+use crate::investigation::evidence_query::PAGE_SIZE;
+use crate::tui::action::{AppAction, AppEffect, RunLaunchSpec, UserAction};
+use crate::tui::sanitize::{sanitize_line, sanitize_url_for_display};
+use crate::tui::state::{
+    AppState, BrigadeActivityRow, HypothesisRow, LauncherField, RunLifecycleState,
+    TargetInspectionState, TargetSurfaceRow, ToolActivityRow, WorkbenchView,
+};
+use crate::tui::theme::{GlyphSet, OperationalStatus, Theme, ThemeMode};
+
+/// Applies a single [`AppAction`] to [`AppState`] and returns any requested [`AppEffect`]s.
+pub fn reduce(state: &mut AppState, action: AppAction) -> Vec<AppEffect> {
+    match action {
+        AppAction::User(user_action) => reduce_user_action(state, user_action),
+        AppAction::Resize(width, height) => {
+            state.terminal_width = width;
+            state.terminal_height = height;
+            Vec::new()
+        }
+        AppAction::Tick => {
+            if matches!(
+                state.lifecycle,
+                RunLifecycleState::Running | RunLifecycleState::Cancelling
+            ) {
+                state.system_metrics.elapsed_ms =
+                    state.system_metrics.elapsed_ms.saturating_add(100);
+            }
+            Vec::new()
+        }
+        AppAction::Diagnostic(event) => {
+            reduce_diagnostic_event(state, *event);
+            Vec::new()
+        }
+        AppAction::RunFinished(artefacts) => {
+            state.ingest_artefacts(*artefacts);
+            state.status_message = format!(
+                "Diagnostic run completed for {} ({} finding(s)). Press 4 for Findings or 5 for Evidence.",
+                state.target_url,
+                state.findings.len()
+            );
+            Vec::new()
+        }
+        AppAction::RunFailed(err) => {
+            let clean = sanitize_line(&err, 140);
+            state.lifecycle = RunLifecycleState::Failed;
+            state.push_activity(&format!("Run failed: {clean}"));
+            state.status_message = format!("Diagnostic run failed: {clean}");
+            Vec::new()
+        }
+        AppAction::ReportSaved(result) => {
+            match result {
+                Ok(path) => {
+                    let display = sanitize_line(&path.display().to_string(), 100);
+                    state.push_activity(&format!("Saved report to {display}"));
+                    state.status_message = format!("Saved report to {display}");
+                }
+                Err(err) => {
+                    let clean = sanitize_line(&err, 120);
+                    state.status_message = format!("Failed to save report: {clean}");
+                }
+            }
+            Vec::new()
+        }
+    }
+}
+
+#[allow(clippy::too_many_lines)]
+fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
+    // Handle Launcher modal actions when open.
+    if state.launcher.open {
+        return reduce_launcher_action(state, action);
+    }
+
+    // Handle Search bar input when focused.
+    if state.search_focused {
+        match action {
+            UserAction::BackOrClose | UserAction::Activate => {
+                state.search_focused = false;
+                state.status_message = format!(
+                    "Filter applied ({} / {} findings visible).",
+                    state.visible_finding_indices.len(),
+                    state.findings.len()
+                );
+            }
+            UserAction::InputChar(ch) => {
+                if state.finding_filter.search_query.len() < 80 {
+                    state.finding_filter.search_query.push(ch);
+                    state.refresh_visible_findings();
+                }
+            }
+            UserAction::InputBackspace => {
+                state.finding_filter.search_query.pop();
+                state.refresh_visible_findings();
+            }
+            UserAction::InputClear => {
+                state.finding_filter.search_query.clear();
+                state.refresh_visible_findings();
+            }
+            _ => {}
+        }
+        return Vec::new();
+    }
+
+    match action {
+        UserAction::NextView => {
+            state.active_view = state.active_view.next();
+        }
+        UserAction::PrevView => {
+            state.active_view = state.active_view.prev();
+        }
+        UserAction::SelectView(view) => {
+            state.active_view = view;
+        }
+        UserAction::MoveDown => move_selection(state, 1),
+        UserAction::MoveUp => move_selection(state, -1),
+        UserAction::PageDown => move_selection(state, 16),
+        UserAction::PageUp => move_selection(state, -16),
+        UserAction::FirstItem => move_to_edge(state, false),
+        UserAction::LastItem => move_to_edge(state, true),
+        UserAction::MoveLeft => match state.active_view {
+            WorkbenchView::Evidence => {
+                state.evidence_category = state.evidence_category.prev();
+                state.evidence_offset = 0;
+                state.selected_evidence_row = 0;
+            }
+            _ => {
+                state.active_view = state.active_view.prev();
+            }
+        },
+        UserAction::MoveRight => match state.active_view {
+            WorkbenchView::Evidence => {
+                state.evidence_category = state.evidence_category.next();
+                state.evidence_offset = 0;
+                state.selected_evidence_row = 0;
+            }
+            _ => {
+                state.active_view = state.active_view.next();
+            }
+        },
+        UserAction::Activate => handle_activate_in_active_view(state),
+        UserAction::BackOrClose => {
+            if !state.finding_filter.search_query.is_empty()
+                || state.finding_filter.min_severity.is_some()
+                || state.finding_filter.dwarf.is_some()
+            {
+                state.finding_filter.search_query.clear();
+                state.finding_filter.min_severity = None;
+                state.finding_filter.dwarf = None;
+                state.refresh_visible_findings();
+                state.status_message = String::from("Cleared all finding filters.");
+            }
+        }
+        UserAction::OpenSearch => {
+            state.active_view = WorkbenchView::Findings;
+            state.search_focused = true;
+            state.status_message =
+                String::from("Search findings by rule ID, title, or description (Enter/Esc done).");
+        }
+        UserAction::CycleSort => {
+            state.finding_sort = state.finding_sort.next();
+            state.refresh_visible_findings();
+            state.status_message = format!("Sorted findings by: {}", state.finding_sort.label());
+        }
+        UserAction::CycleSeverityFilter => {
+            state.finding_filter.cycle_severity();
+            state.refresh_visible_findings();
+            state.status_message = format!(
+                "Severity filter: {} ({} visible)",
+                state.finding_filter.severity_label(),
+                state.visible_finding_indices.len()
+            );
+        }
+        UserAction::SelectEvidenceCategory(cat) => {
+            state.active_view = WorkbenchView::Evidence;
+            state.evidence_category = cat;
+            state.evidence_offset = 0;
+            state.selected_evidence_row = 0;
+        }
+        UserAction::OpenLauncher => {
+            state.launcher.open = true;
+            state.launcher.error_message = None;
+        }
+        UserAction::SaveCurrentReport => {
+            if state.audit_report.is_some() {
+                let path = state
+                    .output_path
+                    .clone()
+                    .unwrap_or_else(|| PathBuf::from("nzw-report.json"));
+                return vec![AppEffect::SaveReport(path)];
+            }
+            state.status_message =
+                String::from("No AuditReport available to save yet. Run an inspection first.");
+        }
+        UserAction::CycleTheme => {
+            let next_mode = match state.theme.mode {
+                ThemeMode::StandardDark => ThemeMode::HighContrast,
+                ThemeMode::HighContrast => ThemeMode::Monochrome,
+                ThemeMode::Monochrome => ThemeMode::StandardDark,
+            };
+            state.theme = Theme::new(next_mode, state.theme.glyphs);
+            state.status_message = format!("Theme mode: {:?}", state.theme.mode);
+        }
+        UserAction::ToggleAscii => {
+            let next_glyphs = match state.theme.glyphs {
+                GlyphSet::Unicode => GlyphSet::Ascii,
+                GlyphSet::Ascii => GlyphSet::Unicode,
+            };
+            state.theme = Theme::new(state.theme.mode, next_glyphs);
+            state.status_message = format!("Glyph mode: {:?}", state.theme.glyphs);
+        }
+        UserAction::ToggleHelp => {
+            state.help_open = !state.help_open;
+        }
+        UserAction::CancelRun => {
+            if state.lifecycle == RunLifecycleState::Running {
+                state.lifecycle = RunLifecycleState::Cancelling;
+                state.push_activity("Cancellation requested by operator...");
+                state.status_message =
+                    String::from("Cancelling active diagnostic run and terminating child tasks...");
+                return vec![AppEffect::CancelActiveRun];
+            }
+        }
+        UserAction::Quit => {
+            state.should_quit = true;
+            if matches!(
+                state.lifecycle,
+                RunLifecycleState::Running | RunLifecycleState::Cancelling
+            ) {
+                return vec![AppEffect::CancelActiveRun, AppEffect::Quit];
+            }
+            return vec![AppEffect::Quit];
+        }
+        UserAction::InputChar(_) | UserAction::InputBackspace | UserAction::InputClear => {}
+    }
+
+    Vec::new()
+}
+
+fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
+    match action {
+        UserAction::BackOrClose => {
+            // Only close Launcher if we already have a run or report loaded; otherwise stay in Launcher.
+            if state.audit_report.is_some()
+                || state.snapshot.is_some()
+                || !state.history_rows.is_empty()
+                || matches!(
+                    state.lifecycle,
+                    RunLifecycleState::Running
+                        | RunLifecycleState::Completed
+                        | RunLifecycleState::Partial
+                )
+            {
+                state.launcher.open = false;
+            }
+        }
+        UserAction::MoveDown | UserAction::NextView => {
+            state.launcher.focused_field = state.launcher.focused_field.next();
+        }
+        UserAction::MoveUp | UserAction::PrevView => {
+            state.launcher.focused_field = state.launcher.focused_field.prev();
+        }
+        UserAction::MoveLeft => {
+            if state.launcher.focused_field == LauncherField::Mode {
+                state.launcher.mode = cycle_mode_prev(state.launcher.mode);
+            } else {
+                toggle_launcher_bool(state);
+            }
+        }
+        UserAction::MoveRight => {
+            if state.launcher.focused_field == LauncherField::Mode {
+                state.launcher.mode = cycle_mode_next(state.launcher.mode);
+            } else {
+                toggle_launcher_bool(state);
+            }
+        }
+        UserAction::InputChar(ch) => {
+            if state.launcher.focused_field == LauncherField::TargetUrl
+                && state.launcher.target_input.len() < 256
+            {
+                state.launcher.target_input.push(ch);
+                state.launcher.error_message = None;
+            }
+        }
+        UserAction::InputBackspace => {
+            if state.launcher.focused_field == LauncherField::TargetUrl {
+                state.launcher.target_input.pop();
+                state.launcher.error_message = None;
+            }
+        }
+        UserAction::InputClear => {
+            if state.launcher.focused_field == LauncherField::TargetUrl {
+                state.launcher.target_input.clear();
+                state.launcher.error_message = None;
+            }
+        }
+        UserAction::Activate => match state.launcher.focused_field {
+            LauncherField::Mode => {
+                state.launcher.mode = cycle_mode_next(state.launcher.mode);
+            }
+            LauncherField::BrowserToggle
+            | LauncherField::AxeToggle
+            | LauncherField::LighthouseToggle => {
+                toggle_launcher_bool(state);
+            }
+            LauncherField::TargetUrl | LauncherField::StartButton => {
+                return try_launch_from_launcher(state);
+            }
+        },
+        UserAction::ToggleHelp => {
+            state.help_open = !state.help_open;
+        }
+        UserAction::Quit => {
+            state.should_quit = true;
+            return vec![AppEffect::Quit];
+        }
+        _ => {}
+    }
+    Vec::new()
+}
+
+const fn cycle_mode_next(mode: DiagnosticRunMode) -> DiagnosticRunMode {
+    match mode {
+        DiagnosticRunMode::DeterministicCheck => DiagnosticRunMode::AgenticInvestigation,
+        DiagnosticRunMode::AgenticInvestigation => DiagnosticRunMode::AutonomousPatrol,
+        DiagnosticRunMode::AutonomousPatrol | DiagnosticRunMode::OfflineExploration => {
+            DiagnosticRunMode::DeterministicCheck
+        }
+    }
+}
+
+const fn cycle_mode_prev(mode: DiagnosticRunMode) -> DiagnosticRunMode {
+    match mode {
+        DiagnosticRunMode::DeterministicCheck | DiagnosticRunMode::OfflineExploration => {
+            DiagnosticRunMode::AutonomousPatrol
+        }
+        DiagnosticRunMode::AgenticInvestigation => DiagnosticRunMode::DeterministicCheck,
+        DiagnosticRunMode::AutonomousPatrol => DiagnosticRunMode::AgenticInvestigation,
+    }
+}
+
+fn toggle_launcher_bool(state: &mut AppState) {
+    match state.launcher.focused_field {
+        LauncherField::BrowserToggle => {
+            state.launcher.enable_browser = !state.launcher.enable_browser;
+        }
+        LauncherField::AxeToggle => {
+            state.launcher.enable_axe = !state.launcher.enable_axe;
+        }
+        LauncherField::LighthouseToggle => {
+            state.launcher.enable_lighthouse = !state.launcher.enable_lighthouse;
+        }
+        _ => {}
+    }
+}
+
+fn try_launch_from_launcher(state: &mut AppState) -> Vec<AppEffect> {
+    let raw = state.launcher.target_input.trim();
+    match AuditTarget::parse(raw) {
+        Ok(target) => {
+            state.launcher.open = false;
+            state.launcher.error_message = None;
+            state.target_url = sanitize_url_for_display(target.as_str(), 120);
+            state.run_mode = state.launcher.mode;
+            state.lifecycle = RunLifecycleState::Running;
+            state.active_view = WorkbenchView::Overview;
+            state.brigade_rows = BrigadeActivityRow::initial_brigade();
+            state.findings.clear();
+            state.visible_finding_indices.clear();
+            state.selected_finding_pos = 0;
+            state.hypotheses.clear();
+            state.tool_trace.clear();
+            state.target_rows.clear();
+            state.recent_activity.clear();
+            state.system_metrics.elapsed_ms = 0;
+            state.system_metrics.total_events_received = 0;
+            state.system_metrics.dropped_progress_events = 0;
+            state.status_message = format!(
+                "Starting {} against {}...",
+                state.run_mode.label(),
+                state.target_url
+            );
+            vec![AppEffect::StartRun(RunLaunchSpec {
+                target,
+                mode: state.launcher.mode,
+                enable_browser: state.launcher.enable_browser,
+                enable_axe: state.launcher.enable_axe,
+                enable_lighthouse: state.launcher.enable_lighthouse,
+            })]
+        }
+        Err(err) => {
+            state.launcher.error_message = Some(sanitize_line(&err.to_string(), 100));
+            Vec::new()
+        }
+    }
+}
+
+fn move_selection(state: &mut AppState, delta: isize) {
+    match state.active_view {
+        WorkbenchView::Overview | WorkbenchView::System => {}
+        WorkbenchView::Brigade => {
+            state.selected_brigade_index = step_index(
+                state.selected_brigade_index,
+                state.brigade_rows.len(),
+                delta,
+            );
+        }
+        WorkbenchView::Targets => {
+            state.selected_target_index =
+                step_index(state.selected_target_index, state.target_rows.len(), delta);
+        }
+        WorkbenchView::Findings => {
+            state.selected_finding_pos = step_index(
+                state.selected_finding_pos,
+                state.visible_finding_indices.len(),
+                delta,
+            );
+        }
+        WorkbenchView::Evidence => {
+            if delta.abs() >= 16 {
+                if delta > 0 {
+                    state.evidence_offset = state.evidence_offset.saturating_add(PAGE_SIZE);
+                } else {
+                    state.evidence_offset = state.evidence_offset.saturating_sub(PAGE_SIZE);
+                }
+                state.selected_evidence_row = 0;
+            } else {
+                state.selected_evidence_row =
+                    step_index(state.selected_evidence_row, PAGE_SIZE, delta);
+            }
+        }
+        WorkbenchView::Investigation => {
+            state.selected_hypothesis_index = step_index(
+                state.selected_hypothesis_index,
+                state.hypotheses.len(),
+                delta,
+            );
+        }
+        WorkbenchView::Topology => {
+            state.selected_topology_index = step_index(
+                state.selected_topology_index,
+                state.topology_rows.len(),
+                delta,
+            );
+        }
+        WorkbenchView::History => {
+            state.selected_history_index = step_index(
+                state.selected_history_index,
+                state.history_rows.len(),
+                delta,
+            );
+        }
+    }
+}
+
+fn move_to_edge(state: &mut AppState, last: bool) {
+    match state.active_view {
+        WorkbenchView::Overview | WorkbenchView::System => {}
+        WorkbenchView::Brigade => {
+            state.selected_brigade_index = if last {
+                state.brigade_rows.len().saturating_sub(1)
+            } else {
+                0
+            };
+        }
+        WorkbenchView::Targets => {
+            state.selected_target_index = if last {
+                state.target_rows.len().saturating_sub(1)
+            } else {
+                0
+            };
+        }
+        WorkbenchView::Findings => {
+            state.selected_finding_pos = if last {
+                state.visible_finding_indices.len().saturating_sub(1)
+            } else {
+                0
+            };
+        }
+        WorkbenchView::Evidence => {
+            if !last {
+                state.evidence_offset = 0;
+                state.selected_evidence_row = 0;
+            }
+        }
+        WorkbenchView::Investigation => {
+            state.selected_hypothesis_index = if last {
+                state.hypotheses.len().saturating_sub(1)
+            } else {
+                0
+            };
+        }
+        WorkbenchView::Topology => {
+            state.selected_topology_index = if last {
+                state.topology_rows.len().saturating_sub(1)
+            } else {
+                0
+            };
+        }
+        WorkbenchView::History => {
+            state.selected_history_index = if last {
+                state.history_rows.len().saturating_sub(1)
+            } else {
+                0
+            };
+        }
+    }
+}
+
+fn handle_activate_in_active_view(state: &mut AppState) {
+    match state.active_view {
+        WorkbenchView::Findings => {
+            if let Some(finding) = state.selected_finding() {
+                let category = finding.primary_evidence_category;
+                let rule = finding.rule_id.clone();
+                state.evidence_category = category;
+                state.evidence_offset = 0;
+                state.selected_evidence_row = 0;
+                state.active_view = WorkbenchView::Evidence;
+                state.status_message = format!(
+                    "Inspecting {} evidence supporting finding '{}'.",
+                    category.label(),
+                    rule
+                );
+            }
+        }
+        WorkbenchView::Brigade => {
+            if let Some(row) = state.brigade_rows.get(state.selected_brigade_index) {
+                let dwarf = row.dwarf_id;
+                state.finding_filter.dwarf = Some(dwarf);
+                state.refresh_visible_findings();
+                state.active_view = WorkbenchView::Findings;
+                state.status_message = format!(
+                    "Filtered findings to {} ({} finding(s)). Press Esc to clear filter.",
+                    dwarf.display_name(),
+                    state.visible_finding_indices.len()
+                );
+            }
+        }
+        WorkbenchView::Targets => {
+            state.active_view = WorkbenchView::Findings;
+        }
+        WorkbenchView::History => {
+            state.compare_selected_history_entry();
+        }
+        _ => {}
+    }
+}
+
+fn step_index(current: usize, len: usize, delta: isize) -> usize {
+    if len == 0 {
+        return 0;
+    }
+    let cur = isize::try_from(current).unwrap_or(0);
+    let max_idx = isize::try_from(len.saturating_sub(1)).unwrap_or(0);
+    let next = (cur + delta).clamp(0, max_idx);
+    usize::try_from(next).unwrap_or(0)
+}
+
+#[allow(clippy::too_many_lines)]
+fn reduce_diagnostic_event(state: &mut AppState, event: DiagnosticEvent) {
+    state.system_metrics.total_events_received += 1;
+    state.active_run_id = Some(event.run_id.0);
+
+    match event.payload {
+        DiagnosticEventPayload::RunStarted { mode, target } => {
+            state.run_mode = mode;
+            state.target_url = sanitize_url_for_display(&target, 120);
+            state.lifecycle = RunLifecycleState::Running;
+            state.push_activity(&format!("Run started ({}) for {}", mode.label(), target));
+        }
+        DiagnosticEventPayload::RunCompleted { summary } => {
+            state.push_activity(&format!("Run completed: {summary}"));
+        }
+        DiagnosticEventPayload::RunPartiallyCompleted { reason } => {
+            state.lifecycle = RunLifecycleState::Partial;
+            state.push_activity(&format!("Run partially completed: {reason}"));
+        }
+        DiagnosticEventPayload::RunFailed { error } => {
+            state.lifecycle = RunLifecycleState::Failed;
+            state.push_activity(&format!("Run failed: {error}"));
+        }
+        DiagnosticEventPayload::RunCancelled { reason } => {
+            state.lifecycle = RunLifecycleState::Cancelled;
+            state.push_activity(&format!("Run cancelled: {reason}"));
+        }
+        DiagnosticEventPayload::TargetDiscovered {
+            url,
+            depth,
+            source,
+            status,
+        } => {
+            let display_url = sanitize_url_for_display(&url, 100);
+            let insp_state = match status.as_str() {
+                "investigated" | "completed" => TargetInspectionState::Completed,
+                "partial" => TargetInspectionState::Partial,
+                "failed" | "unreachable" => TargetInspectionState::Failed,
+                "budget" | "skipped" => TargetInspectionState::SkippedBudget,
+                _ => TargetInspectionState::Queued,
+            };
+            if let Some(existing) = state
+                .target_rows
+                .iter_mut()
+                .find(|r| r.display_url == display_url)
+            {
+                existing.state = insp_state;
+            } else {
+                state.target_rows.push(TargetSurfaceRow {
+                    display_url: display_url.clone(),
+                    discovery_source: sanitize_line(&source, 24),
+                    depth,
+                    page_type: String::from("Discovered"),
+                    http_status: None,
+                    state: insp_state,
+                    evidence_summary: String::from("Pending"),
+                    findings_count: 0,
+                });
+            }
+            state.push_activity(&format!("Target {display_url} ({status})"));
+        }
+        DiagnosticEventPayload::CollectionStarted { collector } => {
+            set_collector_status(
+                state,
+                collector,
+                OperationalStatus::Running,
+                "Collecting...",
+            );
+            state.push_activity(&format!("Collector {} started", collector.label()));
+        }
+        DiagnosticEventPayload::CollectionProgress {
+            collector,
+            completed_units,
+            total_units,
+            detail,
+        } => {
+            let progress_str = total_units.map_or_else(
+                || format!("{completed_units} ({detail})"),
+                |tot| format!("{completed_units}/{tot} ({detail})"),
+            );
+            set_collector_status(state, collector, OperationalStatus::Running, &progress_str);
+        }
+        DiagnosticEventPayload::CollectionCompleted {
+            collector,
+            partial,
+            warnings,
+        } => {
+            let status = if partial {
+                OperationalStatus::Partial
+            } else {
+                OperationalStatus::Done
+            };
+            let summary = if partial {
+                format!("Partial ({} warning(s))", warnings.len())
+            } else {
+                String::from("Captured")
+            };
+            set_collector_status(state, collector, status, &summary);
+            state.push_activity(&format!(
+                "Collector {} completed ({summary})",
+                collector.label()
+            ));
+        }
+        DiagnosticEventPayload::CollectionFailed { collector, error } => {
+            set_collector_status(state, collector, OperationalStatus::Failed, &error);
+            state.push_activity(&format!("Collector {} failed: {error}", collector.label()));
+        }
+        DiagnosticEventPayload::CollectionSkipped { collector, reason } => {
+            set_collector_status(state, collector, OperationalStatus::Skipped, &reason);
+        }
+        DiagnosticEventPayload::AnalysisStarted { dwarf } => {
+            if let Some(row) = state.brigade_rows.iter_mut().find(|r| r.dwarf_id == dwarf) {
+                row.status = OperationalStatus::Running;
+                row.is_agent_activity = false;
+                row.current_activity = String::from("Evaluating deterministic rules...");
+            }
+        }
+        DiagnosticEventPayload::AnalysisCompleted {
+            dwarf,
+            checks_total,
+            checks_passed,
+            checks_failed,
+            checks_skipped,
+            checks_inconclusive,
+        } => {
+            if let Some(row) = state.brigade_rows.iter_mut().find(|r| r.dwarf_id == dwarf) {
+                row.checks_total = checks_total;
+                row.checks_passed = checks_passed;
+                row.checks_failed = checks_failed;
+                row.checks_skipped = checks_skipped;
+                row.checks_inconclusive = checks_inconclusive;
+                row.status = if checks_total > 0 && checks_skipped == checks_total {
+                    OperationalStatus::Skipped
+                } else if checks_inconclusive > 0 {
+                    OperationalStatus::Partial
+                } else {
+                    OperationalStatus::Done
+                };
+                row.current_activity =
+                    format!("Completed {checks_total} checks ({checks_failed} failed)");
+            }
+            state.push_activity(&format!(
+                "{} evaluated {} checks ({} failed)",
+                dwarf.display_name(),
+                checks_total,
+                checks_failed
+            ));
+        }
+        DiagnosticEventPayload::FindingRecorded {
+            dwarf,
+            rule_id,
+            title,
+            severity,
+            ..
+        } => {
+            if let Some(row) = state.brigade_rows.iter_mut().find(|r| r.dwarf_id == dwarf) {
+                row.findings_count += 1;
+            }
+            state.push_activity(&format!(
+                "[{:?}] {}: {} ({})",
+                severity,
+                dwarf.display_name(),
+                title,
+                rule_id
+            ));
+        }
+        DiagnosticEventPayload::SpecialistActivated { dwarf, focus } => {
+            if let Some(row) = state.brigade_rows.iter_mut().find(|r| r.dwarf_id == dwarf) {
+                row.status = OperationalStatus::Running;
+                row.is_agent_activity = true;
+                row.current_activity = sanitize_line(&format!("Agent consultation: {focus}"), 100);
+            }
+            state.push_activity(&format!(
+                "Specialist {} activated: {}",
+                dwarf.display_name(),
+                focus
+            ));
+        }
+        DiagnosticEventPayload::HypothesisProposed {
+            hypothesis_id,
+            originating_rule,
+            proposed_explanation,
+            requested_tool,
+        } => {
+            if let Some(row) = state
+                .brigade_rows
+                .iter_mut()
+                .find(|r| r.dwarf_id == DwarfId::Kommandant)
+            {
+                row.status = OperationalStatus::Running;
+                row.is_agent_activity = true;
+                row.current_activity =
+                    sanitize_line(&format!("Testing {hypothesis_id} via {requested_tool}"), 96);
+            }
+            state.hypotheses.push(HypothesisRow {
+                id: sanitize_line(&hypothesis_id, 32),
+                originating_rule: sanitize_line(&originating_rule, 96),
+                originating_rule_verified: true,
+                proposed_explanation: sanitize_line(&proposed_explanation, 220),
+                requested_tool: sanitize_line(&requested_tool, 64),
+                status: HypothesisStatus::Proposed,
+                evaluation_summary: None,
+                supporting_evidence: Vec::new(),
+                contradictory_evidence: Vec::new(),
+                missing_evidence: Vec::new(),
+            });
+            state.push_activity(&format!(
+                "Hypothesis {hypothesis_id} proposed (origin: {originating_rule})"
+            ));
+        }
+        DiagnosticEventPayload::HypothesisEvaluated {
+            hypothesis_id,
+            status,
+            summary,
+        } => {
+            if let Some(h) = state.hypotheses.iter_mut().find(|h| h.id == hypothesis_id) {
+                h.status = match status.to_ascii_lowercase().as_str() {
+                    "supported" => HypothesisStatus::Supported,
+                    "rejected" => HypothesisStatus::Rejected,
+                    _ => HypothesisStatus::Inconclusive,
+                };
+                if let Some(s) = summary {
+                    h.evaluation_summary = Some(sanitize_line(&s, 220));
+                }
+            }
+            state.push_activity(&format!("Hypothesis {hypothesis_id} evaluated: {status}"));
+        }
+        DiagnosticEventPayload::ToolRequested { tool_id } => {
+            state.tool_trace.push(ToolActivityRow {
+                tool_id: sanitize_line(&tool_id, 64),
+                status: OperationalStatus::Queued,
+                summary: String::from("Requested by KommandantZwerg"),
+            });
+            state.push_activity(&format!("Tool requested: {tool_id}"));
+        }
+        DiagnosticEventPayload::ToolAuthorised { tool_id } => {
+            if let Some(t) = state
+                .tool_trace
+                .iter_mut()
+                .rev()
+                .find(|t| t.tool_id == tool_id)
+            {
+                t.status = OperationalStatus::Running;
+                t.summary = String::from("Authorised and executing");
+            }
+        }
+        DiagnosticEventPayload::ToolRejected { tool_id, reason } => {
+            if let Some(t) = state
+                .tool_trace
+                .iter_mut()
+                .rev()
+                .find(|t| t.tool_id == tool_id)
+            {
+                t.status = OperationalStatus::Blocked;
+                t.summary = sanitize_line(&reason, 100);
+            }
+            state.push_activity(&format!("Tool {tool_id} rejected: {reason}"));
+        }
+        DiagnosticEventPayload::ToolCompleted {
+            tool_id,
+            succeeded,
+            summary,
+        } => {
+            if let Some(t) = state
+                .tool_trace
+                .iter_mut()
+                .rev()
+                .find(|t| t.tool_id == tool_id)
+            {
+                t.status = if succeeded {
+                    OperationalStatus::Done
+                } else {
+                    OperationalStatus::Failed
+                };
+                t.summary = sanitize_line(&summary, 100);
+            }
+            state.push_activity(&format!(
+                "Tool {tool_id} {}",
+                if succeeded { "completed" } else { "failed" }
+            ));
+        }
+        DiagnosticEventPayload::BudgetUpdated {
+            llm_turns_used,
+            max_llm_turns,
+            tool_calls_used,
+            max_tool_calls,
+            elapsed_ms,
+        } => {
+            state.system_metrics.llm_turns_used = llm_turns_used;
+            state.system_metrics.max_llm_turns = max_llm_turns;
+            state.system_metrics.tool_calls_used = tool_calls_used;
+            state.system_metrics.max_tool_calls = max_tool_calls;
+            state.system_metrics.elapsed_ms = elapsed_ms;
+        }
+        DiagnosticEventPayload::Warning { message } => {
+            state.push_activity(&format!("WARN: {message}"));
+        }
+    }
+}
+
+fn set_collector_status(
+    state: &mut AppState,
+    collector: CollectorId,
+    status: OperationalStatus,
+    summary: &str,
+) {
+    let clean = sanitize_line(summary, 72);
+    if let Some(entry) = state
+        .system_metrics
+        .collector_statuses
+        .iter_mut()
+        .find(|(c, _, _)| *c == collector)
+    {
+        entry.1 = status;
+        entry.2 = clean;
+    } else {
+        state
+            .system_metrics
+            .collector_statuses
+            .push((collector, status, clean));
+    }
+}

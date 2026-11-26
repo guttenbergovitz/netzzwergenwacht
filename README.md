@@ -29,7 +29,8 @@ NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on `develop` / 
   - Bounded Level 2 subprocess adapters (`src/adapters/`: Lighthouse `--lighthouse`, headless Chromium CDP `--browser`, `axe-core` `--axe`).
   - **Agentic Investigation (`nzw investigate`, `nzw verify`)**: `rig-core` (`0.42.0`) `PortableTool` catalogue (`inspect_browser_runtime`, `inspect_rendered_accessibility`, `inspect_page_performance`, `inspect_document_structure`, `inspect_security_posture`, `crawl_and_cluster_site`), multi-turn `KommandantZwerg` hypothesis loop, `InvestigationScope` origin enforcement, `ExecutiveBrief`, `ReleaseReadinessAssessment`, `RemediationTask`s, and `--audience pm|po|cto|technical` Markdown/JSON reports.
   - **Zwergenprüfstand** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): Controlled benchmark fixtures and comparative Mode A vs Mode C evaluation suite.
-  - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`) with plain-text and versioned JSON output, TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), `tracing` diagnostics (`RUST_LOG`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
+  - **Zwergenleitstand TUI (`nzw tui`, `--tui`)**: Ratatui + Crossterm interactive investigation workbench with nine keyboard-driven views (`1:Overview`, `2:Brigade`, `3:Targets`, `4:Findings`, `5:Evidence`, `6:Investigation`, `7:Topology`, `8:History`, `9:System`), live `DiagnosticEvent` streaming over bounded channels, offline Evidence Query Engine exploration, terminal escape/BiDi sanitisation, and `StandardDark` / `HighContrast` / `Monochrome` (`--monochrome`, `--ascii`) themes.
+  - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`, `nzw report`, `nzw tui`) with plain-text, Markdown, versioned JSON output, and interactive TUI mode (`--tui`), TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), `tracing` diagnostics (`RUST_LOG`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
   - Production hardening: chaos/cancellation integration tests (`tests/chaos_and_cancellation.rs`), `cargo-audit` CI check, LTO-optimised release profile, and automated tag release packaging (`.github/workflows/release.yml`).
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
@@ -45,6 +46,13 @@ cargo run --locked -- check https://example.org --format json
 
 # Validate target URL and SSRF policy without fetching
 cargo run --locked -- validate https://example.org
+
+# Launch Zwergenleitstand interactive TUI workbench
+cargo run --locked -- tui
+cargo run --locked -- tui https://example.org --level2
+cargo run --locked -- tui --report report.json
+cargo run --locked -- tui --history history.jsonl
+cargo run --locked -- check https://example.org --tui
 ```
 
 ## Quality Gates
@@ -63,6 +71,12 @@ cargo test --all-targets --locked
 - **[Configuration Guide](CONFIG.md)** — Model routing, provider setup, cost optimization strategies
 - [ADR 0001: Rewrite NetzZwergenWacht in Rust](docs/adr/0001-rewrite-netzzwergenwacht-in-rust.md)
 - [ADR 0002: Zwergenbrigade Domains, Shared Document Observations, and Evidence Levels](docs/adr/0002-zwergenbrigade-domains-shared-document-and-evidence-levels.md)
+- [ADR 0010: Terminal User Interface and Presentation Architecture](docs/adr/0010-terminal-user-interface-and-presentation-architecture.md)
+- [ADR 0011: Diagnostic Event Model and Event Transport](docs/adr/0011-diagnostic-event-model-and-event-transport.md)
+- [ADR 0012: TUI Application State and Asynchronous Execution](docs/adr/0012-tui-application-state-and-asynchronous-execution.md)
+- [ADR 0013: Investigation Workbench Information Architecture](docs/adr/0013-investigation-workbench-information-architecture.md)
+- [ADR 0014: Evidence Presentation and Epistemic Integrity](docs/adr/0014-evidence-presentation-and-epistemic-integrity.md)
+- [ADR 0015: TUI Visual Language and Terminal Accessibility](docs/adr/0015-tui-visual-language-and-terminal-accessibility.md)
 - [Die Zwergenbrigade](docs/architecture/zwergenbrigade.md)
 - [Shared Document Analysis](docs/architecture/document-analysis.md)
 - [Engineering & Git Conventions](docs/conventions.md)

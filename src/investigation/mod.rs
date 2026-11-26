@@ -453,7 +453,6 @@ pub async fn run_investigation(
 
 /// Executes the multi-turn `KommandantZwerg` investigation loop seeded with
 /// structured [`SpecialistContribution`]s from prior specialist delegations.
-#[allow(clippy::too_many_lines)]
 pub async fn run_investigation_with_specialists(
     target: AuditTarget,
     objective: String,
@@ -463,11 +462,49 @@ pub async fn run_investigation_with_specialists(
     llm: &dyn LlmProvider,
     prior_specialists: Vec<SpecialistContribution>,
 ) -> InvestigationReport {
+    run_investigation_with_events(
+        target,
+        objective,
+        policy,
+        budget,
+        backend,
+        llm,
+        prior_specialists,
+        &crate::events::DiagnosticEventSink::noop(),
+    )
+    .await
+}
+
+/// Executes the multi-turn `KommandantZwerg` investigation loop while streaming
+/// structured [`crate::events::DiagnosticEvent`] notifications to `sink`.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+pub async fn run_investigation_with_events(
+    target: AuditTarget,
+    objective: String,
+    policy: TargetPolicy,
+    budget: InvestigationBudget,
+    backend: Arc<dyn DiagnosticBackend>,
+    llm: &dyn LlmProvider,
+    prior_specialists: Vec<SpecialistContribution>,
+    sink: &crate::events::DiagnosticEventSink,
+) -> InvestigationReport {
     let started = Instant::now();
     let id = InvestigationId::generate(target.host());
     let origin = Origin::from_target(&target);
+    let initial_events = vec![
+        InvestigationEvent::InvestigationStarted {
+            investigation_id: id.0.clone(),
+            target: target.as_str().to_owned(),
+        },
+        InvestigationEvent::ScopeEstablished {
+            origin: format!("{:?}://{}:{}", origin.scheme, origin.host, origin.port),
+        },
+    ];
+    for ev in &initial_events {
+        sink.emit_investigation_event(target.as_str(), ev);
+    }
     let mut ctx = InvestigationContext {
-        id: id.clone(),
+        id,
         target: target.clone(),
         objective,
         state: InvestigationState::Scoped,
@@ -479,15 +516,7 @@ pub async fn run_investigation_with_specialists(
         specialists: prior_specialists,
         hypotheses: Vec::new(),
         tool_trace: Vec::new(),
-        events: vec![
-            InvestigationEvent::InvestigationStarted {
-                investigation_id: id.0,
-                target: target.as_str().to_owned(),
-            },
-            InvestigationEvent::ScopeEstablished {
-                origin: format!("{:?}://{}:{}", origin.scheme, origin.host, origin.port),
-            },
-        ],
+        events: initial_events,
         ledger: BudgetLedger::new(budget),
     };
 
@@ -505,8 +534,39 @@ pub async fn run_investigation_with_specialists(
         http_timeout: rem.min(Duration::from_secs(30)),
         ..ExecutionBudget::default()
     };
+    sink.emit(
+        crate::events::EventContext::new()
+            .with_target(target.as_str())
+            .with_collector(crate::events::CollectorId::Http),
+        crate::events::DiagnosticEventPayload::CollectionStarted {
+            collector: crate::events::CollectorId::Http,
+        },
+    );
     let mut snapshot = backend.collect_http(&target, exec_budget, policy).await;
-    let initial_report = analysis::run_all(&snapshot);
+    let http_ok = !matches!(snapshot.http, CollectorOutcome::Failed { .. });
+    if http_ok {
+        sink.emit(
+            crate::events::EventContext::new()
+                .with_target(target.as_str())
+                .with_collector(crate::events::CollectorId::Http),
+            crate::events::DiagnosticEventPayload::CollectionCompleted {
+                collector: crate::events::CollectorId::Http,
+                partial: false,
+                warnings: Vec::new(),
+            },
+        );
+    } else {
+        sink.emit(
+            crate::events::EventContext::new()
+                .with_target(target.as_str())
+                .with_collector(crate::events::CollectorId::Http),
+            crate::events::DiagnosticEventPayload::CollectionFailed {
+                collector: crate::events::CollectorId::Http,
+                error: "HTTP collection failed".to_owned(),
+            },
+        );
+    }
+    let initial_report = analysis::run_all_with_events(&snapshot, sink);
     let known_rules: HashSet<String> = initial_report
         .analysers
         .iter()
@@ -581,10 +641,22 @@ pub async fn run_investigation_with_specialists(
 
         let rule_verified = known_rules.contains(&decision.originating_rule);
         let hyp_id = format!("hyp-{}", ctx.hypotheses.len() + 1);
-        ctx.events.push(InvestigationEvent::HypothesisProposed {
+        let prop_ev = InvestigationEvent::HypothesisProposed {
             hypothesis_id: hyp_id.clone(),
             originating_rule: decision.originating_rule.clone(),
-        });
+        };
+        sink.emit(
+            crate::events::EventContext::new()
+                .with_target(target.as_str())
+                .with_dwarf(DwarfId::Kommandant),
+            crate::events::DiagnosticEventPayload::HypothesisProposed {
+                hypothesis_id: hyp_id.clone(),
+                originating_rule: decision.originating_rule.clone(),
+                proposed_explanation: decision.proposed_explanation.clone(),
+                requested_tool: decision.requested_tool.clone(),
+            },
+        );
+        ctx.events.push(prop_ev);
 
         let mut hypothesis = DiagnosticHypothesis {
             id: hyp_id.clone(),
@@ -599,20 +671,26 @@ pub async fn run_investigation_with_specialists(
             missing_evidence: Vec::new(),
         };
 
-        ctx.events.push(InvestigationEvent::ToolRequested {
+        let req_ev = InvestigationEvent::ToolRequested {
             tool_id: decision.requested_tool.clone(),
-        });
+        };
+        sink.emit_investigation_event(target.as_str(), &req_ev);
+        ctx.events.push(req_ev);
         let Ok(tool_rem) = ctx.ledger.try_consume_tool(started) else {
-            ctx.events.push(InvestigationEvent::ToolRejected {
+            let rej_ev = InvestigationEvent::ToolRejected {
                 tool_id: decision.requested_tool.clone(),
                 reason: "tool call budget exhausted".to_owned(),
-            });
+            };
+            sink.emit_investigation_event(target.as_str(), &rej_ev);
+            ctx.events.push(rej_ev);
             ctx.hypotheses.push(hypothesis);
             return finish_budget_exhausted(ctx, "tool call budget exhausted".to_owned());
         };
-        ctx.events.push(InvestigationEvent::ToolAuthorised {
+        let auth_ev = InvestigationEvent::ToolAuthorised {
             tool_id: decision.requested_tool.clone(),
-        });
+        };
+        sink.emit_investigation_event(target.as_str(), &auth_ev);
+        ctx.events.push(auth_ev);
 
         // Check for specialist consultation requests.
         let (tool_succeeded, new_results, is_consultation) =
@@ -672,10 +750,12 @@ pub async fn run_investigation_with_specialists(
             ctx.follow_up_results.extend(new_results.clone());
         }
         ctx.snapshot = Some(snapshot.clone());
-        ctx.events.push(InvestigationEvent::ToolCompleted {
+        let done_ev = InvestigationEvent::ToolCompleted {
             tool_id: decision.requested_tool.clone(),
             succeeded: tool_succeeded,
-        });
+        };
+        sink.emit_investigation_event(target.as_str(), &done_ev);
+        ctx.events.push(done_ev);
 
         ctx.state = InvestigationState::Evaluating;
         let Ok(eval_rem) = ctx.ledger.try_consume_llm(started) else {
@@ -713,18 +793,31 @@ pub async fn run_investigation_with_specialists(
                 );
             }
         }
+        let status_label = format!("{:?}", hypothesis.status);
+        sink.emit(
+            crate::events::EventContext::new()
+                .with_target(target.as_str())
+                .with_dwarf(DwarfId::Kommandant),
+            crate::events::DiagnosticEventPayload::HypothesisEvaluated {
+                hypothesis_id: hyp_id.clone(),
+                status: status_label.clone(),
+                summary: hypothesis.evaluation_summary.clone(),
+            },
+        );
         ctx.events.push(InvestigationEvent::HypothesisEvaluated {
             hypothesis_id: hyp_id,
-            status: format!("{:?}", hypothesis.status),
+            status: status_label,
         });
         ctx.hypotheses.push(hypothesis);
         ctx.state = InvestigationState::Investigating;
     }
 
     ctx.state = InvestigationState::Completed;
-    ctx.events.push(InvestigationEvent::InvestigationCompleted {
+    let comp_ev = InvestigationEvent::InvestigationCompleted {
         investigation_id: ctx.id.0.clone(),
-    });
+    };
+    sink.emit_investigation_event(target.as_str(), &comp_ev);
+    ctx.events.push(comp_ev);
     if final_conclusion.is_empty() {
         final_conclusion = format!(
             "Completed investigation with {} hypothesis evaluation(s).",

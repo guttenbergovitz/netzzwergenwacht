@@ -1,6 +1,11 @@
 # NetzZwergenWacht Roadmap
 
-Current state on `develop`: **235 registered diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **161+ passing tests**.
+Current state on `develop`: **235 registered diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **214+ passing tests** and the **Zwergenleitstand** Ratatui investigation workbench (`nzw tui`).
+
+## Completed under Operation Zwergenleitstand (Waves ZL-0 – ZL-8)
+
+- **Architecture & ADRs (`0010`–`0015`)**: Ratatui + Crossterm local-first presentation architecture, bounded `DiagnosticEvent` transport (`capacity = 256`, non-blocking progress coalescing), unidirectional TEA/Elm state reducer (`src/tui/`), nine-view information architecture, epistemic integrity & ANSI/OSC/BiDi terminal sanitisation, and semantic themes (`StandardDark`, `HighContrast`, `Monochrome`, `--ascii`).
+- **Live & Offline Investigation Workbench (`nzw tui`, `--tui`)**: Interactive launcher with runtime instrument detection (`Chromium`, `axe-core`, `Lighthouse`, LLM provider), live streaming of deterministic checks, agentic investigations, and autonomous patrols, offline `--report` and `--history` exploration, finding-to-evidence drill-down (`Enter`), network timeline & resource waterfall views, and JSON report export (`w`).
 
 ## Completed under Operation Aufrüstung I–III
 

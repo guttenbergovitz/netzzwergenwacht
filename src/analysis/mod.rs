@@ -103,49 +103,125 @@ pub struct AuditReport {
 /// false absence findings.
 #[must_use]
 pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
+    run_all_with_events(snapshot, &crate::events::DiagnosticEventSink::noop())
+}
+
+/// Runs all deterministic Zwerg analysers against `snapshot` while emitting
+/// structured lifecycle and finding events to `sink`.
+#[must_use]
+pub fn run_all_with_events(
+    snapshot: &EvidenceSnapshot,
+    sink: &crate::events::DiagnosticEventSink,
+) -> AuditReport {
     let mut analysers = Vec::new();
+    let target_url = snapshot.target.as_str();
+
+    let mut run_analyser = |dwarf: DwarfId, f: &mut dyn FnMut() -> AnalyserResult| {
+        let ctx = crate::events::EventContext::new()
+            .with_target(target_url)
+            .with_dwarf(dwarf);
+        sink.emit(
+            ctx.clone(),
+            crate::events::DiagnosticEventPayload::AnalysisStarted { dwarf },
+        );
+        let result = f();
+        let mut passed = 0usize;
+        let mut failed = 0usize;
+        let mut skipped = 0usize;
+        let mut inconclusive = 0usize;
+        for check in &result.checks {
+            match check {
+                CheckStatus::Passed { .. } => passed += 1,
+                CheckStatus::Failed { .. } => failed += 1,
+                CheckStatus::Skipped { .. } => skipped += 1,
+                CheckStatus::Unavailable { .. } => inconclusive += 1,
+            }
+        }
+        for finding in &result.findings {
+            sink.emit(
+                ctx.clone(),
+                crate::events::DiagnosticEventPayload::FindingRecorded {
+                    dwarf,
+                    rule_id: finding.rule_id.0.clone(),
+                    title: finding.title.clone(),
+                    severity: finding.severity,
+                    confidence: finding.confidence,
+                },
+            );
+        }
+        sink.emit(
+            ctx,
+            crate::events::DiagnosticEventPayload::AnalysisCompleted {
+                dwarf,
+                checks_total: result.checks.len(),
+                checks_passed: passed,
+                checks_failed: failed,
+                checks_skipped: skipped,
+                checks_inconclusive: inconclusive,
+            },
+        );
+        analysers.push(result);
+    };
 
     match extract_complete_html(snapshot) {
         Ok((http, obs)) => {
-            analysers.push(network::analyse_with_document(snapshot, Some(&obs)));
-            analysers.push(security::analyse_with_document(snapshot, Some(&obs)));
-            analysers.push(performance::analyse_with_document(snapshot, Some(&obs)));
-            analysers.push(semantics::analyse(&obs));
-            analysers.push(accessibility::analyse_with_browser(
-                &obs,
-                &snapshot.axe,
-                &snapshot.browser,
-            ));
-            analysers.push(seo::analyse(http, &obs));
-            analysers.push(content::analyse(http, &obs));
-            analysers.push(browser::analyse_with_document(snapshot, Some(&obs)));
-            analysers.push(visual::analyse_with_document(snapshot, Some(&obs)));
+            run_analyser(DwarfId::Netz, &mut || {
+                network::analyse_with_document(snapshot, Some(&obs))
+            });
+            run_analyser(DwarfId::Sicherheits, &mut || {
+                security::analyse_with_document(snapshot, Some(&obs))
+            });
+            run_analyser(DwarfId::Leistungs, &mut || {
+                performance::analyse_with_document(snapshot, Some(&obs))
+            });
+            run_analyser(DwarfId::Struktur, &mut || semantics::analyse(&obs));
+            run_analyser(DwarfId::Zugaenglichkeits, &mut || {
+                accessibility::analyse_with_browser(&obs, &snapshot.axe, &snapshot.browser)
+            });
+            run_analyser(DwarfId::Such, &mut || seo::analyse(http, &obs));
+            run_analyser(DwarfId::Inhalts, &mut || content::analyse(http, &obs));
+            run_analyser(DwarfId::Browser, &mut || {
+                browser::analyse_with_document(snapshot, Some(&obs))
+            });
+            run_analyser(DwarfId::Gestaltungs, &mut || {
+                visual::analyse_with_document(snapshot, Some(&obs))
+            });
         }
         Err(reason) => {
-            analysers.push(network::analyse(snapshot));
-            analysers.push(security::analyse(snapshot));
-            analysers.push(performance::analyse(snapshot));
-            analysers.push(skip_all(
-                DwarfId::Struktur,
-                semantics::ALL_RULES,
-                EvidenceLevel::Source,
-                &reason,
-            ));
-            analysers.push(accessibility::skipped_source_result(&reason));
-            analysers.push(skip_all(
-                DwarfId::Such,
-                seo::ALL_RULES,
-                EvidenceLevel::Source,
-                &reason,
-            ));
-            analysers.push(skip_all(
-                DwarfId::Inhalts,
-                content::ALL_RULES,
-                EvidenceLevel::Source,
-                &reason,
-            ));
-            analysers.push(browser::analyse(snapshot));
-            analysers.push(visual::analyse_without_document(snapshot, &reason));
+            run_analyser(DwarfId::Netz, &mut || network::analyse(snapshot));
+            run_analyser(DwarfId::Sicherheits, &mut || security::analyse(snapshot));
+            run_analyser(DwarfId::Leistungs, &mut || performance::analyse(snapshot));
+            run_analyser(DwarfId::Struktur, &mut || {
+                skip_all(
+                    DwarfId::Struktur,
+                    semantics::ALL_RULES,
+                    EvidenceLevel::Source,
+                    &reason,
+                )
+            });
+            run_analyser(DwarfId::Zugaenglichkeits, &mut || {
+                accessibility::skipped_source_result(&reason)
+            });
+            run_analyser(DwarfId::Such, &mut || {
+                skip_all(
+                    DwarfId::Such,
+                    seo::ALL_RULES,
+                    EvidenceLevel::Source,
+                    &reason,
+                )
+            });
+            run_analyser(DwarfId::Inhalts, &mut || {
+                skip_all(
+                    DwarfId::Inhalts,
+                    content::ALL_RULES,
+                    EvidenceLevel::Source,
+                    &reason,
+                )
+            });
+            run_analyser(DwarfId::Browser, &mut || browser::analyse(snapshot));
+            run_analyser(DwarfId::Gestaltungs, &mut || {
+                visual::analyse_without_document(snapshot, &reason)
+            });
         }
     }
 
