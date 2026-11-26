@@ -75,6 +75,42 @@ pub enum TimelineRuntimeKind {
     CspViolation,
 }
 
+/// Cache or wire source reported by Chromium for an HTTP response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TimelineCacheSource {
+    /// Served over the network.
+    Network,
+    /// Served from the browser disk cache.
+    DiskCache,
+    /// Served or intercepted by a Service Worker.
+    ServiceWorker,
+    /// Served from the prefetch cache.
+    PrefetchCache,
+    /// Conditional request revalidated with HTTP 304 Not Modified.
+    Revalidated304,
+}
+
+/// Non-negative connection and response timing phases in milliseconds from CDP `ResourceTiming`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TimelinePhaseTimings {
+    /// DNS lookup duration in milliseconds (`dnsEnd - dnsStart`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dns_ms: Option<u64>,
+    /// TCP connection duration in milliseconds (`connectEnd - connectStart`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_ms: Option<u64>,
+    /// TLS handshake duration in milliseconds (`sslEnd - sslStart`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_ms: Option<u64>,
+    /// Request send duration in milliseconds (`sendEnd - sendStart`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_ms: Option<u64>,
+    /// Time to first response header byte in milliseconds (`receiveHeadersEnd - sendEnd`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ttfb_ms: Option<u64>,
+}
+
 /// Protocol observations with separate HTTP and transport outcomes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -85,6 +121,15 @@ pub enum BrowserEventDetail {
         method: Option<String>,
         /// URL reduced to its origin.
         origin: Option<String>,
+        /// Secret-safe normalised URL pathname without query string or fragment.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_path: Option<String>,
+        /// Lowercase CDP resource type (for example `"document"`, `"script"`, `"xhr"`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resource_type: Option<String>,
+        /// Lowercase CDP initiator category (`"parser"`, `"script"`, `"preload"`, `"other"`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        initiator_type: Option<String>,
     },
     /// CDP reported a redirect response and subsequently started another hop.
     Redirect {
@@ -92,6 +137,9 @@ pub enum BrowserEventDetail {
         status: Option<u16>,
         /// Redirecting response origin.
         origin: Option<String>,
+        /// Secret-safe normalised URL pathname of the redirect source.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_path: Option<String>,
     },
     /// The browser received an HTTP response.
     Response {
@@ -99,6 +147,18 @@ pub enum BrowserEventDetail {
         status: Option<u16>,
         /// Response origin.
         origin: Option<String>,
+        /// Secret-safe normalised URL pathname of the response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_path: Option<String>,
+        /// Response MIME type reported by Chromium.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+        /// Cache or wire source for the response.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache_source: Option<TimelineCacheSource>,
+        /// Per-request connection and TTFB timing phases when reported by CDP.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timing: Option<TimelinePhaseTimings>,
     },
     /// The browser completed loading the resource.
     Completed {
@@ -115,6 +175,9 @@ pub enum BrowserEventDetail {
     PolicyBlocked {
         /// Rejected request origin, where retained.
         origin: Option<String>,
+        /// Secret-safe normalised URL pathname of the rejected request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        endpoint_path: Option<String>,
     },
     /// A runtime error was observed.
     RuntimeError {

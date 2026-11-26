@@ -13,10 +13,24 @@ use url::{Host, Url};
 
 use crate::brigade::DwarfId;
 
-mod browser_timeline;
+pub mod browser_timeline;
 pub use browser_timeline::*;
-mod rendered_content;
+pub mod cross_context_graph;
+pub use cross_context_graph::*;
+pub mod diagnostics_lifecycle;
+pub use diagnostics_lifecycle::*;
+pub mod functional_intelligence;
+pub use functional_intelligence::*;
+pub mod performance_rendering;
+pub use performance_rendering::*;
+pub mod presentation_accessibility;
+pub use presentation_accessibility::*;
+pub mod rendered_content;
 pub use rendered_content::*;
+pub mod security_privacy;
+pub use security_privacy::*;
+pub mod seo_structured_data;
+pub use seo_structured_data::*;
 
 /// Policy governing whether private or loopback targets are permitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -646,16 +660,37 @@ impl HttpEvidence {
 }
 
 /// TLS peer certificate evidence extracted from the `rustls` handshake.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TlsEvidence {
     /// Subject distinguished name of the leaf certificate.
     pub subject: String,
     /// Issuer distinguished name of the leaf certificate.
     pub issuer: String,
+    /// Certificate `notBefore` timestamp in seconds since the Unix epoch, if recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_before_unix_secs: Option<i64>,
     /// Certificate `notAfter` timestamp in seconds since the Unix epoch.
     pub not_after_unix_secs: i64,
     /// Signed days remaining until expiry (negative when already expired).
     pub days_until_expiry: i64,
+    /// Bounded sample of Subject Alternative Name (SAN) DNS entries (up to 32).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub san_entries: Vec<String>,
+    /// Public key algorithm OID or name (`id-ecPublicKey`, `rsaEncryption`, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_key_algorithm: Option<String>,
+    /// Signature algorithm OID or name (`ecdsa-with-SHA256`, `sha256WithRSAEncryption`, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature_algorithm: Option<String>,
+    /// Whether the certificate is self-signed (`subject == issuer`).
+    #[serde(default)]
+    pub self_signed: bool,
+    /// DNS CAA records discovered for the target host/domain.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caa_records: Vec<String>,
+    /// Whether DNS CAA lookup was attempted and succeeded.
+    #[serde(default)]
+    pub caa_query_succeeded: bool,
 }
 
 /// Outcome of an individual collector stage.
@@ -817,6 +852,15 @@ pub struct ResourceTimingObs {
     /// Observed `Content-Encoding` response header value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_encoding: Option<String>,
+    /// Secret-safe pathname without query string or fragment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_path: Option<String>,
+    /// Where the response was served from (network, disk cache, service worker, prefetch, 304).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_source: Option<TimelineCacheSource>,
+    /// Phase timings (`dns_ms`, `connect_ms`, `tls_ms`, `send_ms`, `ttfb_ms`) when reported by CDP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timings: Option<TimelinePhaseTimings>,
 }
 
 /// Rendered image geometry and loading state captured in the browser.
@@ -981,6 +1025,60 @@ pub struct BrowserEvidence {
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,
+    /// Wave IV-B: Interactive element inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interactive_inventory: Option<InteractiveElementInventory>,
+    /// Wave IV-B: Structured application state snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_state: Option<ApplicationStateSnapshot>,
+    /// Wave IV-B: Bounded read-only interaction trace and candidate scenarios.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_journey_trace: Option<UserJourneyTrace>,
+    /// Wave IV-C: Visual geometry, overflow, stacking, and centre-point occlusion inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_geometry: Option<VisualGeometryInventory>,
+    /// Wave IV-C: Per-node Accessibility (`AX`) tree inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ax_node_inventory: Option<AccessibilityNodeInventory>,
+    /// Wave IV-D: Sanitized runtime cookie and Web Storage key inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookie_and_storage: Option<CookieAndStorageInventory>,
+    /// Wave IV-D: Third-party origin and capability posture inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_party_inventory: Option<ThirdPartyInventory>,
+    /// Wave IV-D: Consolidated HTTP/DOM security posture summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_posture: Option<SecurityPostureSummary>,
+    /// Wave IV-D: Anti-bot challenge, WAF interstitial, and CAPTCHA wall detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_challenge: Option<SecurityChallengeEvidence>,
+    /// Wave IV-E: LCP candidate element, CLS shift regions, and render-blocking chain attribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub performance_attribution: Option<PerformanceAttributionEvidence>,
+    /// Wave IV-E: Media asset and webfont diagnostic inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_and_fonts: Option<MediaAndFontInventory>,
+    /// Wave IV-F: Indexability, canonical, and `hreflang` authority evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexability_authority: Option<IndexabilityAuthorityEvidence>,
+    /// Wave IV-F: Structured data (`JSON-LD` / Microdata / `RDFa`) and social card inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured_data: Option<StructuredDataInventory>,
+    /// Wave IV-G: Cross-viewport (`375x667` vs `1280x800`) responsive anomaly evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responsive_comparison: Option<ResponsiveComparisonEvidence>,
+    /// Wave IV-G: Rendered internal/external link graph and form endpoint inventory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_graph: Option<LinkGraphInventory>,
+    /// Wave IV-H: Viewport screenshot SHA-256 digest and visual landmark coverage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visual_artifacts: Option<VisualArtifactEvidence>,
+    /// Wave IV-H: Service Worker registration, Cache Storage, and manifest lifecycle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_worker: Option<ServiceWorkerLifecycleEvidence>,
+    /// Wave IV-H: Combined browser security state, leaf certificate CT/SAN, and DNS CAA diagnostics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tls_and_caa: Option<TlsAndCaaDiagnostics>,
 }
 
 /// Per-script JavaScript CPU self-time sample from CDP `Profiler.stop`.
@@ -1058,6 +1156,18 @@ pub struct BehaviouralA11yObs {
     /// Count of visible `[role="button"]` / `[role="link"]` elements without keyboard focusability (`tabindex >= 0`).
     #[serde(default)]
     pub unfocusable_aria_controls_count: usize,
+    /// Whether pressing `Escape` dismissed an open modal dialog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escape_dismissed_modal: Option<bool>,
+    /// Whether keyboard focus was restored to an interactive trigger after modal dismissal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub focus_restored_after_modal: Option<bool>,
+    /// Count of ARIA live regions (`[aria-live]`, `[role="alert"]`, `[role="status"]`) in the DOM.
+    #[serde(default)]
+    pub live_region_count: usize,
+    /// Count of controls marked `[aria-invalid="true"]` in the DOM.
+    #[serde(default)]
+    pub aria_invalid_count: usize,
 }
 
 /// Per-resource CDP code coverage breakdown (uncompressed source offsets during initial load).
@@ -1147,6 +1257,9 @@ pub struct AxeViolation {
     pub help_url: String,
     /// Number of affected DOM nodes.
     pub nodes_count: usize,
+    /// Bounded sample of affected CSS target selectors (capped at 16).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_selectors: Vec<String>,
 }
 
 /// Level 2 rendered-DOM accessibility evidence from `axe-core`.

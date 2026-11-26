@@ -1319,6 +1319,7 @@ mod tests {
                     help_url: "https://dequeuniversity.com/rules/axe/4.10/color-contrast"
                         .to_owned(),
                     nodes_count: 3,
+                    target_selectors: Vec::new(),
                 }],
                 passes_count: 9,
                 incomplete_count: 0,
@@ -1434,6 +1435,10 @@ mod tests {
                     focus_lost_after_dialog_close: Some(true),
                     skip_link_effective: Some(false),
                     unfocusable_aria_controls_count: 2,
+                    escape_dismissed_modal: Some(false),
+                    focus_restored_after_modal: Some(false),
+                    live_region_count: 0,
+                    aria_invalid_count: 0,
                 }),
                 ..BrowserEvidence::default()
             },

@@ -205,6 +205,20 @@ pub fn profile(id: DwarfId) -> &'static DwarfProfile {
     }
 }
 
+impl DwarfId {
+    /// Returns the static [`DwarfProfile`] for this dwarf.
+    #[must_use]
+    pub fn profile(self) -> &'static DwarfProfile {
+        profile(self)
+    }
+
+    /// Returns the German display name for this dwarf.
+    #[must_use]
+    pub fn display_name(self) -> &'static str {
+        profile(self).display_name
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;

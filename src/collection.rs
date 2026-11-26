@@ -315,14 +315,49 @@ fn extract_tls_evidence(
 
     match X509Certificate::from_der(der) {
         Ok((_, cert)) => {
+            let not_before = Some(cert.validity().not_before.timestamp());
             let not_after = cert.validity().not_after.timestamp();
             let days_until_expiry = (not_after - now_unix_secs) / 86_400;
+            let subject_alt_names = cert
+                .subject_alternative_name()
+                .ok()
+                .flatten()
+                .map(|ext| {
+                    ext.value
+                        .general_names
+                        .iter()
+                        .filter_map(|gn| match gn {
+                            x509_parser::extensions::GeneralName::DNSName(dns) => {
+                                Some((*dns).to_owned())
+                            }
+                            x509_parser::extensions::GeneralName::IPAddress(ip) => {
+                                Some(format!("{ip:?}"))
+                            }
+                            _ => None,
+                        })
+                        .take(32)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let signature_algorithm = Some(cert.signature_algorithm.algorithm.to_id_string());
+            let spki = cert.public_key();
+            let public_key_algorithm = Some(spki.algorithm.algorithm.to_id_string());
+            let subject = cert.subject().to_string();
+            let issuer = cert.issuer().to_string();
+            let self_signed = subject == issuer;
             CollectorOutcome::Captured {
                 data: TlsEvidence {
-                    subject: cert.subject().to_string(),
-                    issuer: cert.issuer().to_string(),
+                    subject,
+                    issuer,
+                    not_before_unix_secs: not_before,
                     not_after_unix_secs: not_after,
                     days_until_expiry,
+                    san_entries: subject_alt_names,
+                    signature_algorithm,
+                    public_key_algorithm,
+                    self_signed,
+                    caa_records: Vec::new(),
+                    caa_query_succeeded: false,
                 },
             }
         }

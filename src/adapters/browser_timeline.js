@@ -15,6 +15,19 @@ function timelineOrigin(value) {
   }
 }
 
+function sanitizeEndpointPath(value) {
+  if (typeof value !== 'string' || value.length > 4096) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    const pathname = url.pathname || '/';
+    if (!pathname.startsWith('/') || /[\x00-\x1f\x7f?#]/.test(pathname)) return null;
+    return pathname.length <= 256 ? pathname : pathname.slice(0, 256);
+  } catch {
+    return null;
+  }
+}
+
 function timelineNumber(value, scale = 1) {
   if (typeof value !== 'number') return null;
   const number = Math.round(value * scale);
@@ -24,6 +37,36 @@ function timelineNumber(value, scale = 1) {
 function timelineStatus(response) {
   const status = response?.status;
   return Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+}
+
+function classifyCacheSource(response) {
+  if (!response || typeof response !== 'object') return null;
+  if (response.fromServiceWorker === true) return 'service_worker';
+  if (response.fromPrefetchCache === true) return 'prefetch_cache';
+  if (response.fromDiskCache === true) return 'disk_cache';
+  if (response.status === 304) return 'revalidated_304';
+  return 'network';
+}
+
+function extractPhaseTimings(timing) {
+  if (!timing || typeof timing !== 'object') return null;
+  const delta = (start, end) => {
+    if (typeof start !== 'number' || typeof end !== 'number') return null;
+    if (start < 0 || end < 0 || end < start) return null;
+    const ms = Math.round(end - start);
+    return Number.isSafeInteger(ms) && ms >= 0 ? ms : null;
+  };
+  const dns_ms = delta(timing.dnsStart, timing.dnsEnd);
+  const connect_ms = delta(timing.connectStart, timing.connectEnd);
+  const tls_ms = delta(timing.sslStart, timing.sslEnd);
+  const send_ms = delta(timing.sendStart, timing.sendEnd);
+  const ttfb_ms = typeof timing.receiveHeadersStart === 'number'
+    ? delta(timing.sendEnd, timing.receiveHeadersStart)
+    : delta(timing.sendEnd, timing.receiveHeadersEnd);
+  if (dns_ms === null && connect_ms === null && tls_ms === null && send_ms === null && ttfb_ms === null) {
+    return null;
+  }
+  return { dns_ms, connect_ms, tls_ms, send_ms, ttfb_ms };
 }
 
 function createBrowserTimeline() {
@@ -60,6 +103,7 @@ function createBrowserTimeline() {
           record('redirect', params, {
             status: timelineStatus(params.redirectResponse),
             origin: timelineOrigin(params.redirectResponse.url),
+            endpoint_path: sanitizeEndpointPath(params.redirectResponse.url),
           });
         }
         if (id !== null && events.length < TIMELINE_EVENT_LIMIT) {
@@ -70,11 +114,19 @@ function createBrowserTimeline() {
         record('request_started', params, {
           method: timelineToken(params.request?.method),
           origin: timelineOrigin(params.request?.url),
+          endpoint_path: sanitizeEndpointPath(params.request?.url),
+          resource_type: timelineToken(params.type ? String(params.type).toLowerCase() : null),
+          initiator_type: timelineToken(params.initiator?.type ? String(params.initiator.type).toLowerCase() : null),
         });
       } else if (method === 'Network.responseReceived') {
         record('response', params, {
           status: timelineStatus(params.response),
           origin: timelineOrigin(params.response?.url),
+          endpoint_path: sanitizeEndpointPath(params.response?.url),
+          mime_type: typeof params.response?.mimeType === 'string' && params.response.mimeType.length <= 128
+            ? params.response.mimeType.toLowerCase() : null,
+          cache_source: classifyCacheSource(params.response),
+          timings: extractPhaseTimings(params.response?.timing),
         });
       } else if (method === 'Network.loadingFinished') {
         record('completed', params, { encoded_bytes: timelineNumber(params.encodedDataLength) });
@@ -90,7 +142,16 @@ function createBrowserTimeline() {
     policyBlock(params) {
       const id = timelineToken(params.networkId);
       if (id !== null && events.length < TIMELINE_EVENT_LIMIT) policyBlocked.add(id);
-      record('policy_blocked', params, { origin: timelineOrigin(params.request?.url) }, { policy: true });
+      record(
+        'policy_blocked',
+        params,
+        {
+          origin: timelineOrigin(params.request?.url),
+          endpoint_path: sanitizeEndpointPath(params.request?.url),
+          resource_type: timelineToken(params.resourceType ? String(params.resourceType).toLowerCase() : null),
+        },
+        { policy: true }
+      );
     },
     finish(loadTimedOut) {
       return { events, truncated, end: loadTimedOut ? 'load_timed_out' : 'observation_ended' };

@@ -116,7 +116,7 @@ impl RenderedContentSegmentation {
 }
 
 /// Identity signals independent of the capture-local node position and text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct RenderedBlockIdentity {
     /// Body-relative ancestry and tag, without sibling ordinals.
     pub path: Option<Vec<String>>,
@@ -125,10 +125,11 @@ pub struct RenderedBlockIdentity {
 }
 
 /// Identity evidence for an HTML ID.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RenderedBlockId {
     /// The element had no non-empty ID.
+    #[default]
     Absent,
     /// The census observed a unique ID.
     Unique {
@@ -143,3 +144,6 @@ pub enum RenderedBlockId {
     /// The ID exceeded the field limit or uniqueness could not be established.
     Unavailable,
 }
+
+/// Alias for [`RenderedBlockIdentity`] used across element-level collectors.
+pub type RenderedElementIdentity = RenderedBlockIdentity;

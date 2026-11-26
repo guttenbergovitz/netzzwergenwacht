@@ -2633,8 +2633,15 @@ mod tests {
                 data: TlsEvidence {
                     subject: "CN=example.com".to_owned(),
                     issuer: "CN=Example CA".to_owned(),
+                    not_before_unix_secs: Some(1_700_000_000),
                     not_after_unix_secs: 2_000_000_000,
                     days_until_expiry: 90,
+                    san_entries: vec!["example.com".to_owned()],
+                    signature_algorithm: Some("sha256WithRSAEncryption".to_owned()),
+                    public_key_algorithm: Some("rsaEncryption".to_owned()),
+                    self_signed: false,
+                    caa_records: Vec::new(),
+                    caa_query_succeeded: false,
                 },
             }
         } else {

@@ -14,6 +14,7 @@ use crate::domain::{AuditTarget, BrowserEvidence, CollectorOutcome, RenderedCont
 const CDP_HARNESS_JS: &str = concat!(
     include_str!("browser_timeline.js"),
     include_str!("rendered_content.js"),
+    include_str!("sensory_collectors.js"),
     r"
 const { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
@@ -106,6 +107,8 @@ function findBrowser() {
     const resourcesByReqId = new Map();
     const stylesheetUrls = new Map();
     const timeline = createBrowserTimeline();
+    let mainResponseHeaders = {};
+    let mainStatusCode = null;
     let navStartTs = null;
     let loadResolve = null;
 
@@ -193,9 +196,15 @@ function findBrowser() {
         const headers = Object.fromEntries(
           Object.entries(resp?.headers || {}).map(([k, v]) => [k.toLowerCase(), String(v)])
         );
+        const resType = String(msg.params?.type || 'other').toLowerCase();
+        if (resType === 'document' && mainStatusCode === null) {
+          mainResponseHeaders = headers;
+          mainStatusCode = typeof resp?.status === 'number' ? resp.status : null;
+        }
         resourcesByReqId.set(msg.params.requestId, {
           url: rUrl,
-          resource_type: String(msg.params?.type || 'other').toLowerCase(),
+          endpoint_path: sanitizeEndpointPath(rUrl),
+          resource_type: resType,
           request_id: msg.params.requestId || null,
           initiator_type: meta.initiator_type || null,
           initiator_url: meta.initiator_url || null,
@@ -208,6 +217,8 @@ function findBrowser() {
           protocol: resp?.protocol || null,
           cache_control: headers['cache-control'] || null,
           content_encoding: headers['content-encoding'] || null,
+          cache_source: classifyCacheSource(resp),
+          timing: extractPhaseTimings(resp?.timing),
         });
       } else if (msg.method === 'Network.loadingFinished') {
         const rec = resourcesByReqId.get(msg.params.requestId);
@@ -507,10 +518,12 @@ function findBrowser() {
       }
     } catch {}
     let axTreeSummary = null;
+    let axNodeInventory = null;
     try {
       await call('Accessibility.enable');
       const axRes = await call('Accessibility.getFullAXTree');
       const nodes = Array.isArray(axRes?.nodes) ? axRes.nodes : [];
+      axNodeInventory = buildAxNodeInventoryFromCdp(nodes);
       const capped = nodes.slice(0, 5000);
       const interactiveRoles = new Set(['button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'menuitem', 'tab', 'switch', 'slider']);
       let ignoredNodes = 0;
@@ -810,6 +823,108 @@ function findBrowser() {
     const resourcesTruncated = allResources.length > 200;
     const resources = allResources.slice(0, 200);
 
+    let sensoryBundle = null;
+    let cdpCookies = [];
+    let layoutMetrics = null;
+    let screenshotSha256 = null;
+    let swInfo = { controller_present: false, registrations: [], cache_names: [], caches_truncated: false };
+    try {
+      const sensoryRes = await call('Runtime.evaluate', {
+        expression: '(' + collectInPageSensoryBundle.toString() + ')()',
+        returnByValue: true,
+      });
+      sensoryBundle = sensoryRes?.result?.value || null;
+    } catch {}
+    try {
+      const cookieRes = await call('Network.getCookies');
+      cdpCookies = Array.isArray(cookieRes?.cookies) ? cookieRes.cookies : [];
+    } catch {}
+    try {
+      const lmRes = await call('Page.getLayoutMetrics');
+      const vp = lmRes?.cssVisualViewport || lmRes?.visualViewport || {};
+      const cs = lmRes?.cssContentSize || lmRes?.contentSize || {};
+      layoutMetrics = {
+        width: Math.max(0, Math.round(vp.clientWidth || 1280)),
+        height: Math.max(0, Math.round(vp.clientHeight || 720)),
+        contentWidth: Math.max(0, Math.round(cs.width || 1280)),
+        contentHeight: Math.max(0, Math.round(cs.height || 720)),
+      };
+    } catch {}
+    try {
+      const shotRes = await call('Page.captureScreenshot', { format: 'png' });
+      if (typeof shotRes?.data === 'string' && shotRes.data.length > 0) {
+        screenshotSha256 = createHash('sha256').update(Buffer.from(shotRes.data, 'base64')).digest('hex');
+      }
+    } catch {}
+    try {
+      const swRes = await call('Runtime.evaluate', {
+        expression: `(async () => {
+          const controllerPresent = Boolean(navigator.serviceWorker?.controller);
+          let registrations = [];
+          try {
+            if (navigator.serviceWorker?.getRegistrations) {
+              const regs = await navigator.serviceWorker.getRegistrations();
+              registrations = regs.slice(0, 8).map((r) => {
+                let scopeOrigin = null;
+                let scopePath = null;
+                try {
+                  const u = new URL(r.scope);
+                  scopeOrigin = u.origin.toLowerCase();
+                  scopePath = u.pathname;
+                } catch {}
+                const worker = r.active || r.waiting || r.installing;
+                let scriptPath = null;
+                try {
+                  if (worker?.scriptURL) scriptPath = new URL(worker.scriptURL).pathname;
+                } catch {}
+                return {
+                  scope_origin: scopeOrigin,
+                  scope_path: scopePath,
+                  state: r.active ? 'activated' : (r.waiting ? 'installed' : (r.installing ? 'installing' : 'unknown')),
+                  script_path: scriptPath,
+                };
+              });
+            }
+          } catch {}
+          let cacheNames = [];
+          let cachesTruncated = false;
+          try {
+            if (window.caches?.keys) {
+              const keys = await window.caches.keys();
+              cachesTruncated = keys.length > 32;
+              cacheNames = keys.slice(0, 32).map((k) => String(k).slice(0, 128));
+            }
+          } catch {}
+          return { controller_present: controllerPresent, registrations, cache_names: cacheNames, caches_truncated: cachesTruncated };
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (swRes?.result?.value) swInfo = swRes.result.value;
+    } catch {}
+
+    const sensory = assembleSensoryInventories({
+      bundle: sensoryBundle,
+      finalUrl,
+      mainResponseHeaders,
+      mainStatusCode,
+      resources,
+      cookies: cdpCookies,
+      viewports,
+      perfObs: domAndImages.performance || null,
+      screenshotSha256,
+      layoutMetrics,
+      swInfo,
+    });
+    if (hasBeh) {
+      behObs.escape_dismissed_modal = behObs.dialog_escape_closed;
+      behObs.focus_restored_after_modal = typeof behObs.focus_lost_after_dialog_close === 'boolean'
+        ? !behObs.focus_lost_after_dialog_close
+        : null;
+      behObs.live_region_count = Number(sensory.beh_extra?.live_region_count ?? 0);
+      behObs.aria_invalid_count = Number(sensory.beh_extra?.aria_invalid_count ?? 0);
+    }
+
     process.stdout.write(JSON.stringify({
       final_url: finalUrl,
       browser_version: browserVersion,
@@ -834,6 +949,23 @@ function findBrowser() {
       behavioural_a11y: hasBeh ? behObs : behaviouralA11y,
       cpu_profile: cpuProfileSummary,
       consent_banner: domAndImages.consent_banner || null,
+      interactive_inventory: sensory.interactive_inventory,
+      application_state: sensory.application_state,
+      interaction_trace: sensory.interaction_trace,
+      visual_geometry: sensory.visual_geometry,
+      ax_node_inventory: axNodeInventory,
+      cookie_and_storage: sensory.cookie_and_storage,
+      third_party_inventory: sensory.third_party_inventory,
+      security_posture: sensory.security_posture,
+      security_challenge: sensory.security_challenge,
+      performance_attribution: sensory.performance_attribution,
+      media_and_fonts: sensory.media_and_fonts,
+      indexability_authority: sensory.indexability_authority,
+      structured_data: sensory.structured_data,
+      responsive_comparison: sensory.responsive_comparison,
+      link_graph: sensory.link_graph,
+      visual_artifacts: sensory.visual_artifacts,
+      service_worker_lifecycle: sensory.service_worker_lifecycle,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',

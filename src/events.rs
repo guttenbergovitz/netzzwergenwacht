@@ -29,6 +29,21 @@ impl RunId {
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
+
+    /// Returns the string slice of this run identifier.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Bounded receiver for diagnostic events emitted during a run.
+pub type DiagnosticEventReceiver = mpsc::Receiver<DiagnosticEvent>;
+
+/// Creates a bounded diagnostic event channel with [`DEFAULT_EVENT_CHANNEL_CAPACITY`].
+#[must_use]
+pub fn diagnostic_event_channel(run_id: RunId) -> (DiagnosticEventSink, DiagnosticEventReceiver) {
+    DiagnosticEventSink::bounded(run_id.0, DEFAULT_EVENT_CHANNEL_CAPACITY)
 }
 
 impl std::fmt::Display for RunId {
@@ -560,6 +575,7 @@ impl DiagnosticEventSink {
     /// If the bounded channel is full:
     /// - Coalescable progress events increment `dropped_progress_events` and return `false`.
     /// - Critical events also attempt `try_send` and return `false` if full in synchronous contexts.
+    #[allow(clippy::must_use_candidate)]
     pub fn emit(&self, context: EventContext, payload: DiagnosticEventPayload) -> bool {
         let Some(tx) = &self.inner.tx else {
             return false;
@@ -604,6 +620,7 @@ impl DiagnosticEventSink {
     }
 
     /// Bridges an existing [`InvestigationEvent`] into the unified diagnostic event stream.
+    #[allow(clippy::too_many_lines)]
     pub fn emit_investigation_event(&self, target: &str, event: &InvestigationEvent) {
         let base_ctx = EventContext::new().with_target(target);
         match event {

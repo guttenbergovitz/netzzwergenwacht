@@ -76,13 +76,30 @@ pub fn parse_axe_json(raw: &str) -> Result<AxeEvidence, String> {
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .to_owned();
-            let nodes_count = v.get("nodes").and_then(Value::as_array).map_or(0, Vec::len);
+            let nodes_arr = v.get("nodes").and_then(Value::as_array);
+            let nodes_count = nodes_arr.map_or(0, Vec::len);
+            let target_selectors = nodes_arr
+                .into_iter()
+                .flatten()
+                .filter_map(|node| node.get("target").and_then(Value::as_array))
+                .filter_map(|targets| {
+                    let parts: Vec<&str> = targets.iter().filter_map(Value::as_str).collect();
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        let joined = parts.join(" >> ");
+                        Some(joined.chars().take(160).collect::<String>())
+                    }
+                })
+                .take(16)
+                .collect();
             Some(AxeViolation {
                 id,
                 impact,
                 description,
                 help_url,
                 nodes_count,
+                target_selectors,
             })
         })
         .collect();

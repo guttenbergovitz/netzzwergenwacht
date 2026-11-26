@@ -108,6 +108,7 @@ pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
 
 /// Runs all deterministic Zwerg analysers against `snapshot` while emitting
 /// structured lifecycle and finding events to `sink`.
+#[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn run_all_with_events(
     snapshot: &EvidenceSnapshot,
