@@ -1052,6 +1052,7 @@ async fn run_check(
             },
         };
     }
+    collection::hydrate_browser_tls_and_caa(&mut snapshot);
     let mut report = analysis::run_all(&snapshot);
 
     if let Some(history_path) = history

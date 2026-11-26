@@ -48,7 +48,7 @@ pub async fn collect_http(
     )
     .await;
 
-    let (http, tls) = match outcome {
+    let (http, mut tls) = match outcome {
         Ok(Ok((evidence, tls))) if evidence.body_truncated => (
             CollectorOutcome::Partial {
                 warnings: vec![format!(
@@ -89,6 +89,13 @@ pub async fn collect_http(
         }
     };
 
+    if let CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } = &mut tls
+        && let Some(records) = lookup_dns_caa_records(target.host()).await
+    {
+        data.caa_records = records;
+        data.caa_query_succeeded = true;
+    }
+
     EvidenceSnapshot {
         target: target.clone(),
         captured_at_unix_secs,
@@ -97,6 +104,92 @@ pub async fn collect_http(
         browser: CollectorOutcome::default(),
         lighthouse: CollectorOutcome::default(),
         axe: CollectorOutcome::default(),
+    }
+}
+
+/// Looks up DNS CAA records for `host` over bounded DNS-over-HTTPS.
+///
+/// Returns `None` when the host is an IP literal, a loopback or reserved fixture name,
+/// or the query fails. An unavailable lookup is therefore never reported as an empty
+/// answer: `caa_query_succeeded` stays `false` in that case.
+async fn lookup_dns_caa_records(host: &str) -> Option<Vec<String>> {
+    if host.parse::<std::net::IpAddr>().is_ok() {
+        return None;
+    }
+    let lower = host.trim_end_matches('.').to_ascii_lowercase();
+    if lower.is_empty()
+        || ["localhost", "local", "invalid"].iter().any(|suffix| {
+            lower == *suffix
+                || lower
+                    .strip_suffix(suffix)
+                    .is_some_and(|prefix| prefix.ends_with('.'))
+        })
+    {
+        return None;
+    }
+    let mut url = Url::parse("https://cloudflare-dns.com/dns-query").ok()?;
+    url.query_pairs_mut()
+        .append_pair("name", &lower)
+        .append_pair("type", "CAA");
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(std::time::Duration::from_secs(3))
+        .user_agent(USER_AGENT)
+        .build()
+        .ok()?;
+    let response = client
+        .get(url)
+        .header("Accept", "application/dns-json")
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body_text = response.text().await.ok()?;
+    let body: serde_json::Value = serde_json::from_str(&body_text).ok()?;
+    let answers = body.get("Answer").and_then(serde_json::Value::as_array)?;
+    let mut records = Vec::new();
+    for answer in answers {
+        if answer.get("type").and_then(serde_json::Value::as_u64) != Some(257) {
+            continue;
+        }
+        let Some(data) = answer.get("data").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let sanitized: String = data.chars().filter(|c| !c.is_control()).take(256).collect();
+        let sanitized = sanitized.trim();
+        if sanitized.is_empty() {
+            continue;
+        }
+        records.push(sanitized.to_owned());
+        if records.len() >= 16 {
+            break;
+        }
+    }
+    Some(records)
+}
+
+/// Copies DNS CAA observations into the browser evidence so runtime views never need a
+/// second lookup. Only observed values are copied; unobserved browser security state
+/// stays `None`.
+pub fn hydrate_browser_tls_and_caa(snapshot: &mut EvidenceSnapshot) {
+    let tls = match &snapshot.tls {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
+        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => return,
+    };
+    let diagnostics = crate::domain::TlsAndCaaDiagnostics {
+        protocol_version: None,
+        cipher_suite: None,
+        browser_security_state: None,
+        leaf_certificate: None,
+        caa_records: tls.caa_records.clone(),
+        caa_query_succeeded: tls.caa_query_succeeded,
+    };
+    if let CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } =
+        &mut snapshot.browser
+    {
+        data.tls_and_caa = Some(diagnostics);
     }
 }
 

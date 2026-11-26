@@ -718,6 +718,7 @@ async fn collect_snapshot_with_events(
         snapshot.axe = outcome;
     }
 
+    collection::hydrate_browser_tls_and_caa(&mut snapshot);
     snapshot
 }
 
