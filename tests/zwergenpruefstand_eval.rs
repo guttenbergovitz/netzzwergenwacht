@@ -258,6 +258,7 @@ fn make_http_snapshot(
                 issuer: "CN=Example CA".to_owned(),
                 not_after_unix_secs: 2_000_000_000,
                 days_until_expiry: 90,
+                ..TlsEvidence::default()
             },
         }
     } else {
