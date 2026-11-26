@@ -33,6 +33,33 @@ jobs:
       - name: Verify release build
         run: cargo build --release --locked
 
+  live-browser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: browser-actions/setup-chrome@v1
+        id: setup-chrome
+        with:
+          chrome-version: stable
+      - name: Install CDP client
+        run: npm install --no-save ws
+      - name: Run live Chromium collector tests
+        env:
+          NZW_CHROMIUM_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
+          NZW_ALLOW_UNSAFE_BROWSER_SANDBOX: "1"
+        run: >-
+          cargo test --locked
+          --test sensory_collectors_live
+          --test browser_timeline
+          -- --ignored --test-threads=1
+
   security-audit:
     runs-on: ubuntu-latest
     permissions:

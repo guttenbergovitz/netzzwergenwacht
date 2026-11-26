@@ -149,6 +149,7 @@ async fn spawn_sensory_fixture() -> (std::net::SocketAddr, tokio::task::JoinHand
 
 #[tokio::test]
 #[ignore = "requires local Chromium and Node.js with ws"]
+#[allow(clippy::too_many_lines)]
 async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_offline_queries() {
     let (address, server) = spawn_sensory_fixture().await;
     let policy = TargetPolicy::AllowPrivate;
@@ -219,6 +220,20 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         !trace.steps.is_empty(),
         "expected real read-only disclosure toggle step on <summary>"
     );
+    for step in &trace.steps {
+        assert!(
+            step.dom_fingerprint_changed,
+            "opening <details> must change the measured DOM structure fingerprint"
+        );
+        assert_eq!(
+            step.triggered_requests, 0,
+            "a native disclosure toggle must not trigger network requests"
+        );
+        assert_eq!(
+            step.new_runtime_errors, 0,
+            "a native disclosure toggle must not raise runtime errors"
+        );
+    }
 
     // 4. Visual Geometry
     let geo = evidence
@@ -238,7 +253,10 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         .ax_node_inventory
         .as_ref()
         .expect("ax_node_inventory populated");
-    assert!(!ax_inv.nodes.is_empty());
+    assert!(
+        !ax_inv.nodes.is_empty(),
+        "expected the accessibility tree inventory to retain nodes"
+    );
     assert!(
         ax_inv
             .nodes
@@ -276,6 +294,13 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         storage.indexed_db_enumerated,
         "expected async window.indexedDB.databases() enumeration to complete"
     );
+    assert!(
+        storage
+            .cookies
+            .iter()
+            .all(|c| c.observed_before_consent.is_none()),
+        "no consent interaction was performed, so consent ordering must stay unobserved"
+    );
 
     // 7. Security Posture & Challenge
     let posture = evidence
@@ -299,7 +324,26 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         .performance_attribution
         .as_ref()
         .expect("performance_attribution populated");
-    assert!(perf_attr.lcp_candidate.is_some());
+    let lcp = perf_attr
+        .lcp_candidate
+        .as_ref()
+        .expect("expected an observed LCP candidate");
+    assert_eq!(
+        lcp.render_time_ms,
+        evidence.performance.as_ref().and_then(|p| p.lcp_ms),
+        "LCP render time must be the measured largest-contentful-paint entry, never FCP"
+    );
+    assert!(
+        perf_attr.total_cls_milli.is_some(),
+        "CLS must be measured or absent, never defaulted to zero"
+    );
+    assert!(
+        perf_attr
+            .render_blocking_chain
+            .blocking_transfer_bytes
+            .is_none(),
+        "the loopback fixture serves no scripts or stylesheets, so blocking transfer bytes are unobserved"
+    );
 
     let media = evidence
         .media_and_fonts
@@ -343,7 +387,14 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         "expected mobile_scroll_width ({}) > 390 due to 620px banner",
         resp.mobile_scroll_width
     );
-    assert!(!resp.anomalies.is_empty());
+    assert!(
+        resp.mobile_visible_controls.is_some(),
+        "mobile control count must come from the mobile viewport, never the desktop fallback"
+    );
+    assert!(
+        !resp.anomalies.is_empty(),
+        "expected responsive anomalies for the overflowing mobile fixture"
+    );
 
     // 11. Link Graph & Forms
     let links = evidence.link_graph.as_ref().expect("link_graph populated");
@@ -364,7 +415,10 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         "expected measured above_fold_coverage_milli in 1..=1000, got {}",
         vis.above_fold_coverage_milli
     );
-    assert!(!vis.landmarks.is_empty());
+    assert!(
+        !vis.landmarks.is_empty(),
+        "expected visual region landmarks in the fixture"
+    );
 
     let sw = evidence
         .service_worker
