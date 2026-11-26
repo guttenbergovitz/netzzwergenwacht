@@ -659,6 +659,37 @@ impl HttpEvidence {
     }
 }
 
+/// Result of a DNS CAA lookup for the audited hostname.
+///
+/// The variants separate "no records were published" from "the lookup did not
+/// produce a usable answer". Only [`CaaLookupOutcome::RecordsObserved`] and
+/// [`CaaLookupOutcome::NoRecordsObserved`] are successful observations.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CaaLookupOutcome {
+    /// No lookup was performed, for example because external DNS is disabled.
+    #[default]
+    NotAttempted,
+    /// The resolver answered with one or more CAA records.
+    RecordsObserved,
+    /// The resolver answered successfully and no CAA records are published.
+    NoRecordsObserved,
+    /// The resolver reported that the name does not exist.
+    NameDoesNotExist,
+    /// The resolver reported a server-side failure.
+    ServerFailure,
+    /// The resolver refused the query.
+    Refused,
+    /// The query exceeded its time budget.
+    Timeout,
+    /// The resolver response could not be parsed or was not a DNS answer.
+    InvalidResponse,
+    /// The configured resolver cannot be used for this host.
+    Unsupported,
+    /// Target policy or resolver policy blocked the lookup.
+    PolicyBlocked,
+}
+
 /// TLS peer certificate evidence extracted from the `rustls` handshake.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TlsEvidence {
@@ -691,6 +722,9 @@ pub struct TlsEvidence {
     /// Whether DNS CAA lookup was attempted and succeeded.
     #[serde(default)]
     pub caa_query_succeeded: bool,
+    /// Explicit outcome of the DNS CAA lookup, including failure and policy states.
+    #[serde(default)]
+    pub caa_lookup_outcome: CaaLookupOutcome,
 }
 
 /// Outcome of an individual collector stage.

@@ -141,4 +141,7 @@ pub struct TlsAndCaaDiagnostics {
     pub caa_records: Vec<String>,
     /// Whether DNS CAA lookup was attempted and succeeded.
     pub caa_query_succeeded: bool,
+    /// Explicit outcome of the DNS CAA lookup, including failure and policy states.
+    #[serde(default)]
+    pub caa_lookup_outcome: crate::domain::CaaLookupOutcome,
 }

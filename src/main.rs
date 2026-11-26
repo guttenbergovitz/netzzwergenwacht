@@ -973,6 +973,42 @@ fn remaining_audit_budget(started: std::time::Instant, total: Duration) -> Optio
     if rem.is_zero() { None } else { Some(rem) }
 }
 
+/// Applies CLI budget overrides to the configured execution budget.
+fn budget_with_overrides(
+    app_cfg: &AppConfig,
+    timeout_secs: Option<u64>,
+    audit_timeout_secs: Option<u64>,
+    max_redirects: Option<usize>,
+) -> netzzwergenwacht::domain::ExecutionBudget {
+    let mut budget = app_cfg.execution_budget();
+    if let Some(secs) = timeout_secs {
+        budget.http_timeout = Duration::from_secs(secs.max(1));
+    }
+    if let Some(secs) = audit_timeout_secs {
+        budget.audit_timeout = Duration::from_secs(secs.max(1));
+    }
+    if let Some(hops) = max_redirects {
+        budget.max_redirects = hops;
+    }
+    budget
+}
+
+/// Starts the audit clock and collects Level 1 evidence with the configured CAA resolver.
+async fn collect_level1(
+    target: &AuditTarget,
+    budget: &netzzwergenwacht::domain::ExecutionBudget,
+    policy: TargetPolicy,
+    caa_doh_endpoint: Option<&str>,
+) -> (
+    std::time::Instant,
+    netzzwergenwacht::domain::EvidenceSnapshot,
+) {
+    let started = std::time::Instant::now();
+    let snapshot =
+        collection::collect_http_with_caa_endpoint(target, budget, policy, caa_doh_endpoint).await;
+    (started, snapshot)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_check(
     url: &str,
@@ -1005,19 +1041,15 @@ async fn run_check(
         }
     };
 
-    let mut budget = app_cfg.execution_budget();
-    if let Some(secs) = timeout_secs {
-        budget.http_timeout = Duration::from_secs(secs.max(1));
-    }
-    if let Some(secs) = audit_timeout_secs {
-        budget.audit_timeout = Duration::from_secs(secs.max(1));
-    }
-    if let Some(hops) = max_redirects {
-        budget.max_redirects = hops;
-    }
+    let budget = budget_with_overrides(&app_cfg, timeout_secs, audit_timeout_secs, max_redirects);
 
-    let audit_started = std::time::Instant::now();
-    let mut snapshot = collection::collect_http(&target, &budget, target_pol).await;
+    let (audit_started, mut snapshot) = collect_level1(
+        &target,
+        &budget,
+        target_pol,
+        app_cfg.dns.caa_doh_endpoint.as_deref(),
+    )
+    .await;
     if adapters.lighthouse {
         snapshot.lighthouse = match remaining_audit_budget(audit_started, budget.audit_timeout) {
             Some(rem) => {

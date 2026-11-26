@@ -681,6 +681,7 @@ fn tls_and_caa() -> TlsAndCaaDiagnostics {
         cipher_suite: Some("TLS_AES_128_GCM_SHA256".to_owned()),
         caa_records: vec!["0 issue \"letsencrypt.org\"".to_owned()],
         caa_query_succeeded: true,
+        caa_lookup_outcome: netzzwergenwacht::domain::CaaLookupOutcome::NotAttempted,
         ..TlsAndCaaDiagnostics::default()
     }
 }
@@ -698,6 +699,7 @@ fn tls_evidence() -> TlsEvidence {
         self_signed: false,
         caa_records: vec!["0 issue \"letsencrypt.org\"".to_owned()],
         caa_query_succeeded: true,
+        caa_lookup_outcome: netzzwergenwacht::domain::CaaLookupOutcome::NotAttempted,
     }
 }
 

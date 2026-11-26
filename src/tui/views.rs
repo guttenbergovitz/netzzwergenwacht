@@ -1207,8 +1207,8 @@ fn build_tls_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<L
                     }
                 )),
                 Line::from(format!(
-                    " DNS CAA query:    succeeded={} | records ({}): {}",
-                    tls.caa_query_succeeded,
+                    " DNS CAA query:    outcome={:?} | records ({}): {}",
+                    tls.caa_lookup_outcome,
                     tls.caa_records.len(),
                     if tls.caa_records.is_empty() {
                         String::from("none")
@@ -1738,7 +1738,7 @@ fn build_visual_sw_and_tls_caa_lines(
     }
     if let Some(t) = tls_caa.diagnostics {
         out.push(Line::from(format!(
-            " TLS/CAA: security_state={} SANs={} CT={:?} (SCTs={}) CAA_ok={} records={}",
+            " TLS/CAA: security_state={} SANs={} CT={:?} (SCTs={}) CAA_outcome={:?} records={}",
             sanitize_line(t.browser_security_state.as_deref().unwrap_or("unknown"), 16),
             t.leaf_certificate.as_ref().map_or(0, |c| c.san_count),
             t.leaf_certificate
@@ -1747,7 +1747,7 @@ fn build_visual_sw_and_tls_caa_lines(
             t.leaf_certificate
                 .as_ref()
                 .map_or(0, |c| c.signed_certificate_timestamp_count),
-            t.caa_query_succeeded,
+            t.caa_lookup_outcome,
             t.caa_records.len()
         )));
     }

@@ -34,6 +34,8 @@ pub struct AppConfig {
     pub policy: PolicyConfig,
     /// Per-role and per-dwarf LLM provider/model routing.
     pub models: ModelRoutingConfig,
+    /// External diagnostic dependencies such as the DNS resolver.
+    pub dns: DnsConfig,
 }
 
 impl AppConfig {
@@ -127,6 +129,22 @@ impl Default for ModelSpec {
             api_key_env: None,
         }
     }
+}
+
+/// External diagnostic dependency configuration (`[dns]`).
+///
+/// `NetzZwergenWacht` is local-first: no external resolver is contacted unless an
+/// endpoint is configured here. The endpoint is recorded with the observation so
+/// a reader can tell which resolver produced the answer.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DnsConfig {
+    /// Optional DNS-over-HTTPS JSON endpoint used for CAA lookups.
+    ///
+    /// The endpoint must use `https`. When absent, CAA acquisition is not attempted
+    /// and the observation records [`crate::domain::CaaLookupOutcome::NotAttempted`]
+    /// rather than an empty successful result.
+    pub caa_doh_endpoint: Option<String>,
 }
 
 /// Per-role and per-dwarf model routing configuration (`[models]`).

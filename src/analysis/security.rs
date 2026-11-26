@@ -2621,6 +2621,7 @@ fn check_consent_banner_signals(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::CaaLookupOutcome;
     use crate::domain::{
         AuditTarget, CollectorOutcome, HttpHeader, Measurement, MeasurementUnit, TargetPolicy,
         TlsEvidence,
@@ -2642,6 +2643,7 @@ mod tests {
                     self_signed: false,
                     caa_records: Vec::new(),
                     caa_query_succeeded: false,
+                    caa_lookup_outcome: CaaLookupOutcome::NotAttempted,
                 },
             }
         } else {

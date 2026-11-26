@@ -17,9 +17,9 @@ use url::Url;
 use x509_parser::prelude::{FromDer, X509Certificate};
 
 use crate::domain::{
-    AuditTarget, CollectorOutcome, EvidenceSnapshot, ExecutionBudget, HttpEvidence, HttpHeader,
-    Measurement, MeasurementUnit, RedirectHop, TargetPolicy, TargetScheme, TlsEvidence,
-    is_forbidden_ip,
+    AuditTarget, CaaLookupOutcome, CollectorOutcome, EvidenceSnapshot, ExecutionBudget,
+    HttpEvidence, HttpHeader, Measurement, MeasurementUnit, RedirectHop, TargetPolicy,
+    TargetScheme, TlsEvidence, is_forbidden_ip,
 };
 
 const USER_AGENT: &str = concat!("NetzZwergenWacht/", env!("CARGO_PKG_VERSION"));
@@ -34,10 +34,25 @@ pub async fn collect_http(
     budget: &ExecutionBudget,
     policy: TargetPolicy,
 ) -> EvidenceSnapshot {
+    collect_http_with_caa_endpoint(target, budget, policy, None).await
+}
+
+/// Performs the same bounded HTTP collection as [`collect_http`], additionally
+/// querying DNS CAA records through `caa_doh_endpoint` when one is configured.
+///
+/// The endpoint must be supplied explicitly by the caller; with `None` the hostname is
+/// never sent to an external resolver, which keeps default operation local-first.
+pub async fn collect_http_with_caa_endpoint(
+    target: &AuditTarget,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+    caa_doh_endpoint: Option<&str>,
+) -> EvidenceSnapshot {
     tracing::debug!(
         target = target.as_str(),
         "starting HTTP evidence collection"
     );
+    let started = Instant::now();
     let captured_at_unix_secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -89,11 +104,16 @@ pub async fn collect_http(
         }
     };
 
-    if let CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } = &mut tls
-        && let Some(records) = lookup_dns_caa_records(target.host()).await
-    {
+    if let CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } = &mut tls {
+        let remaining = budget.audit_timeout.saturating_sub(started.elapsed());
+        let (records, outcome) =
+            lookup_dns_caa_records(caa_doh_endpoint, target.host(), remaining).await;
         data.caa_records = records;
-        data.caa_query_succeeded = true;
+        data.caa_query_succeeded = matches!(
+            outcome,
+            CaaLookupOutcome::RecordsObserved | CaaLookupOutcome::NoRecordsObserved
+        );
+        data.caa_lookup_outcome = outcome;
     }
 
     EvidenceSnapshot {
@@ -107,48 +127,103 @@ pub async fn collect_http(
     }
 }
 
-/// Looks up DNS CAA records for `host` over bounded DNS-over-HTTPS.
+/// Looks up DNS CAA records for `host` through an explicitly configured DNS-over-HTTPS
+/// endpoint.
 ///
-/// Returns `None` when the host is an IP literal, a loopback or reserved fixture name,
-/// or the query fails. An unavailable lookup is therefore never reported as an empty
-/// answer: `caa_query_succeeded` stays `false` in that case.
-async fn lookup_dns_caa_records(host: &str) -> Option<Vec<String>> {
+/// Local-first operation is the default: when no endpoint is configured the lookup is
+/// not attempted and the outcome is [`CaaLookupOutcome::NotAttempted`], so the
+/// investigated hostname is never transmitted to a third party implicitly. The helper
+/// returns the observed records together with an explicit outcome so that "no records
+/// published" stays distinguishable from "the lookup failed".
+/// Maps a DNS response code to a CAA lookup outcome.
+///
+/// A success response without `Answer` records is a valid empty observation, so
+/// callers must not treat it as a failed acquisition.
+const fn caa_outcome_for_dns_status(status: Option<u64>) -> CaaLookupOutcome {
+    match status {
+        Some(0) => CaaLookupOutcome::NoRecordsObserved,
+        Some(3) => CaaLookupOutcome::NameDoesNotExist,
+        Some(2) => CaaLookupOutcome::ServerFailure,
+        Some(5) => CaaLookupOutcome::Refused,
+        _ => CaaLookupOutcome::InvalidResponse,
+    }
+}
+
+async fn lookup_dns_caa_records(
+    endpoint: Option<&str>,
+    host: &str,
+    remaining: std::time::Duration,
+) -> (Vec<String>, CaaLookupOutcome) {
+    let Some(endpoint) = endpoint else {
+        return (Vec::new(), CaaLookupOutcome::NotAttempted);
+    };
     if host.parse::<std::net::IpAddr>().is_ok() {
-        return None;
+        return (Vec::new(), CaaLookupOutcome::Unsupported);
     }
     let lower = host.trim_end_matches('.').to_ascii_lowercase();
-    if lower.is_empty()
-        || ["localhost", "local", "invalid"].iter().any(|suffix| {
-            lower == *suffix
-                || lower
-                    .strip_suffix(suffix)
-                    .is_some_and(|prefix| prefix.ends_with('.'))
-        })
-    {
-        return None;
+    if lower.is_empty() {
+        return (Vec::new(), CaaLookupOutcome::Unsupported);
     }
-    let mut url = Url::parse("https://cloudflare-dns.com/dns-query").ok()?;
+    if ["localhost", "local", "invalid"].iter().any(|suffix| {
+        lower == *suffix
+            || lower
+                .strip_suffix(suffix)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    }) {
+        return (Vec::new(), CaaLookupOutcome::PolicyBlocked);
+    }
+    if remaining.is_zero() {
+        return (Vec::new(), CaaLookupOutcome::Timeout);
+    }
+    let Ok(mut url) = Url::parse(endpoint) else {
+        return (Vec::new(), CaaLookupOutcome::Unsupported);
+    };
+    if url.scheme() != "https" {
+        return (Vec::new(), CaaLookupOutcome::Unsupported);
+    }
     url.query_pairs_mut()
         .append_pair("name", &lower)
         .append_pair("type", "CAA");
-    let client = reqwest::Client::builder()
+    let Ok(client) = reqwest::Client::builder()
         .no_proxy()
-        .timeout(std::time::Duration::from_secs(3))
+        .timeout(remaining.min(std::time::Duration::from_secs(3)))
         .user_agent(USER_AGENT)
         .build()
-        .ok()?;
-    let response = client
-        .get(url)
-        .header("Accept", "application/dns-json")
-        .send()
-        .await
-        .ok()?;
-    if !response.status().is_success() {
-        return None;
+    else {
+        return (Vec::new(), CaaLookupOutcome::Unsupported);
+    };
+
+    let query = async {
+        let response = client
+            .get(url)
+            .header("Accept", "application/dns-json")
+            .send()
+            .await
+            .ok()?;
+        if !response.status().is_success() {
+            return None;
+        }
+        let body = response.bytes().await.ok()?;
+        if body.len() > 64 * 1024 {
+            return None;
+        }
+        let value: serde_json::Value = serde_json::from_slice(&body).ok()?;
+        Some(value)
+    };
+
+    let Some(body) = tokio::time::timeout(remaining, query).await.ok().flatten() else {
+        return (Vec::new(), CaaLookupOutcome::Timeout);
+    };
+
+    let outcome =
+        caa_outcome_for_dns_status(body.get("Status").and_then(serde_json::Value::as_u64));
+    if !matches!(outcome, CaaLookupOutcome::NoRecordsObserved) {
+        return (Vec::new(), outcome);
     }
-    let body_text = response.text().await.ok()?;
-    let body: serde_json::Value = serde_json::from_str(&body_text).ok()?;
-    let answers = body.get("Answer").and_then(serde_json::Value::as_array)?;
+    let Some(answers) = body.get("Answer").and_then(serde_json::Value::as_array) else {
+        // A successful answer without an `Answer` section is an empty observation.
+        return (Vec::new(), outcome);
+    };
     let mut records = Vec::new();
     for answer in answers {
         if answer.get("type").and_then(serde_json::Value::as_u64) != Some(257) {
@@ -167,7 +242,11 @@ async fn lookup_dns_caa_records(host: &str) -> Option<Vec<String>> {
             break;
         }
     }
-    Some(records)
+    if records.is_empty() {
+        (records, CaaLookupOutcome::NoRecordsObserved)
+    } else {
+        (records, CaaLookupOutcome::RecordsObserved)
+    }
 }
 
 /// Copies DNS CAA observations into the browser evidence so runtime views never need a
@@ -178,13 +257,28 @@ pub fn hydrate_browser_tls_and_caa(snapshot: &mut EvidenceSnapshot) {
         CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
         CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => return,
     };
+    // Certificate metadata comes from the completed TLS handshake; negotiated protocol,
+    // cipher suite and browser security state are not observed by this collector and stay
+    // absent rather than being inferred from the certificate.
+    let leaf_certificate = crate::domain::TlsLeafCertificateDiagnostics {
+        san_count: u32::try_from(tls.san_entries.len()).unwrap_or(u32::MAX),
+        san_entries: tls.san_entries.clone(),
+        not_before_unix_secs: tls.not_before_unix_secs,
+        not_after_unix_secs: tls.not_after_unix_secs,
+        public_key_algorithm: tls.public_key_algorithm.clone(),
+        signature_algorithm: tls.signature_algorithm.clone(),
+        self_signed: tls.self_signed,
+        certificate_transparency_status: crate::domain::CertificateTransparencyStatus::Unknown,
+        signed_certificate_timestamp_count: 0,
+    };
     let diagnostics = crate::domain::TlsAndCaaDiagnostics {
         protocol_version: None,
         cipher_suite: None,
         browser_security_state: None,
-        leaf_certificate: None,
+        leaf_certificate: Some(leaf_certificate),
         caa_records: tls.caa_records.clone(),
         caa_query_succeeded: tls.caa_query_succeeded,
+        caa_lookup_outcome: tls.caa_lookup_outcome,
     };
     if let CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } =
         &mut snapshot.browser
@@ -451,6 +545,7 @@ fn extract_tls_evidence(
                     self_signed,
                     caa_records: Vec::new(),
                     caa_query_succeeded: false,
+                    caa_lookup_outcome: CaaLookupOutcome::NotAttempted,
                 },
             }
         }
@@ -735,5 +830,69 @@ mod tests {
             .await,
             ConditionalCheckOutcome::ChangedOrUnverifiable
         );
+    }
+}
+
+#[cfg(test)]
+mod caa_tests {
+    use std::time::Duration;
+
+    use super::{caa_outcome_for_dns_status, lookup_dns_caa_records};
+    use crate::domain::CaaLookupOutcome;
+
+    #[test]
+    fn dns_response_codes_map_to_explicit_caa_outcomes() {
+        assert_eq!(
+            caa_outcome_for_dns_status(Some(0)),
+            CaaLookupOutcome::NoRecordsObserved
+        );
+        assert_eq!(
+            caa_outcome_for_dns_status(Some(2)),
+            CaaLookupOutcome::ServerFailure
+        );
+        assert_eq!(
+            caa_outcome_for_dns_status(Some(3)),
+            CaaLookupOutcome::NameDoesNotExist
+        );
+        assert_eq!(
+            caa_outcome_for_dns_status(Some(5)),
+            CaaLookupOutcome::Refused
+        );
+        assert_eq!(
+            caa_outcome_for_dns_status(None),
+            CaaLookupOutcome::InvalidResponse
+        );
+        assert_eq!(
+            caa_outcome_for_dns_status(Some(99)),
+            CaaLookupOutcome::InvalidResponse
+        );
+    }
+
+    #[tokio::test]
+    async fn absent_resolver_configuration_is_not_attempted() {
+        let (records, outcome) =
+            lookup_dns_caa_records(None, "example.org", Duration::from_secs(1)).await;
+        assert_eq!(records.len(), 0, "expected no CAA records");
+        assert_eq!(outcome, CaaLookupOutcome::NotAttempted);
+    }
+
+    #[tokio::test]
+    async fn loopback_and_local_names_are_policy_blocked() {
+        let (records, outcome) = lookup_dns_caa_records(
+            Some("https://cloudflare-dns.com/dns-query"),
+            "localhost",
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(records.len(), 0, "expected no CAA records");
+        assert_eq!(outcome, CaaLookupOutcome::PolicyBlocked);
+
+        let (_, outcome) = lookup_dns_caa_records(
+            Some("https://cloudflare-dns.com/dns-query"),
+            "127.0.0.1",
+            Duration::from_secs(1),
+        )
+        .await;
+        assert_eq!(outcome, CaaLookupOutcome::Unsupported);
     }
 }
