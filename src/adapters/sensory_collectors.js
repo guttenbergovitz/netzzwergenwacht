@@ -113,7 +113,7 @@ function buildAxNodeInventoryFromCdp(cdpNodes, sha256HexFn) {
   };
 }
 
-function collectInPageSensoryBundle() {
+async function collectInPageSensoryBundle() {
   const MAX_DOM_NODES = 16384;
   const MAX_DEPTH = 64;
   const MAX_INTERACTIVE = 256;
@@ -1014,6 +1014,7 @@ function collectInPageSensoryBundle() {
 
   // Execute real bounded read-only UI toggle probes (accordions/details/tabs) and restore state
   const interactionSteps = [];
+  const PROBE_WINDOW_MS = 250;
   for (let i = 0; i < readOnlyToggleCandidates.length; i += 1) {
     const cand = readOnlyToggleCandidates[i];
     const before = readStateMetrics();
@@ -1021,10 +1022,20 @@ function collectInPageSensoryBundle() {
     const beforeResources = performance.getEntriesByType('resource').length;
     const beforeErrors = Number(window.__nzwPerf?.errors || 0);
     const actionKind = 'disclosure_toggle';
+    const observationStartedMs = Math.round(performance.now());
+    let termination = 'window_elapsed';
     try {
       cand.el.focus();
       cand.el.click();
-    } catch {}
+    } catch {
+      termination = 'action_threw';
+    }
+    // Bounded observation window: allows promises, timers and framework
+    // scheduling triggered by the action to complete before the state is read.
+    if (termination !== 'action_threw') {
+      await new Promise((resolve) => setTimeout(resolve, PROBE_WINDOW_MS));
+    }
+    const observedWindowMs = Math.max(0, Math.round(performance.now() - observationStartedMs));
     const after = readStateMetrics();
     const afterStructure = structureSignature().signature;
     const afterResources = performance.getEntriesByType('resource').length;
@@ -1047,12 +1058,28 @@ function collectInPageSensoryBundle() {
       dom_fingerprint_changed: sigChanged,
       runtime_errors_observed_in_window: Math.max(0, afterErrors - beforeErrors),
       requests_observed_in_window: Math.max(0, afterResources - beforeResources),
+      observation_started_ms: observationStartedMs,
+      observation_window_ms: observedWindowMs,
+      window_termination: termination,
+      restoration_attempted: false,
+      restoration_succeeded: null,
     });
-    // Restore original toggle state if we changed expansion
+    // Restore original toggle state if we changed expansion. Restoration is
+    // best-effort: application-side effects are not reversed by it.
     if (expandedChanged) {
+      const step = interactionSteps[interactionSteps.length - 1];
+      step.restoration_attempted = true;
       try {
         cand.el.click();
-      } catch {}
+        const restored = readStateMetrics();
+        step.restoration_succeeded = restored.expandedControls === before.expandedControls;
+        if (step.restoration_succeeded !== true) {
+          step.window_termination = 'restoration_failed';
+        }
+      } catch {
+        step.restoration_succeeded = false;
+        step.window_termination = 'restoration_failed';
+      }
     }
   }
 
@@ -1467,6 +1494,8 @@ function collectInPageSensoryBundle() {
       candidate_scenarios: Array.from(scenarioSet),
       steps: interactionSteps,
       truncated: readOnlyToggleCandidates.length > 16,
+      probe_policy: interactionSteps.length > 0 ? 'restricted_behavioural_probe' : 'passive_only',
+      network_requests_suppressed: false,
     },
     visual_geometry: {
       viewport_width: vw,

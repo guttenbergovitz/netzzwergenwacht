@@ -6,7 +6,8 @@ use std::time::Duration;
 use netzzwergenwacht::adapters::browser::run_browser_with_policy;
 use netzzwergenwacht::domain::{
     AuditTarget, CollectorOutcome, EvidenceSnapshot, FunctionalComponentKind,
-    InteractionSafetyClass, LcpCandidateSource, StructuredDataSyntax, TargetPolicy,
+    InteractionProbePolicy, InteractionSafetyClass, InteractionWindowTermination,
+    LcpCandidateSource, StructuredDataSyntax, TargetPolicy,
 };
 use netzzwergenwacht::investigation::{
     AccessibilityNodeFilter, CookieStorageFilter, ElementGeometryFilter, EvidenceQueryStatus,
@@ -260,7 +261,39 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
             step.runtime_errors_observed_in_window, 0,
             "a native disclosure toggle must not raise runtime errors"
         );
+        assert!(
+            step.observation_started_ms.is_some(),
+            "the probe must record when its observation window opened"
+        );
+        assert!(
+            step.observation_window_ms
+                .is_some_and(|window| window >= 250),
+            "the probe must wait for its bounded observation window before reading state"
+        );
+        assert_eq!(
+            step.window_termination,
+            InteractionWindowTermination::WindowElapsed,
+            "the observation window must close normally for a native disclosure toggle"
+        );
+        assert!(
+            step.restoration_attempted,
+            "a state-changing probe must attempt to restore local state"
+        );
+        assert_eq!(
+            step.restoration_succeeded,
+            Some(true),
+            "restoring the disclosure state must be confirmed, not assumed"
+        );
     }
+    assert_eq!(
+        trace.probe_policy,
+        InteractionProbePolicy::RestrictedBehaviouralProbe,
+        "an active probe without network suppression must be labelled a restricted probe"
+    );
+    assert!(
+        !trace.network_requests_suppressed,
+        "the probe must not claim network isolation it did not perform"
+    );
 
     // 4. Visual Geometry
     let geo = evidence

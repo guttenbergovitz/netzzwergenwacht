@@ -926,6 +926,7 @@ function findBrowser() {
       const sensoryRes = await call('Runtime.evaluate', {
         expression: '(' + collectInPageSensoryBundle.toString() + ')()',
         returnByValue: true,
+        awaitPromise: true,
       });
       sensoryBundle = sensoryRes?.result?.value || null;
     } catch {}

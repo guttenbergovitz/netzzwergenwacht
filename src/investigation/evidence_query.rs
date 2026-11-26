@@ -15,15 +15,15 @@ use crate::domain::{
     AccessibilityNodeObs, ApplicationStateSnapshot, BrowserEvidence, CandidateJourneyScenario,
     CollectorOutcome, ConsoleErrorEvent, CookieSameSiteMode, ElementGeometryObs, EvidenceRef,
     EvidenceSnapshot, EvidenceSource, FontAssetObs, FunctionalComponentKind,
-    IndexabilityAuthorityEvidence, InteractionActionKind, InteractionSafetyClass,
-    InteractionTraceStep, InteractiveElementObs, LinkClusterSummary, LinkPlacementRegion,
-    MediaAssetObs, MediaFormatClass, PerformanceAttributionEvidence, RenderedBlockIdentity,
-    RenderedBlockKind, RenderedContentBlock, RenderedContentLimits, RenderedCssVisibility,
-    RenderedFormEndpointObs, RenderedLinkObs, RenderedTextFingerprint, ResourceTimingObs,
-    ResponsiveAnomalyKind, ResponsiveAnomalyObs, RuntimeCookieObs, SecurityChallengeEvidence,
-    SecurityPostureSummary, ServiceWorkerLifecycleEvidence, SocialPreviewCardCompleteness,
-    StorageKeyObs, StructuredDataSyntax, StructuredEntitySummary, ThirdPartyOriginObs,
-    TlsAndCaaDiagnostics, TlsEvidence, VisualArtifactEvidence, WebStorageArea,
+    IndexabilityAuthorityEvidence, InteractionActionKind, InteractionProbePolicy,
+    InteractionSafetyClass, InteractionTraceStep, InteractiveElementObs, LinkClusterSummary,
+    LinkPlacementRegion, MediaAssetObs, MediaFormatClass, PerformanceAttributionEvidence,
+    RenderedBlockIdentity, RenderedBlockKind, RenderedContentBlock, RenderedContentLimits,
+    RenderedCssVisibility, RenderedFormEndpointObs, RenderedLinkObs, RenderedTextFingerprint,
+    ResourceTimingObs, ResponsiveAnomalyKind, ResponsiveAnomalyObs, RuntimeCookieObs,
+    SecurityChallengeEvidence, SecurityPostureSummary, ServiceWorkerLifecycleEvidence,
+    SocialPreviewCardCompleteness, StorageKeyObs, StructuredDataSyntax, StructuredEntitySummary,
+    ThirdPartyOriginObs, TlsAndCaaDiagnostics, TlsEvidence, VisualArtifactEvidence, WebStorageArea,
 };
 use crate::investigation::tools::QueryBrowserEvidenceOutput;
 
@@ -1256,6 +1256,13 @@ pub struct InteractionTraceQueryPage<'a> {
     pub next_offset: Option<usize>,
     /// Whether the 16-step cap truncated additional steps.
     pub truncated: bool,
+    /// Safety classification of the probes that produced these steps.
+    pub probe_policy: InteractionProbePolicy,
+    /// Whether network activity was suppressed while probing.
+    ///
+    /// `false` means the steps observed live application behaviour and must not be
+    /// presented as an isolated scenario.
+    pub network_requests_suppressed: bool,
 }
 
 /// Queries the bounded read-only interaction trace from [`EvidenceSnapshot`].
@@ -1275,6 +1282,8 @@ pub fn query_interaction_trace<'a>(
                 steps: Vec::new(),
                 next_offset: None,
                 truncated: false,
+                probe_policy: InteractionProbePolicy::PassiveOnly,
+                network_requests_suppressed: false,
             };
         }
     };
@@ -1288,6 +1297,8 @@ pub fn query_interaction_trace<'a>(
             steps: Vec::new(),
             next_offset: None,
             truncated: false,
+            probe_policy: InteractionProbePolicy::PassiveOnly,
+            network_requests_suppressed: false,
         };
     };
 
@@ -1316,6 +1327,8 @@ pub fn query_interaction_trace<'a>(
         steps: matching[start..end].to_vec(),
         next_offset: (end < total_matching).then_some(end),
         truncated: trace.truncated,
+        probe_policy: trace.probe_policy,
+        network_requests_suppressed: trace.network_requests_suppressed,
     }
 }
 

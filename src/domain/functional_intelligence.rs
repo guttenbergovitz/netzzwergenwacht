@@ -299,6 +299,31 @@ pub enum CandidateJourneyScenario {
     FormEntry,
 }
 
+/// Reason an interaction observation window ended.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionWindowTermination {
+    /// The bounded observation window elapsed after the action was dispatched.
+    #[default]
+    WindowElapsed,
+    /// Dispatching the action threw, so no post-action window could be established.
+    ActionThrew,
+    /// Restoring the pre-action local state failed after the window closed.
+    RestorationFailed,
+}
+
+/// Safety classification of the interaction trace that produced a step.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionProbePolicy {
+    /// Only passive observation was performed; no application control was activated.
+    #[default]
+    PassiveOnly,
+    /// An active probe was executed without suppressing network activity, so the
+    /// outcome is a restricted behavioural probe rather than a full user journey.
+    RestrictedBehaviouralProbe,
+}
+
 /// Single step recorded in a bounded read-only interaction trace.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -341,6 +366,24 @@ pub struct InteractionTraceStep {
     /// A count difference observed across the window, not proof that the action
     /// issued the requests.
     pub requests_observed_in_window: u32,
+    /// Page time origin (milliseconds) at which the observation window opened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_started_ms: Option<u64>,
+    /// Length of the bounded observation window in milliseconds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_window_ms: Option<u32>,
+    /// Why the observation window ended.
+    #[serde(default)]
+    pub window_termination: InteractionWindowTermination,
+    /// Whether local state restoration was attempted after the window closed.
+    #[serde(default)]
+    pub restoration_attempted: bool,
+    /// Whether restoration returned the page to its pre-action local state.
+    ///
+    /// `None` when no restoration was attempted. Application-side effects outside
+    /// the browser's local state cannot be reversed by restoring DOM attributes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restoration_succeeded: Option<bool>,
 }
 
 /// Bounded read-only interaction trace and discovered candidate user journeys.
@@ -353,4 +396,11 @@ pub struct UserJourneyTrace {
     pub steps: Vec<InteractionTraceStep>,
     /// Whether the step budget (`16`) truncated additional candidate steps.
     pub truncated: bool,
+    /// Safety classification of the probes that produced these steps.
+    pub probe_policy: InteractionProbePolicy,
+    /// Whether network activity was suppressed while probing.
+    ///
+    /// `false` means the probe observed live application behaviour, so the trace
+    /// must not be presented as an isolated scenario.
+    pub network_requests_suppressed: bool,
 }

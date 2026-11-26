@@ -1409,6 +1409,16 @@ fn build_interactive_and_state_lines(
             " INTERACTION TRACE (Candidate scenarios: {:?}):",
             trace.candidate_scenarios
         )));
+        out.push(Line::from(format!(
+            " Probe policy: {} | network suppressed: {} | steps truncated: {}",
+            match trace.probe_policy {
+                crate::domain::InteractionProbePolicy::PassiveOnly => "passive only",
+                crate::domain::InteractionProbePolicy::RestrictedBehaviouralProbe =>
+                    "restricted behavioural probe",
+            },
+            trace.network_requests_suppressed,
+            trace.truncated
+        )));
         for step in trace.steps.iter().take(6) {
             out.push(Line::from(format!(
                 "  Step #{:<2} [{:?}] target={:?} changed={} focus_chg={} exp_chg={} dlg_chg={} dom_chg={}",
@@ -1420,6 +1430,24 @@ fn build_interactive_and_state_lines(
                 step.expanded_changed,
                 step.dialog_changed,
                 step.dom_fingerprint_changed
+            )));
+            out.push(Line::from(format!(
+                "      window={} ms (start {} ms) termination={:?} observed requests={} errors={} restored={}",
+                step.observation_window_ms.map_or_else(
+                    || "unobserved".to_owned(),
+                    |window| window.to_string()
+                ),
+                step.observation_started_ms.map_or_else(
+                    || "unobserved".to_owned(),
+                    |start| start.to_string()
+                ),
+                step.window_termination,
+                step.requests_observed_in_window,
+                step.runtime_errors_observed_in_window,
+                step.restoration_succeeded.map_or_else(
+                    || "not attempted".to_owned(),
+                    |ok| ok.to_string()
+                )
             )));
         }
     }
