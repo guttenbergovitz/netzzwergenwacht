@@ -1626,7 +1626,7 @@ pub fn query_storage_and_cookies<'a>(
         .cookies
         .iter()
         .filter(|c| {
-            (!filter.only_third_party_cookies || c.third_party)
+            (!filter.only_third_party_cookies || c.third_party == Some(true))
                 && (!filter.only_insecure_cookies || !c.secure || !c.http_only)
                 && filter.same_site.is_none_or(|ss| c.same_site == ss)
         })
@@ -1769,7 +1769,8 @@ pub fn query_third_party_origins<'a>(
                 o.origin
                     .to_ascii_lowercase()
                     .contains(&needle.to_ascii_lowercase())
-            }) && (!filter.only_main_frame_scripts || o.capability.executes_script_in_main_frame)
+            }) && (!filter.only_main_frame_scripts
+                || o.capability.script_element_present_in_main_frame)
                 && (!filter.only_missing_sri || o.capability.script_without_sri_count > 0)
         })
         .collect();
@@ -3093,5 +3094,53 @@ mod tests {
             vec!["cdn.thirdparty.example".to_owned()]
         );
         assert_eq!(summary.runtime_error_counts.get("csp_violation"), Some(&1));
+    }
+
+    #[test]
+    fn third_party_cookie_filter_requires_an_observed_relationship() {
+        let mut snapshot = base_snapshot();
+        let cookie = |name: &str, third_party: Option<bool>| crate::domain::RuntimeCookieObs {
+            name: name.to_owned(),
+            domain: "example.org".to_owned(),
+            path: "/".to_owned(),
+            secure: true,
+            http_only: true,
+            same_site: crate::domain::CookieSameSiteMode::Lax,
+            session: true,
+            value_byte_len: 12,
+            third_party,
+            has_security_prefix: false,
+            observed_before_consent: None,
+        };
+        snapshot.browser = CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                cookie_and_storage: Some(crate::domain::CookieAndStorageInventory {
+                    cookies: vec![
+                        cookie("observed_third_party", Some(true)),
+                        cookie("observed_first_party", Some(false)),
+                        cookie("unknown_scope", None),
+                    ],
+                    storage_keys: Vec::new(),
+                    indexed_db_count: 0,
+                    indexed_db_databases: Vec::new(),
+                    indexed_db_enumerated: false,
+                    cookies_enumerated: true,
+                    storage_enumerated: true,
+                    limits: crate::domain::CookieStorageLimits::default(),
+                }),
+                ..BrowserEvidence::default()
+            },
+        };
+
+        let page = query_storage_and_cookies(
+            &snapshot,
+            &StorageCookieFilter {
+                only_third_party_cookies: true,
+                ..StorageCookieFilter::default()
+            },
+            0,
+        );
+        assert_eq!(page.total_matching_cookies, 1);
+        assert_eq!(page.cookies[0].name, "observed_third_party");
     }
 }

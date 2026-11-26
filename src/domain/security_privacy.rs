@@ -41,7 +41,9 @@ pub struct RuntimeCookieObs {
     /// Byte length of the cookie value (raw value is never stored).
     pub value_byte_len: u32,
     /// Whether the cookie domain is third-party relative to the audited page host.
-    pub third_party: bool,
+    /// `None` when the page host or the cookie domain could not be established.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub third_party: Option<bool>,
     /// Whether the cookie uses `__Host-` or `__Secure-` prefix naming.
     pub has_security_prefix: bool,
     /// Whether the cookie was present before any consent interaction, when a consent
@@ -116,8 +118,9 @@ pub struct CookieAndStorageInventory {
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ThirdPartyCapabilitySummary {
-    /// Whether the origin executes JavaScript directly in the top-level document context.
-    pub executes_script_in_main_frame: bool,
+    /// Whether a `<script>` element pointing at this origin was present in the
+    /// top-level document. Presence is a capability, not proof of execution.
+    pub script_element_present_in_main_frame: bool,
     /// Number of external `<script>` tags loaded from this origin without `integrity` (SRI).
     pub script_without_sri_count: u32,
     /// Number of external `<script>` tags loaded from this origin with valid `integrity` (SRI).
@@ -126,8 +129,9 @@ pub struct ThirdPartyCapabilitySummary {
     pub iframe_count: u32,
     /// Number of `<iframe>` elements from this origin lacking a `sandbox` attribute.
     pub unsandboxed_iframe_count: u32,
-    /// Whether cookies were set or sent for this third-party origin.
-    pub sets_or_sends_cookies: bool,
+    /// Whether the cookie jar held at least one cookie scoped to this origin's host
+    /// when the snapshot was taken. Scoping is not proof that this origin set it.
+    pub cookies_scoped_to_origin_observed: bool,
 }
 
 /// Aggregated network and privilege footprint for a single third-party origin.
@@ -145,8 +149,9 @@ pub struct ThirdPartyOriginObs {
     pub xhr_fetch_beacon_requests: u32,
     /// Number of subdocument/iframe requests.
     pub iframe_requests: u32,
-    /// Number of failed or blocked requests to this origin.
-    pub failed_or_blocked_requests: u32,
+    /// Number of requests to this origin that returned an HTTP error status.
+    /// Transport-level failures are reported separately on `BrowserEvidence::failed_requests`.
+    pub http_error_response_count: u32,
     /// Privilege and capability posture granted to this origin.
     pub capability: ThirdPartyCapabilitySummary,
 }

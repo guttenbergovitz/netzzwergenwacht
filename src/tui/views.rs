@@ -1516,18 +1516,19 @@ fn build_security_and_privacy_lines(
             c.secure,
             c.http_only,
             c.same_site,
-            c.third_party,
+            c.third_party
+                .map_or("unobserved".to_owned(), |v| v.to_string()),
             c.observed_before_consent
                 .map_or("unobserved".to_owned(), |v| v.to_string())
         )));
     }
     for tp in third_party.origins.iter().take(5) {
         out.push(Line::from(format!(
-            "  3P Origin {:<32} reqs={} scripts={} exec_in_main={} sri_missing={}",
+            "  3P Origin {:<32} reqs={} scripts={} script_element_present={} sri_missing={}",
             sanitize_line(&tp.origin, 32),
             tp.total_requests,
             tp.script_requests,
-            tp.capability.executes_script_in_main_frame,
+            tp.capability.script_element_present_in_main_frame,
             tp.capability.script_without_sri_count
         )));
     }

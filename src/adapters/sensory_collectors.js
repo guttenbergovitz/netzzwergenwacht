@@ -14,6 +14,18 @@ function utf8ByteLength(value) {
   }
 }
 
+function hostMatchesCookieDomain(host, domain) {
+  if (!host || !domain) return false;
+  const h = String(host).toLowerCase();
+  const d = String(domain).toLowerCase().replace(/^\./, '');
+  if (!d) return false;
+  const labels = d.split('.').filter(Boolean);
+  // A single-label domain only matches itself (`localhost` style hosts). Treating
+  // bare public suffixes as a parent domain would misclassify every site beneath them.
+  if (labels.length < 2 && d !== 'localhost') return false;
+  return h === d || h.endsWith(`.${d}`);
+}
+
 function buildAxNodeInventoryFromCdp(cdpNodes, sha256HexFn) {
   if (!Array.isArray(cdpNodes)) return null;
   const MAX_RETAINED = 256;
@@ -431,14 +443,14 @@ function collectInPageSensoryBundle() {
         const hasSri = Boolean(el.getAttribute('integrity')?.trim());
         if (!hasSri) externalScriptsWithoutSri += 1;
         const cap = thirdPartyCapabilities.get(parts.origin) || {
-          executes_script_in_main_frame: false,
+          script_element_present_in_main_frame: false,
           script_without_sri_count: 0,
           script_with_sri_count: 0,
           iframe_count: 0,
           unsandboxed_iframe_count: 0,
-          sets_or_sends_cookies: false,
+          cookies_scoped_to_origin_observed: false,
         };
-        cap.executes_script_in_main_frame = true;
+        cap.script_element_present_in_main_frame = true;
         if (hasSri) cap.script_with_sri_count += 1;
         else cap.script_without_sri_count += 1;
         thirdPartyCapabilities.set(parts.origin, cap);
@@ -447,12 +459,12 @@ function collectInPageSensoryBundle() {
       const parts = sanitizeUrlParts(el.src);
       if (parts && !parts.same_origin && parts.origin) {
         const cap = thirdPartyCapabilities.get(parts.origin) || {
-          executes_script_in_main_frame: false,
+          script_element_present_in_main_frame: false,
           script_without_sri_count: 0,
           script_with_sri_count: 0,
           iframe_count: 0,
           unsandboxed_iframe_count: 0,
-          sets_or_sends_cookies: false,
+          cookies_scoped_to_origin_observed: false,
         };
         cap.iframe_count += 1;
         if (!el.hasAttribute('sandbox')) cap.unsandboxed_iframe_count += 1;
@@ -1624,9 +1636,7 @@ function assembleSensoryInventories(params, sha256HexFn) {
           : sameSiteRaw === 'none'
             ? 'none'
             : 'unspecified';
-    const thirdParty = Boolean(
-      pageHost && domain && domain !== pageHost && !pageHost.endsWith(`.${domain}`)
-    );
+    const thirdParty = pageHost && domain ? !hostMatchesCookieDomain(pageHost, domain) : null;
     return {
       name,
       domain: String(c.domain || '').slice(0, 128),
@@ -1668,6 +1678,9 @@ function assembleSensoryInventories(params, sha256HexFn) {
   let mixedContentCount = 0;
   const isHttpsPage = String(finalUrl || '').startsWith('https://');
 
+  const cookieDomains = mappedCookies
+    .map((c) => String(c.domain || '').toLowerCase().replace(/^\./, ''))
+    .filter(Boolean);
   for (const res of Array.isArray(resources) ? resources : []) {
     const rType = String(res.resource_type || '');
     const tBytes = Number(res.transfer_size || 0);
@@ -1691,14 +1704,14 @@ function assembleSensoryInventories(params, sha256HexFn) {
       script_requests: 0,
       xhr_fetch_beacon_requests: 0,
       iframe_requests: 0,
-      failed_or_blocked_requests: 0,
+      http_error_response_count: 0,
       capability: capMap.get(resOrigin) || {
-        executes_script_in_main_frame: false,
+        script_element_present_in_main_frame: false,
         script_without_sri_count: 0,
         script_with_sri_count: 0,
         iframe_count: 0,
         unsandboxed_iframe_count: 0,
-        sets_or_sends_cookies: false,
+        cookies_scoped_to_origin_observed: false,
       },
     };
     entry.total_requests += 1;
@@ -1710,7 +1723,14 @@ function assembleSensoryInventories(params, sha256HexFn) {
       entry.iframe_requests += 1;
     }
     if (res.status_code && res.status_code >= 400) {
-      entry.failed_or_blocked_requests += 1;
+      entry.http_error_response_count += 1;
+    }
+    let originHost = '';
+    try {
+      originHost = new URL(resOrigin).hostname.toLowerCase();
+    } catch {}
+    if (originHost && cookieDomains.some((d) => hostMatchesCookieDomain(originHost, d))) {
+      entry.capability.cookies_scoped_to_origin_observed = true;
     }
     tpOrigins.set(resOrigin, entry);
   }
