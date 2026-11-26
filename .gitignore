@@ -151,3 +151,15 @@ results.txt
 
 # Artifacts and reports
 output/
+
+
+# Rust build artifacts
+/target/
+
+# Local configuration and patrol memory
+config.toml
+portfolio.toml
+.nzw/
+
+# Agent working specs and scratchpads
+.specs/

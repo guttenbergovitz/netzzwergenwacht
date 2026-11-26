@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0.0",
+  "initiative": "Operation Aufrüstung III",
+  "validation_tiers": [
+    {
+      "tier": "unit_tested",
+      "description": "Positive, negative, and edge-case assertions inside module #[cfg(test)] suites",
+      "scope": "Rules with module-level unit coverage"
+    },
+    {
+      "tier": "fixture_verified",
+      "description": "End-to-end verification against local HTTP server and Zwergenprüfstand clean-control + defect fixtures",
+      "scope": "tests/zwergenpruefstand_eval.rs, tests/patrol_eval.rs, tests/chaos_and_cancellation.rs"
+    },
+    {
+      "tier": "scale_verified",
+      "description": "2000-URL / 8-locale / 12-template crawl sampling benchmark",
+      "scope": "tests/patrol_scale_eval.rs"
+    },
+    {
+      "tier": "browser_fixture_verified",
+      "description": "Opt-in Chromium session against a controlled loopback application, with offline protocol fixtures for edge cases",
+      "scope": "tests/browser_timeline.rs, tests/browser_timeline_protocol.cjs"
+    }
+  ]
+}

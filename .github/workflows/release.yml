@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package release archive
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/nzw" dist/nzw
+          tar -czf "nzw-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" -C dist nzw
+          shasum -a 256 "nzw-${{ github.ref_name }}-${{ matrix.target }}.tar.gz" > "nzw-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            nzw-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+            nzw-${{ github.ref_name }}-${{ matrix.target }}.tar.gz.sha256

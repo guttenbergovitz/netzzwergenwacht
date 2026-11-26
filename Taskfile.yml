@@ -1,0 +1,57 @@
+version: "3"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+
+  fmt:
+    desc: Format all Rust source files
+    cmds:
+      - cargo fmt --all
+
+  fmt:check:
+    desc: Verify Rust formatting matches rustfmt
+    cmds:
+      - cargo fmt --all -- --check
+
+  lint:
+    desc: Run Clippy with strict workspace lints
+    cmds:
+      - cargo clippy --all-targets --locked -- -D warnings
+
+  test:
+    desc: Run the full Rust test suite
+    cmds:
+      - cargo test --locked
+
+  doc:
+    desc: Build API documentation and fail on broken intra-doc links
+    env:
+      RUSTDOCFLAGS: "-D warnings"
+    cmds:
+      - cargo doc --no-deps --locked
+
+  check:
+    desc: Run the full CI quality gate (format, clippy, rustdoc, and tests)
+    deps:
+      - fmt:check
+      - lint
+      - doc
+      - test
+
+  build:
+    desc: Build an optimised release binary
+    cmds:
+      - cargo build --release --locked
+
+  audit:
+    desc: Run cargo-audit security advisory check
+    cmds:
+      - cargo audit
+
+  clean:
+    desc: Remove build artefacts
+    cmds:
+      - cargo clean

@@ -1,0 +1,65 @@
+{
+  "schema_version": "1.0.0",
+  "observation_families": [
+    {
+      "family": "HttpEvidence",
+      "source": "src/domain.rs",
+      "collector": "collection::http",
+      "evidence_level": "Source"
+    },
+    {
+      "family": "TlsEvidence",
+      "source": "src/domain.rs",
+      "collector": "collection::tls",
+      "evidence_level": "Source"
+    },
+    {
+      "family": "DocumentObservations",
+      "source": "src/analysis/document.rs",
+      "collector": "analysis::document (html5ever/scraper)",
+      "evidence_level": "Source"
+    },
+    {
+      "family": "ContentSegmentation",
+      "source": "src/analysis/segmentation.rs",
+      "collector": "analysis::document (shared HTML5 source parse)",
+      "evidence_level": "Source"
+    },
+    {
+      "family": "BrowserEvidence",
+      "source": "src/domain.rs",
+      "collector": "adapters::browser (Chromium CDP)",
+      "evidence_level": "Rendered"
+    },
+    {
+      "family": "BrowserTimeline",
+      "source": "src/domain/browser_timeline.rs",
+      "collector": "adapters::browser (Chromium CDP)",
+      "evidence_level": "Rendered"
+    },
+    {
+      "family": "RenderedContentSegmentation",
+      "source": "src/domain/rendered_content.rs",
+      "collector": "adapters::browser (Chromium CDP)",
+      "evidence_level": "Rendered"
+    },
+    {
+      "family": "AxeEvidence",
+      "source": "src/domain.rs",
+      "collector": "adapters::axe (axe-core)",
+      "evidence_level": "Rendered"
+    },
+    {
+      "family": "LighthouseMetrics",
+      "source": "src/domain.rs",
+      "collector": "adapters::lighthouse (Lighthouse CLI)",
+      "evidence_level": "Rendered"
+    },
+    {
+      "family": "ApplicationGraph",
+      "source": "src/analysis/graph.rs",
+      "collector": "discovery + analysis::graph",
+      "evidence_level": "Source"
+    }
+  ]
+}

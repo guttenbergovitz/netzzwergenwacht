@@ -1,459 +1,103 @@
 # NetzZwergenWacht
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
+[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Intelligent website quality monitoring using LLM-powered Dwarfs**
+> **Open-source, agentic web quality investigation system.** A brigade of specialised diagnostic agents collaboratively investigates, measures and explains the reliability, security, accessibility, performance and overall quality of web applications.
+>
+> **Die Zwergenbrigade** — *Kleine Zwerge. Große Sorgfalt.* (*Small dwarfs. Great diligence.*)
 
-NetzZwergenWacht is an automated system for analyzing and monitoring website quality. It employs "Zwerge" (German-named dwarfs) – intelligent software agents – to perform comprehensive checks, identify issues, and provide actionable insights powered by advanced LLM integration.
+NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on `develop` / `rewrite/rust`. The original Python prototype is preserved on `main` and in [`legacy/`](legacy/README.md) as a frozen historical reference.
 
-## 🚀 Quick Start
+## Current Status (`Milestone A & B In Progress`)
 
-### Installation & Setup
+- **Implemented**:
+  - Validated `AuditTarget` with SSRF/IP guardrails (`TargetPolicy::PublicOnly` / `AllowPrivate`) and deserialisation validation.
+  - Bounded HTTP + `rustls` TLS collector (`reqwest`, `.no_proxy()`, DNS pinning, redirect hop validation, end-to-end `audit_timeout`, streaming `max_response_bytes`, `x509-parser` certificate metadata).
+  - Central **Die Zwergenbrigade** registry (`src/brigade.rs`) and 3-level evidence capability model (`Source`, `Rendered`, `Behavioural`).
+  - Shared single-parse HTML5 `DocumentObservations` (`analysis::document`) with truncated-body guardrails.
+  - Nine deterministic analysers:
+    - **NetzZwerg** (`analysis::network`): HTTP status & redirect chain reliability.
+    - **SicherheitsZwerg** (`analysis::security`): HTTPS, TLS certificate expiry, HSTS (`max-age > 0`), CSP, `X-Content-Type-Options`, `X-Frame-Options` / `frame-ancestors`, `Referrer-Policy`.
+    - **LeistungsZwerg** (`analysis::performance`): HTTP exchange duration, payload size, compression, cache headers, and Level 2 Core Web Vitals via `--lighthouse`.
+    - **StrukturZwerg** (`analysis::semantics`): duplicate IDs, heading hierarchy, landmarks, native interactive semantics.
+    - **ZugänglichkeitsZwerg** (`analysis::accessibility`): source-level `<html lang>`, `img[alt]`, form labels, broken ARIA refs, accessible names, and Level 2 `axe-core` evaluation (explicitly marks Level 3 checks unavailable).
+    - **SuchZwerg** (`analysis::seo`): `<title>`, meta description, canonical URL, `robots` / `X-Robots-Tag` `noindex`.
+    - **InhaltsZwerg** (`analysis::content`): word count, text-to-HTML ratio, reading ease.
+    - **BrowserZwerg** (`analysis::browser`): Level 2 console errors and failed subresource requests.
+    - **GestaltungsZwerg** (`analysis::visual`): Level 2 viewport horizontal overflow and broken rendered images.
+  - Bounded Level 2 subprocess adapters (`src/adapters/`: Lighthouse `--lighthouse`, headless Chromium CDP `--browser`, `axe-core` `--axe`).
+  - **Agentic Investigation (`nzw investigate`, `nzw verify`)**: `rig-core` (`0.42.0`) `PortableTool` catalogue (`inspect_browser_runtime`, `inspect_rendered_accessibility`, `inspect_page_performance`, `inspect_document_structure`, `inspect_security_posture`, `crawl_and_cluster_site`), multi-turn `KommandantZwerg` hypothesis loop, `InvestigationScope` origin enforcement, `ExecutiveBrief`, `ReleaseReadinessAssessment`, `RemediationTask`s, and `--audience pm|po|cto|technical` Markdown/JSON reports.
+  - **Zwergenprüfstand** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): Controlled benchmark fixtures and comparative Mode A vs Mode C evaluation suite.
+  - **Zwergenleitstand TUI (`nzw tui`, `--tui`)**: Ratatui + Crossterm interactive investigation workbench with nine keyboard-driven views (`1:Overview`, `2:Brigade`, `3:Targets`, `4:Findings`, `5:Evidence`, `6:Investigation`, `7:Topology`, `8:History`, `9:System`), live `DiagnosticEvent` streaming over bounded channels, offline Evidence Query Engine exploration, terminal escape/BiDi sanitisation, and `StandardDark` / `HighContrast` / `Monochrome` (`--monochrome`, `--ascii`) themes.
+  - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`, `nzw report`, `nzw tui`) with plain-text, Markdown, versioned JSON output, and interactive TUI mode (`--tui`), TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), `tracing` diagnostics (`RUST_LOG`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
+  - Production hardening: chaos/cancellation integration tests (`tests/chaos_and_cancellation.rs`), `cargo-audit` CI check, LTO-optimised release profile, and automated tag release packaging (`.github/workflows/release.yml`).
 
-```bash
-# Clone the repository
-git clone https://github.com/guttenbergovitz/netzzwergenwacht.git
-cd netzzwergenwacht
+See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
 
-# Install dependencies
-uv sync
-
-# Install development dependencies (optional)
-uv sync --dev
-
-# Install pre-commit hooks (for contributors)
-uv run pre-commit install
-```
-
-### Basic Usage
-
-```bash
-# Quick website quality check
-uv run nzw check https://example.com
-
-# Comprehensive analysis with LLM integration
-uv run nzw analyze https://example.com --llm
-
-# Multi-agent CrewAI analysis (advanced)
-uv run nzw analyze https://example.com --agents
-
-# Verbose output with detailed information
-uv run nzw check https://example.com --verbose
-
-# Save results to a file
-uv run nzw check https://example.com --output results.json --format json
-
-# Show version information
-uv run nzw version
-```
-
-### LLM-Powered Analysis
+## Usage
 
 ```bash
-# Set up OpenAI API key for LLM features
-export OPENAI_API_KEY="your-api-key-here"
+# Run deterministic audit (text output)
+cargo run --locked -- check https://example.org
 
-# Run comprehensive LLM analysis
-uv run nzw analyze https://example.com --llm
+# Run deterministic audit (versioned JSON output)
+cargo run --locked -- check https://example.org --format json
 
-# Run advanced multi-agent CrewAI analysis
-uv run nzw analyze https://example.com --agents
+# Validate target URL and SSRF policy without fetching
+cargo run --locked -- validate https://example.org
 
-# This provides:
-# - Single LLM: Specific technical fixes with exact code
-# - Multi-agent: 11 specialized AI agents working collaboratively
-# - Executive-level strategic recommendations
-# - Technical implementation roadmaps
-# - Cross-domain issue correlation
-# - Business impact assessments
-# - Copy-paste ready solutions
+# Launch Zwergenleitstand interactive TUI workbench
+cargo run --locked -- tui
+cargo run --locked -- tui https://example.org --level2
+cargo run --locked -- tui --report report.json
+cargo run --locked -- tui --history history.jsonl
+cargo run --locked -- check https://example.org --tui
 ```
 
-## 🏗️ Architecture
-
-NetzZwergenWacht follows a modular architecture designed for extensibility and maintainability:
-
-```
-src/netzzwergenwacht/
-├── cli/                    # Command-line interface
-├── dwarfs/                # Core analysis agents (Zwerge)
-│   ├── base.py            # Base classes and abstractions
-│   ├── web_browser_zwerg.py # Web-Browser-Zwerg agent
-│   ├── sicherheits_zwerg.py # Sicherheits-Zwerg agent
-│   ├── leistungs_zwerg.py # Leistungs-Zwerg agent
-│   ├── seo_zwerg.py       # SEO-Zwerg agent
-│   └── zugaenglichkeits_zwerg.py # Zugaenglichkeits-Zwerg agent
-├── analyzers/             # Specific quality check implementations
-├── config/                # Configuration management
-├── llm/                  # LLM integration (future)
-├── reporting/            # Output formatting and reports
-└── utils/                # Shared utilities and logging
-```
-
-### Core Concepts
-
-- **Zwerge (Dwarfs)**: Intelligent German-named agents that perform specific types of analysis
-- **Issues**: Structured findings with severity levels and evidence
-- **Orchestrator**: Coordinates multiple Zwerge for comprehensive analysis
-- **Rich CLI**: User-friendly command-line interface with colored output
-
-### 🧙‍♂️ Die Zwergen-Brigade (The Dwarf Brigade)
-
-Our analysis agents follow German naming conventions as our signature branding:
-
-#### Currently Active:
-- **`Web-Browser-Zwerg`** - Analyzes websites for HTTP status, performance and basic structure
-  - HTTP status checking (4xx/5xx errors, redirects)
-  - Response time monitoring (flags >2s moderate, >5s slow)
-  - HTML structure validation (title, meta descriptions)
-  - Basic SEO analysis (title length, H1 tags)
-  - Accessibility checks (alt text, lang attributes)
-  - **Browser automation with Playwright** - Real browser analysis
-  - JavaScript console error detection
-  - Network request failure monitoring
-  - Performance resource loading analysis
-  - Browser-based accessibility validation
-  - **Mobile & Responsive Testing**: Emulacja mobile/tablet/desktop, automatyczne screenshoty, wykrywanie problemów z viewportem, touch targets, fontami, przewijaniem
-
-- **`Sicherheits-Zwerg`** - Security analysis for SSL certificates, headers and vulnerabilities
-  - SSL/TLS certificate validation and expiry checking
-  - Security headers analysis (HSTS, CSP, X-Frame-Options, etc.)
-  - HTTPS enforcement and redirect analysis
-  - Certificate chain validation
-  - Security rating calculation
-
-- **`Leistungs-Zwerg`** - Performance analysis for load times, resource optimization and Core Web Vitals
-  - Page load time monitoring and threshold analysis
-  - Resource optimization (images, CSS, JS)
-  - Compression and caching header analysis
-  - **Core Web Vitals measurement** - LCP, FCP, CLS with browser automation
-  - **System resource monitoring** - CPU and memory usage tracking
-  - Performance rating calculation
-  - Resource timing analysis
-  - Browser-based performance metrics
-
-- **`SEO-Zwerg`** - Search Engine Optimization analysis
-  - Meta tags analysis (title, description, keywords)
-  - Heading structure validation (H1-H6 hierarchy)
-  - Social media meta tags (Open Graph, Twitter Cards)
-  - Structured data detection (JSON-LD, microdata)
-  - Canonical URL analysis
-  - Content quality assessment
-  - Mobile optimization checks
-
-- **`Zugaenglichkeits-Zwerg`** - Accessibility analysis following WCAG and EAA guidelines
-  - WCAG 2.1 compliance checking (Level A, AA, AAA)
-  - EAA (European Accessibility Act) requirements
-  - Text alternatives for images
-  - Color contrast analysis
-  - Keyboard navigation support
-  - Focus management
-  - Semantic HTML structure
-  - ARIA compliance
-  - Screen reader compatibility
-  - **Mobile & Responsive Checks**: Viewport meta, touch targets, breakpoints, font sizes, horizontal scroll, flexbox/grid, optymalizacja obrazów i zasobów
-
-- **`Inhalt-Zwerg`** - Content quality and readability analysis
-  - Content length and structure analysis
-  - Readability scoring (Flesch-Kincaid, Flesch Reading Ease)
-  - Duplicate content detection
-  - Language quality assessment
-  - Content freshness indicators
-  - Heading structure validation
-  - Content formatting analysis
-
-- **`Visual-Zwerg`** - Visual analysis and UI testing
-  - **Visual consistency** analysis (spacing, fonts, layout)
-  - **UI element detection** (buttons, forms, navigation)
-  - **Color scheme analysis** and contrast validation
-  - **Layout issues** detection (overlapping elements, overflow)
-  - **Screenshot analysis** with automated capture
-  - **Interactive element testing** and accessibility
-  - **Visual regression testing** capabilities
-
-## 🎯 Current Status: Phase 2 Complete ✅
-
-**Phase 2 has been successfully completed!** All major advanced analysis features have been implemented:
-
-- ✅ **Core Web Vitals & Performance Monitoring** - LCP, FCP, CLS measurement
-- ✅ **Advanced Security Scanning** - Port scanning, service enumeration, vulnerability detection
-- ✅ **Enhanced Accessibility** - WCAG 2.1 AA, EU/EAA compliance, ARIA testing
-- ✅ **Mobile & Responsive Testing** - Viewport analysis, touch targets, screenshots
-- ✅ **Visual Analysis & UI Testing** - Consistency, elements, colors, layout analysis
-
-### ✅ Phase 3 - LLM Integration (Complete!)
-
-- [x] Detailed analysis mode for all Zwerge
-- [x] LLM-ready output structure (JSON)
-- [x] CLI support for analyze command
-- [x] **LLM-powered intelligent analysis with OpenAI integration**
-- [x] **CrewAI multi-agent system with 11 specialized domain experts**
-- [x] **Single LLM analysis (`--llm`) and multi-agent analysis (`--agents`)**
-- [x] **Specific technical fixes with exact code locations**
-- [x] **Copy-paste ready solutions and implementation guides**
-- [x] **Cost tracking and model information display**
-- [x] **Enhanced error handling and fallback mechanisms**
-
-## 🤔 API Testing Decision
-
-**API Testing & Integration was intentionally skipped** in Phase 2 due to limited value for external testing:
-
-### Why API Testing was skipped:
-- **Limited scope**: External testing can only access public endpoints
-- **Authentication barriers**: Most APIs require keys/tokens not available externally
-- **Ethical concerns**: Performance testing could be seen as DDoS attacks
-- **False positives**: Shallow testing may generate misleading results
-- **Limited business value**: External API testing provides minimal actionable insights
-
-### What was considered:
-- **Health check endpoints** (`/health`, `/status`, `/ping`)
-- **Documentation discovery** (OpenAPI/Swagger)
-- **Security headers** analysis
-- **Public endpoint** testing
-
-### Future consideration:
-API testing may be revisited in Phase 4/5 if internal testing capabilities are added.
-
-## 🧪 Development
-
-### Running Tests
+## Quality Gates
 
 ```bash
-# Run all tests
-uv run pytest
-
-# Run with coverage
-uv run pytest --cov=src
-
-# Run specific test file
-uv run pytest tests/unit/test_dwarfs/test_base.py
+task check
+# or:
+cargo fmt --all -- --check
+cargo clippy --all-targets --locked -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
+cargo test --all-targets --locked
 ```
 
-### Code Quality
+## Documentation
 
-```bash
-# Lint code
-uv run ruff check
+- **[Configuration Guide](CONFIG.md)** — Model routing, provider setup, cost optimization strategies
+- [ADR 0001: Rewrite NetzZwergenWacht in Rust](docs/adr/0001-rewrite-netzzwergenwacht-in-rust.md)
+- [ADR 0002: Zwergenbrigade Domains, Shared Document Observations, and Evidence Levels](docs/adr/0002-zwergenbrigade-domains-shared-document-and-evidence-levels.md)
+- [ADR 0010: Terminal User Interface and Presentation Architecture](docs/adr/0010-terminal-user-interface-and-presentation-architecture.md)
+- [ADR 0011: Diagnostic Event Model and Event Transport](docs/adr/0011-diagnostic-event-model-and-event-transport.md)
+- [ADR 0012: TUI Application State and Asynchronous Execution](docs/adr/0012-tui-application-state-and-asynchronous-execution.md)
+- [ADR 0013: Investigation Workbench Information Architecture](docs/adr/0013-investigation-workbench-information-architecture.md)
+- [ADR 0014: Evidence Presentation and Epistemic Integrity](docs/adr/0014-evidence-presentation-and-epistemic-integrity.md)
+- [ADR 0015: TUI Visual Language and Terminal Accessibility](docs/adr/0015-tui-visual-language-and-terminal-accessibility.md)
+- [Die Zwergenbrigade](docs/architecture/zwergenbrigade.md)
+- [Shared Document Analysis](docs/architecture/document-analysis.md)
+- [Engineering & Git Conventions](docs/conventions.md)
+- [Agent Guidelines](AGENTS.md)
 
-# Format code
-uv run ruff format
+## License
 
-# Type checking
-uv run mypy src/
+MIT — see [LICENSE](LICENSE).
 
-# Run all quality checks
-uv run ruff check && uv run ruff format && uv run mypy src/ && uv run pytest
+### Compare rendered text across saved audits
+
+Run two browser-enabled checks against the same page and save each result.
+`diff` accepts JSON reports or the latest entry from each JSONL history file.
+
+```sh
+nzw check https://example.org/ --browser --history baseline.jsonl
+nzw check https://example.org/ --browser --history current.jsonl
+nzw diff baseline.jsonl current.jsonl
+nzw diff baseline.jsonl current.jsonl --format json
 ```
 
-### Automated Ruff Commit
-
-You can use the provided helper script to automatically lint, format, stage and commit your changes in one go:
-
-```bash
-./ruff-commit.sh -m "Your commit message"
-```
-
-This script will:
-- Run `ruff check --fix` to auto-fix lint issues
-- Run `ruff format` to auto-format code
-- Stage all changes (`git add .`)
-- Commit with your message
-
-This ensures your commit always passes the pre-commit ruff hook on the first try.
-
-### Adding New Zwerge
-
-```python
-from netzzwergenwacht.dwarfs.base import Dwarf, AnalysisResult, Severity
-
-
-class SicherheitsZwerg(Dwarf):
-    """Sicherheits-Zwerg - Analyzes websites for security vulnerabilities and best practices."""
-
-    def __init__(self):
-        super().__init__("Sicherheits-Zwerg", "Security analysis for websites")
-
-    async def analyze(self, url: str) -> AnalysisResult:
-        issues = []
-
-        # Perform security analysis here
-        # Add issues using self.create_issue()
-
-        return AnalysisResult(url=url, dwarf_name=self.name, issues=issues)
-```
-
-## 🗺️ Roadmap
-
-### Phase 1: Core Browser Interaction ✅ **COMPLETED**
-- [x] Playwright integration for browser automation
-- [x] Enhanced Web-Browser-Zwerg with real browser analysis
-- [x] JavaScript console error detection
-- [x] Network request failure monitoring
-- [x] Browser-based accessibility validation
-
-### Phase 2: Advanced Analysis Features ✅ **COMPLETED**
-- [x] **Enhanced Performance Metrics** - Core Web Vitals (LCP, FCP, CLS) with browser automation
-- [x] **Advanced Security Scanning** - Port scanning, service enumeration, vulnerability detection
-- [x] **Enhanced ARIA & Accessibility Compliance** - WCAG 2.1 AA, EU/EAA standards
-- [x] **Mobile & Responsive Testing** - Viewport analysis, touch targets, breakpoints, screenshots
-- [x] **Visual Analysis & UI Testing** - Consistency, elements, colors, layout analysis
-- [x] ~~API Testing & Integration~~ (skipped - limited value for external testing)
-
-### Phase 3: Intelligence & Automation ✅ **COMPLETED**
-- [x] Detailed analysis mode for all Zwerge
-- [x] LLM-ready output structure (JSON)
-- [x] CLI support for analyze command
-- [x] **LLM-powered classification, prioritization, and fix suggestion**
-- [x] **CrewAI multi-agent system with 11 specialized AI experts**
-- [x] **Natural language reporting with specific technical details**
-- [x] **Automated issue correlation and priority scoring**
-- [x] **Executive-level strategic recommendations and implementation roadmaps**
-
-### Phase 4: Enterprise Features 📋 **PLANNED**
-- [ ] Multi-site Monitoring - Batch analysis and reporting
-- [ ] Custom Rule Engine - User-defined analysis rules
-- [ ] Integration APIs - REST API for external integrations
-- [ ] Advanced Reporting - PDF reports, dashboards, alerts
-
-### Phase 5: Advanced Intelligence 📋 **PLANNED**
-- [ ] Machine Learning Models - Pattern recognition and anomaly detection
-- [ ] Natural Language Reports - Human-readable analysis summaries
-- [ ] Competitive Analysis - Benchmarking against industry standards
-- [ ] Continuous Monitoring - Real-time website health monitoring
-
-## 🛠️ Technology Stack
-
-- **Language**: Python 3.12+
-- **Package Management**: uv
-- **CLI Framework**: Typer with Rich console
-- **Testing**: pytest with asyncio support
-- **Code Quality**: ruff (linting & formatting), mypy (type checking)
-- **Configuration**: Pydantic with environment variable support
-- **Browser Automation**: Playwright
-- **Future**: LLM APIs
-
-## 📚 Documentation
-
-- [CONTRIBUTING.md](CONTRIBUTING.md) - Development guidelines and setup
-- [CLAUDE.md](CLAUDE.md) - AI assistant guidance for working with the codebase
-
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-
-- Setting up the development environment
-- Running tests and quality checks
-- Code style and conventions
-- Submitting pull requests
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🔮 Vision
-
-NetzZwergenWacht aims to become the go-to solution for automated website quality monitoring, combining the power of browser automation with LLM intelligence to provide actionable insights that help development teams maintain high-quality web applications.
-
-## System dependencies
-
-This project requires the `nmap` binary to be installed on your system for advanced security scanning (port scanning). The Python package `python-nmap` is only a wrapper and does not install the actual `nmap` binary.
-
-- On macOS: `brew install nmap`
-- On Ubuntu/Debian: `sudo apt install nmap`
-- On Fedora: `sudo dnf install nmap`
-
-Make sure `nmap` is available in your PATH.
-
-## 🧠 Advanced LLM Integration (Phase 3 Complete!)
-
-NetzZwergenWacht now features **comprehensive LLM integration** providing intelligent, actionable website analysis:
-
-### 🎯 LLM Analysis Features
-- **Specific Technical Fixes**: Exact code snippets and configurations to copy-paste
-- **Detailed Location Context**: Precise HTML elements, file paths, and line numbers
-- **Implementation Roadmaps**: Step-by-step prioritized action plans
-- **Business Impact Assessment**: Clear explanations of how issues affect users and SEO
-- **Cost Tracking**: Real-time API usage and cost monitoring
-- **Fallback Mechanisms**: Graceful handling when LLM services are unavailable
-
-### 📊 Analysis Modes
-- **`check`**: Fast basic analysis with issue identification
-- **`analyze`**: Comprehensive detailed analysis with full LLM-ready context
-- **`analyze --llm`**: Enhanced analysis with intelligent single LLM insights and recommendations
-- **`analyze --agents`**: Advanced multi-agent CrewAI analysis with specialized domain experts
-
-### Example Output Structure
-
-```json
-{
-  "url": "https://example.com",
-  "dwarf_name": "Leistungs-Zwerg",
-  "detailed_issues": [
-    {
-      "issue_type": "page_load_very_slow",
-      "severity": "high",
-      "message": "Page load time is very slow: 6500ms",
-      "category": "performance",
-      "subcategory": "page_load_time",
-      "description": "Page takes more than 5 seconds to load, which severely impacts user experience",
-      "impact": "Users will likely abandon the page, affecting conversion rates and SEO",
-      "technical_details": {"load_time_ms": 6500, "recommended_max_ms": 3000},
-      "recommendations": ["Optimize page load performance immediately"],
-      "fix_suggestions": ["Enable server-side caching", "Optimize and compress images"],
-      "priority_score": 0.9,
-      "code_location": {"resource_type": "http", "attribute_value": "https://example.com"},
-      "affected_elements": ["server_config", "assets", "caching"]
-    }
-  ],
-  "performance_metrics": {
-    "page_load_time_ms": 6500,
-    "lcp": 4200,
-    "fcp": 1800,
-    "cls": 0.12
-  },
-  "raw_data": {"performance": {"response_status": 200, ...}}
-}
-```
-
-### 🚀 How to Use LLM Features
-
-```bash
-# Set up OpenAI API key
-export OPENAI_API_KEY="your-api-key-here"
-
-# Run comprehensive LLM analysis
-uv run nzw analyze https://example.com --llm
-
-# Run advanced multi-agent CrewAI analysis
-uv run nzw analyze https://example.com --agents
-
-# Example LLM output:
-# ✅ LLM Analysis Complete!
-# Tokens used: 11389 ($0.0024)
-#
-# 📋 Detailed LLM Analysis:
-# ## 2. Critical Issues Requiring Immediate Attention
-# ### Issue 1: Missing Meta Description
-# - **Exact Problem**: The page is missing a meta description tag.
-# - **Location**: `<head>` section of the HTML.
-# - **Immediate Fix**: Add the following code:
-#   ```html
-#   <meta name="description" content="A descriptive summary">
-#   ```
-```
-
-### 🛠️ LLM Integration Features
-
-- **Model Information**: Shows which OpenAI model is being used (default: gpt-4o-mini)
-- **Cost Tracking**: Real-time token usage and cost display
-- **Enhanced Context**: LLM receives full technical details including:
-  - Exact HTML element locations
-  - Specific code fixes to apply
-  - Priority scores and business impact
-  - Technical implementation steps
-
----
-
-*Built with ❤️ using modern Python practices and designed for extensibility.*
+The comparison reports changed, unchanged and incomparable baseline blocks.
+Older reports without rendered comparison evidence give an unavailable result.
+The diff reads the saved files locally.
