@@ -36,6 +36,8 @@ const SENSORY_FIXTURE_HTML: &str = r##"<!doctype html>
   <meta property="og:url" content="/sensory-page">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
+  <script src="/app.js" defer></script>
+  <link rel="stylesheet" media="print" href="/print.css">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -136,6 +138,22 @@ async fn spawn_sensory_fixture() -> (std::net::SocketAddr, tokio::task::JoinHand
                     "/hang" => {
                         tokio::time::sleep(Duration::from_secs(10)).await;
                     }
+                    "/app.js" => {
+                        let body = "window.__nzwFixtureDeferred = true;";
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/javascript; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
+                    "/print.css" => {
+                        let body = "body { color: #111; }";
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/css; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = socket.write_all(response.as_bytes()).await;
+                    }
                     _ => {
                         let response = "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
                         let _ = socket.write_all(response.as_bytes()).await;
@@ -206,6 +224,15 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         "expected network_idle_reached to be true when all requests finished"
     );
     assert!(app_state.structural_fingerprint.is_some());
+    assert_eq!(app_state.structural_fingerprint_version, Some(1));
+    assert_eq!(app_state.structural_max_nodes, Some(512));
+    assert_eq!(app_state.structural_max_depth, Some(16));
+    assert!(
+        app_state
+            .structural_nodes_visited
+            .is_some_and(|visited| visited > 0),
+        "expected the structural walk to record how many nodes it visited"
+    );
 
     // 3. User Journey & Interaction Trace (real read-only toggle probe on <summary>)
     let trace = evidence
@@ -358,12 +385,27 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         perf_attr.total_cls_milli.is_some(),
         "CLS must be measured or absent, never defaulted to zero"
     );
+    let chain = &perf_attr.render_blocking_chain;
+    assert_eq!(
+        chain.blocking_head_scripts, 0,
+        "the only fixture script is deferred, so no render-blocking head script may be counted"
+    );
     assert!(
-        perf_attr
-            .render_blocking_chain
-            .blocking_transfer_bytes
-            .is_none(),
-        "the loopback fixture serves no scripts or stylesheets, so blocking transfer bytes are unobserved"
+        chain.deferred_or_async_script_count >= 1,
+        "the deferred fixture script must be classified as deferred"
+    );
+    assert_eq!(
+        chain.blocking_head_stylesheets, 0,
+        "the only fixture stylesheet is print-only, so no matching head stylesheet may be counted"
+    );
+    assert!(
+        chain.non_matching_media_stylesheet_count >= 1,
+        "the print stylesheet must be classified as non-matching media"
+    );
+    assert_eq!(
+        chain.confirmed_blocking_transfer_bytes,
+        Some(0),
+        "with no confirmed blocking resources the observed total is zero, not unknown"
     );
 
     let media = evidence

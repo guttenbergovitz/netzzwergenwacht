@@ -75,17 +75,28 @@ pub struct ClsShiftRegionObs {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct RenderBlockingChainSummary {
-    /// Number of synchronous `<script src>` elements in `<head>` without `defer` or `async`.
+    /// Number of confirmed render-blocking `<script src>` elements in `<head>`
+    /// (classic scripts without `async`, `defer`, or `type="module"`).
     pub blocking_head_scripts: u32,
-    /// Number of non-print `<link rel="stylesheet">` elements in `<head>`.
+    /// Number of confirmed render-blocking `<link rel="stylesheet">` elements in `<head>`
+    /// whose `media` attribute matches the current rendering context.
     pub blocking_head_stylesheets: u32,
+    /// Number of `<script>` elements deferred by `defer`, `async`, or `type="module"`.
+    pub deferred_or_async_script_count: u32,
+    /// Number of `<link rel="stylesheet">` elements whose `media` query did not match.
+    pub non_matching_media_stylesheet_count: u32,
     /// Number of `<link rel="preload">` hints declared.
     pub preload_hint_count: u32,
     /// Number of `<link rel="preconnect">` hints declared.
     pub preconnect_hint_count: u32,
-    /// Total transfer bytes of render-blocking scripts and stylesheets, when known.
+    /// Transfer bytes of confirmed render-blocking resources, when every one was observed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub blocking_transfer_bytes: Option<u64>,
+    pub confirmed_blocking_transfer_bytes: Option<u64>,
+    /// Transfer bytes of parser-blocking resources outside `<head>`, when every one was observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub potential_blocking_transfer_bytes: Option<u64>,
+    /// Resources whose blocking status could not be established from HTML attributes or resource entries.
+    pub unknown_blocking_resource_count: u32,
 }
 
 /// Consolidated performance attribution evidence (LCP, CLS regions, blocking chain).

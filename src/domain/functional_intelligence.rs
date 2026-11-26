@@ -233,9 +233,31 @@ pub struct ApplicationStateSnapshot {
     pub document_scroll_height: u32,
     /// Whether the network reached idle equilibrium before snapshot capture.
     pub network_idle_reached: bool,
-    /// Structural digest over visible interactive and landmark tag/role counts.
+    /// Bounded structural digest over tag/role/id-uniqueness/disclosure state.
+    ///
+    /// Only a hash of the bounded walk is retained, never the raw structure. The
+    /// projection is not the complete DOM; the coverage fields below state how
+    /// much of the document it describes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub structural_fingerprint: Option<String>,
+    /// Version of the structural fingerprint algorithm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structural_fingerprint_version: Option<u32>,
+    /// Number of element nodes included in the bounded walk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structural_nodes_visited: Option<u32>,
+    /// Node budget applied to the bounded walk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structural_max_nodes: Option<u32>,
+    /// Maximum element depth the bounded walk descends to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structural_max_depth: Option<u32>,
+    /// Whether the node budget ended the walk before the document was exhausted.
+    #[serde(default)]
+    pub structural_nodes_truncated: bool,
+    /// Whether the depth budget ended the walk before the document was exhausted.
+    #[serde(default)]
+    pub structural_depth_truncated: bool,
 }
 
 /// Read-only action executed during a bounded interaction probe.

@@ -1558,12 +1558,16 @@ fn build_performance_and_media_lines(
             )));
         }
         out.push(Line::from(format!(
-            " CLSTotal={} ({} shift regions) | Render-blocking head: {} scripts, {} stylesheets",
+            " CLSTotal={} ({} shift regions) | Render-blocking head: {} scripts, {} stylesheets | deferred/async: {} | confirmed bytes: {}",
             attr.total_cls_milli
                 .map_or("unobserved".to_owned(), |v| format!("{v}‰")),
             attr.cls_shift_regions.len(),
             attr.render_blocking_chain.blocking_head_scripts,
-            attr.render_blocking_chain.blocking_head_stylesheets
+            attr.render_blocking_chain.blocking_head_stylesheets,
+            attr.render_blocking_chain.deferred_or_async_script_count,
+            attr.render_blocking_chain
+                .confirmed_blocking_transfer_bytes
+                .map_or("unobserved".to_owned(), |v| v.to_string())
         )));
     }
     out.push(Line::from(""));

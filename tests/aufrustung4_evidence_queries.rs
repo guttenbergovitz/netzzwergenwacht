@@ -503,7 +503,7 @@ fn performance_attribution() -> PerformanceAttributionEvidence {
         render_blocking_chain: RenderBlockingChainSummary {
             blocking_head_scripts: 1,
             blocking_head_stylesheets: 1,
-            blocking_transfer_bytes: Some(512),
+            confirmed_blocking_transfer_bytes: Some(512),
             ..RenderBlockingChainSummary::default()
         },
     }

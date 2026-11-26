@@ -871,10 +871,24 @@ function collectInPageSensoryBundle() {
 
   // Bounded structural digest over the real DOM tree: tag, role, id uniqueness, and
   // disclosure state. Only a hash of this walk is persisted, never the raw structure.
+  // The walk is a projection: the coverage metadata records how much of the document
+  // it actually described.
+  const STRUCTURE_MAX_NODES = 512;
+  const STRUCTURE_MAX_DEPTH = 16;
   const structureSignature = () => {
     const parts = [];
+    let nodesTruncated = false;
+    let depthTruncated = false;
     const walkStructure = (el, depth) => {
-      if (!el || parts.length >= 512 || depth > 16) return;
+      if (!el) return;
+      if (parts.length >= STRUCTURE_MAX_NODES) {
+        nodesTruncated = true;
+        return;
+      }
+      if (depth > STRUCTURE_MAX_DEPTH) {
+        depthTruncated = true;
+        return;
+      }
       const tag = (el.tagName || '').toLowerCase();
       if (!tag) return;
       const roleAttr = el.getAttribute ? el.getAttribute('role') : null;
@@ -885,12 +899,19 @@ function collectInPageSensoryBundle() {
       const open = el.open === true ? 'o' : '';
       parts.push(`${depth}${tag}${role ? '[' + role + ']' : ''}${idMarker}${expanded}${open}`);
       const children = el.children || [];
-      for (let i = 0; i < children.length && parts.length < 512; i += 1) {
+      for (let i = 0; i < children.length && parts.length < STRUCTURE_MAX_NODES; i += 1) {
         walkStructure(children[i], depth + 1);
       }
     };
     walkStructure(document.body || document.documentElement, 0);
-    return parts.join('|');
+    return {
+      signature: parts.join('|'),
+      visited: parts.length,
+      maxNodes: STRUCTURE_MAX_NODES,
+      maxDepth: STRUCTURE_MAX_DEPTH,
+      nodesTruncated,
+      depthTruncated,
+    };
   };
 
   const readStateMetrics = () => {
@@ -923,6 +944,7 @@ function collectInPageSensoryBundle() {
   };
 
   const initialMetrics = readStateMetrics();
+  const structureWalk = structureSignature();
   const applicationState = {
     document_ready_state: String(document.readyState || 'complete'),
     location_path: (window.location?.pathname || '/').slice(0, 256),
@@ -946,8 +968,14 @@ function collectInPageSensoryBundle() {
       Math.round(document.documentElement?.scrollHeight || document.body?.scrollHeight || 0)
     ),
     network_idle_reached: false,
-    _raw_structural_sig: structureSignature(),
+    _raw_structural_sig: structureWalk.signature,
     structural_fingerprint: null,
+    structural_fingerprint_version: 1,
+    structural_nodes_visited: structureWalk.visited,
+    structural_max_nodes: structureWalk.maxNodes,
+    structural_max_depth: structureWalk.maxDepth,
+    structural_nodes_truncated: structureWalk.nodesTruncated,
+    structural_depth_truncated: structureWalk.depthTruncated,
   };
 
   // Discover candidate user journey scenarios from interactive controls
@@ -969,7 +997,7 @@ function collectInPageSensoryBundle() {
   for (let i = 0; i < readOnlyToggleCandidates.length; i += 1) {
     const cand = readOnlyToggleCandidates[i];
     const before = readStateMetrics();
-    const beforeStructure = structureSignature();
+    const beforeStructure = structureSignature().signature;
     const beforeResources = performance.getEntriesByType('resource').length;
     const beforeErrors = Number(window.__nzwPerf?.errors || 0);
     const actionKind = 'disclosure_toggle';
@@ -978,7 +1006,7 @@ function collectInPageSensoryBundle() {
       cand.el.click();
     } catch {}
     const after = readStateMetrics();
-    const afterStructure = structureSignature();
+    const afterStructure = structureSignature().signature;
     const afterResources = performance.getEntriesByType('resource').length;
     const afterErrors = Number(window.__nzwPerf?.errors || 0);
     const focusChanged = after.activeTag !== before.activeTag || after.activeRole !== before.activeRole;
@@ -1066,13 +1094,129 @@ function collectInPageSensoryBundle() {
     }
   } catch {}
 
-  // Render-blocking head elements
-  const blockingHeadScripts = document.querySelectorAll(
-    'head script[src]:not([async]):not([defer]):not([type="module"])'
-  ).length;
-  const blockingHeadStylesheets = document.querySelectorAll(
-    'head link[rel="stylesheet"]:not([media="print"])'
-  ).length;
+  // Render-blocking classification from HTML attributes plus media evaluation.
+  // Counts alone cannot distinguish parser-blocking classic scripts from deferred,
+  // async, or module scripts, nor stylesheets whose media query does not match.
+  const blockingClassification = [];
+  let blockingHeadScripts = 0;
+  let blockingHeadStylesheets = 0;
+  let deferredOrAsyncScriptCount = 0;
+  let nonMatchingMediaStylesheetCount = 0;
+  const scriptMimeTypes = new Set([
+    '',
+    'text/javascript',
+    'application/javascript',
+    'text/ecmascript',
+    'application/ecmascript',
+  ]);
+  for (const el of Array.from(document.querySelectorAll('script[src]')).slice(0, 64)) {
+    const url = el.src || '';
+    if (!url) continue;
+    const typeAttr = String(el.getAttribute('type') || '').trim().toLowerCase();
+    if (typeAttr === 'module') {
+      deferredOrAsyncScriptCount += 1;
+      blockingClassification.push({
+        url,
+        kind: 'script',
+        blocking: 'none',
+        reason: 'module_deferred_by_default',
+      });
+      continue;
+    }
+    if (!scriptMimeTypes.has(typeAttr)) {
+      blockingClassification.push({
+        url,
+        kind: 'script',
+        blocking: 'none',
+        reason: 'non_javascript_type',
+      });
+      continue;
+    }
+    if (el.hasAttribute('async') || el.hasAttribute('defer')) {
+      deferredOrAsyncScriptCount += 1;
+      blockingClassification.push({
+        url,
+        kind: 'script',
+        blocking: 'none',
+        reason: el.hasAttribute('async') ? 'async' : 'defer',
+      });
+      continue;
+    }
+    if (el.closest('head')) {
+      blockingHeadScripts += 1;
+      blockingClassification.push({
+        url,
+        kind: 'script',
+        blocking: 'confirmed',
+        reason: 'parser_blocking_in_head',
+      });
+    } else {
+      blockingClassification.push({
+        url,
+        kind: 'script',
+        blocking: 'potential',
+        reason: 'parser_blocking_after_first_paint',
+      });
+    }
+  }
+  for (const el of Array.from(document.querySelectorAll('link[rel~="stylesheet"]')).slice(0, 64)) {
+    const url = el.href || '';
+    if (!url) continue;
+    if (el.disabled) {
+      blockingClassification.push({
+        url,
+        kind: 'stylesheet',
+        blocking: 'none',
+        reason: 'disabled_by_script',
+      });
+      continue;
+    }
+    const mediaAttr = String(el.getAttribute('media') || '').trim();
+    let mediaMatches = true;
+    let mediaUnknown = false;
+    if (mediaAttr) {
+      try {
+        mediaMatches = window.matchMedia(mediaAttr).matches;
+      } catch {
+        mediaUnknown = true;
+      }
+    }
+    if (mediaUnknown) {
+      blockingClassification.push({
+        url,
+        kind: 'stylesheet',
+        blocking: 'unknown',
+        reason: 'media_query_evaluation_failed',
+      });
+      continue;
+    }
+    if (!mediaMatches) {
+      nonMatchingMediaStylesheetCount += 1;
+      blockingClassification.push({
+        url,
+        kind: 'stylesheet',
+        blocking: 'none',
+        reason: 'media_query_not_matching',
+      });
+      continue;
+    }
+    if (el.closest('head')) {
+      blockingHeadStylesheets += 1;
+      blockingClassification.push({
+        url,
+        kind: 'stylesheet',
+        blocking: 'confirmed',
+        reason: 'head_stylesheet',
+      });
+    } else {
+      blockingClassification.push({
+        url,
+        kind: 'stylesheet',
+        blocking: 'potential',
+        reason: 'stylesheet_after_first_paint',
+      });
+    }
+  }
   const preloadHintCount = document.querySelectorAll('head link[rel="preload"]').length;
   const preconnectHintCount = document.querySelectorAll('head link[rel="preconnect"]').length;
 
@@ -1331,6 +1475,9 @@ function collectInPageSensoryBundle() {
       lcp_candidate: lcpCandidate,
       blocking_head_scripts: blockingHeadScripts,
       blocking_head_stylesheets: blockingHeadStylesheets,
+      blocking_classification: blockingClassification,
+      deferred_or_async_script_count: deferredOrAsyncScriptCount,
+      non_matching_media_stylesheet_count: nonMatchingMediaStylesheetCount,
       preload_hint_count: preloadHintCount,
       preconnect_hint_count: preconnectHintCount,
     },
@@ -1660,16 +1807,31 @@ function assembleSensoryInventories(params, sha256HexFn) {
     typeof perfObs?.cls_thousandths === 'number'
       ? Math.max(0, Math.round(perfObs.cls_thousandths))
       : null;
-  const blockingResources = (Array.isArray(resources) ? resources : []).filter((r) => {
-    const t = String(r?.resource_type || '').toLowerCase();
-    return t === 'script' || t === 'stylesheet';
-  });
-  const blockingBytesKnown =
-    blockingResources.length > 0 &&
-    blockingResources.every((r) => typeof r?.transfer_size === 'number');
-  const blockingTransferBytes = blockingBytesKnown
-    ? blockingResources.reduce((sum, r) => sum + Math.max(0, Number(r.transfer_size || 0)), 0)
+  const blockingClassification = Array.isArray(bundle.performance_dom?.blocking_classification)
+    ? bundle.performance_dom.blocking_classification
     : null;
+  const resourcesByUrl = new Map();
+  for (const r of Array.isArray(resources) ? resources : []) {
+    if (r && typeof r.url === 'string') resourcesByUrl.set(r.url, r);
+  }
+  const bytesForClass = (blockingClass) => {
+    if (!blockingClassification) return null;
+    const members = blockingClassification.filter((c) => c && c.blocking === blockingClass);
+    if (members.length === 0) return 0;
+    let total = 0;
+    for (const m of members) {
+      const r = resourcesByUrl.get(m.url);
+      if (!r || typeof r.transfer_size !== 'number' || !Number.isFinite(r.transfer_size)) {
+        // One unobserved member is enough to make the total unrepresentable.
+        return null;
+      }
+      total += Math.max(0, r.transfer_size);
+    }
+    return total;
+  };
+  const unknownBlockingResourceCount = blockingClassification
+    ? blockingClassification.filter((c) => c && c.blocking === 'unknown').length
+    : 0;
   const performanceAttribution = {
     lcp_candidate: lcp,
     total_cls_milli: totalClsMilli,
@@ -1677,9 +1839,17 @@ function assembleSensoryInventories(params, sha256HexFn) {
     render_blocking_chain: {
       blocking_head_scripts: Number(bundle.performance_dom?.blocking_head_scripts || 0),
       blocking_head_stylesheets: Number(bundle.performance_dom?.blocking_head_stylesheets || 0),
+      deferred_or_async_script_count: Number(
+        bundle.performance_dom?.deferred_or_async_script_count || 0
+      ),
+      non_matching_media_stylesheet_count: Number(
+        bundle.performance_dom?.non_matching_media_stylesheet_count || 0
+      ),
       preload_hint_count: Number(bundle.performance_dom?.preload_hint_count || 0),
       preconnect_hint_count: Number(bundle.performance_dom?.preconnect_hint_count || 0),
-      blocking_transfer_bytes: blockingTransferBytes,
+      confirmed_blocking_transfer_bytes: bytesForClass('confirmed'),
+      potential_blocking_transfer_bytes: bytesForClass('potential'),
+      unknown_blocking_resource_count: unknownBlockingResourceCount,
     },
   };
 
