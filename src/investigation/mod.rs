@@ -36,12 +36,38 @@ use crate::domain::{
 };
 use crate::intelligence::{LlmBudget, LlmProvider};
 
+pub use self::browser_timeline::{
+    BrowserTimelineEventKind, BrowserTimelineFilter, BrowserTimelinePage, BrowserTimelineQueryPage,
+    BrowserTimelineQueryStatus, FailedDependenciesQueryPage, FailedDependencyCategory,
+    FailedDependencyEntry, FailedDependencyFilter, RequestChainFilter, RequestChainOutcome,
+    RequestChainSummary, RequestChainsQueryPage, query_browser_timeline,
+    query_browser_timeline_filtered, query_failed_dependencies, query_request_chains,
+};
 pub use self::events::InvestigationEvent;
 pub use self::evidence_query::{
-    EvidenceQueryStatus, NetworkResourceFilter, NetworkResourcesQueryPage, RenderedBlockFilter,
-    RenderedBlockSummary, RenderedContentQueryPage, RuntimeErrorFilter, RuntimeErrorsQueryPage,
-    query_browser_evidence_from_snapshot, query_network_resources, query_rendered_content,
-    query_runtime_errors,
+    AccessibilityNodeFilter, AccessibilityNodesQueryPage, ApplicationStateQueryPage,
+    CookiesAndStorageQueryPage, ElementGeometryFilter, ElementGeometryQueryPage,
+    EvidenceQueryStatus, IndexabilityAuthorityQueryPage, InteractionTraceFilter,
+    InteractionTraceQueryPage, InteractiveElementFilter, InteractiveElementsQueryPage,
+    LinkGraphFilter, LinkGraphQueryPage, MediaAndFontsQueryPage, MediaFontFilter,
+    NetworkResourceFilter, NetworkResourcesQueryPage, PerformanceAttributionQueryPage,
+    RenderedBlockFilter, RenderedBlockSummary, RenderedContentQueryPage, ResponsiveAnomalyFilter,
+    ResponsiveLayoutQueryPage, RuntimeErrorFilter, RuntimeErrorsQueryPage,
+    SecurityChallengeQueryPage, SecurityPostureQueryPage, ServiceWorkerQueryPage,
+    SourceRenderedDiffFilter, SourceVsRenderedQueryPage, SourceVsRenderedRoleEntry,
+    StructuredDataFilter, StructuredEntitiesQueryPage, ThirdPartyOriginFilter,
+    ThirdPartyOriginsQueryPage, TlsAndCaaQueryPage, VisualArtifactsQueryPage,
+    compare_source_and_rendered, query_accessibility_nodes, query_application_state,
+    query_browser_evidence_from_snapshot, query_cookies_and_storage, query_element_geometry,
+    query_indexability_and_authority, query_indexability_authority, query_interaction_trace,
+    query_interactive_elements, query_link_graph, query_link_graph_and_forms,
+    query_media_and_fonts, query_network_resources, query_performance_attribution,
+    query_rendered_content, query_responsive_comparison, query_responsive_layout,
+    query_runtime_errors, query_security_challenge, query_security_challenges,
+    query_security_posture, query_service_worker_lifecycle, query_service_workers,
+    query_source_vs_rendered, query_storage_and_cookies, query_structured_data,
+    query_structured_entities, query_third_party_origins, query_tls_and_caa,
+    query_visual_artifacts,
 };
 pub use self::reporting::{
     ExecutiveBrief, ReleaseReadinessAssessment, ReleaseReadinessState, RemediationTask,
@@ -427,6 +453,7 @@ struct RawHypothesisDecision {
     conclusion: Option<String>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Deserialize)]
 struct RawEvaluationDecision {
     status: HypothesisStatus,
@@ -434,8 +461,76 @@ struct RawEvaluationDecision {
     timeline_sequences: Vec<u32>,
     #[serde(default)]
     rendered_block_nodes: Vec<u32>,
+    #[serde(default)]
+    source_rendered_roles: Vec<String>,
+    #[serde(default)]
+    interactive_element_nodes: Vec<u32>,
+    #[serde(default)]
+    application_state_cited: bool,
+    #[serde(default)]
+    interaction_step_indices: Vec<u32>,
+    #[serde(default)]
+    geometry_element_nodes: Vec<u32>,
+    #[serde(default)]
+    accessibility_node_indices: Vec<u32>,
+    #[serde(default)]
+    cookie_or_storage_names: Vec<String>,
+    #[serde(default)]
+    third_party_origins: Vec<String>,
+    #[serde(default)]
+    security_posture_cited: bool,
+    #[serde(default)]
+    security_challenge_cited: bool,
+    #[serde(default)]
+    performance_attribution_cited: bool,
+    #[serde(default)]
+    media_or_font_keys: Vec<u32>,
+    #[serde(default)]
+    indexability_authority_cited: bool,
+    #[serde(default)]
+    structured_entity_indices: Vec<u32>,
+    #[serde(default)]
+    responsive_anomaly_nodes: Vec<u32>,
+    #[serde(default)]
+    link_or_form_indices: Vec<u32>,
+    #[serde(default)]
+    visual_artifacts_cited: bool,
+    #[serde(default)]
+    service_worker_cited: bool,
+    #[serde(default)]
+    tls_and_caa_cited: bool,
     evaluation_summary: String,
     conclusion: String,
+}
+
+const OFFLINE_QUERY_TOOLS: &[&str] = &[
+    "query_browser_timeline",
+    "query_request_chains",
+    "query_failed_dependencies",
+    "query_rendered_content",
+    "compare_source_and_rendered",
+    "query_interactive_elements",
+    "query_application_state",
+    "query_interaction_trace",
+    "query_element_geometry",
+    "query_accessibility_nodes",
+    "query_storage_and_cookies",
+    "query_third_party_origins",
+    "query_security_posture",
+    "query_security_challenge",
+    "query_performance_attribution",
+    "query_media_and_fonts",
+    "query_indexability_authority",
+    "query_structured_data",
+    "query_responsive_comparison",
+    "query_link_graph",
+    "query_visual_artifacts",
+    "query_service_worker_lifecycle",
+    "query_tls_and_caa",
+];
+
+fn is_offline_evidence_query_tool(tool: &str) -> bool {
+    OFFLINE_QUERY_TOOLS.contains(&tool)
 }
 
 /// Executes the multi-turn `KommandantZwerg` agentic investigation loop.
@@ -677,12 +772,12 @@ pub async fn run_investigation_with_events(
         sink.emit_investigation_event(target.as_str(), &req_ev);
         ctx.events.push(req_ev);
         let Ok(tool_rem) = ctx.ledger.try_consume_tool(started) else {
-            let rej_ev = InvestigationEvent::ToolRejected {
+            let rejected_ev = InvestigationEvent::ToolRejected {
                 tool_id: decision.requested_tool.clone(),
                 reason: "tool call budget exhausted".to_owned(),
             };
-            sink.emit_investigation_event(target.as_str(), &rej_ev);
-            ctx.events.push(rej_ev);
+            sink.emit_investigation_event(target.as_str(), &rejected_ev);
+            ctx.events.push(rejected_ev);
             ctx.hypotheses.push(hypothesis);
             return finish_budget_exhausted(ctx, "tool call budget exhausted".to_owned());
         };
@@ -854,8 +949,10 @@ async fn propose_hypothesis(
     if !used_tools.contains("query_browser_timeline") {
         available.push("query_browser_timeline".to_owned());
     }
-    if !used_tools.contains("query_rendered_content") {
-        available.push("query_rendered_content".to_owned());
+    for &tool_name in OFFLINE_QUERY_TOOLS {
+        if !used_tools.contains(tool_name) && !available.iter().any(|t| t == tool_name) {
+            available.push(tool_name.to_owned());
+        }
     }
 
     // Add specialist consultation tools.
@@ -1020,6 +1117,23 @@ async fn execute_rig_tool(
             });
             (page.is_some_and(|page| !page.events.is_empty()), Vec::new())
         }
+        "query_request_chains" => {
+            let page =
+                browser_timeline::query_request_chains(snapshot, &RequestChainFilter::default(), 0);
+            let succeeded = !page.chains.is_empty();
+            ctx.tool_trace.push(ToolInvocationRecord {
+                tool_id: tool_id.to_owned(),
+                dwarf_id: DwarfId::Browser,
+                authorised: true,
+                succeeded,
+                summary: format!(
+                    "snapshot request chains page contains {} chain(s) (total matching: {})",
+                    page.chains.len(),
+                    page.total_matching
+                ),
+            });
+            (succeeded, Vec::new())
+        }
         "query_rendered_content" => {
             let page = evidence_query::query_rendered_content(
                 snapshot,
@@ -1039,6 +1153,9 @@ async fn execute_rig_tool(
                 ),
             });
             (succeeded, Vec::new())
+        }
+        tool if is_offline_evidence_query_tool(tool) => {
+            run_offline_evidence_query_tool(tool, snapshot, ctx)
         }
         _ => {
             ctx.tool_trace.push(ToolInvocationRecord {
@@ -1563,6 +1680,7 @@ async fn run_crawl_tool(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn evaluate_hypothesis(
     new_results: &[AnalyserResult],
     tool_succeeded: bool,
@@ -1595,7 +1713,10 @@ async fn evaluate_hypothesis(
         hypothesis.requested_tool.as_str(),
         "query_browser_timeline" | "inspect_browser_runtime"
     );
-    let timeline = if timeline_requested {
+    let chains_requested = hypothesis.requested_tool == "query_request_chains";
+    let timeline = if chains_requested {
+        browser_timeline::request_chains_context(Some(snapshot))
+    } else if timeline_requested {
         browser_timeline::timeline_context(Some(snapshot))
     } else {
         "not requested".to_owned()
@@ -1609,8 +1730,9 @@ async fn evaluate_hypothesis(
     } else {
         "not requested".to_owned()
     };
+    let offline_query_context = build_offline_query_context(&hypothesis.requested_tool, snapshot);
     let user = format!(
-        "{OPEN_TAG}\nhypothesis: {}\nfollow_up_findings: {}\nbrowser_timeline: {timeline}\nrendered_content_evidence: {rendered_content}\n{CLOSE_TAG}",
+        "{OPEN_TAG}\nhypothesis: {}\nfollow_up_findings: {}\nbrowser_timeline: {timeline}\nrendered_content_evidence: {rendered_content}\nevidence_query_result: {offline_query_context}\n{CLOSE_TAG}",
         hypothesis.proposed_explanation.replace(CLOSE_TAG, ""),
         follow_up.join(" | ").replace(CLOSE_TAG, "")
     );
@@ -1634,7 +1756,12 @@ async fn evaluate_hypothesis(
         .flat_map(|r| r.findings.iter())
         .flat_map(|f| f.evidence_refs.iter().cloned())
         .collect();
-    if timeline_requested {
+    if chains_requested {
+        refs.extend(browser_timeline::cited_chain_event_refs(
+            snapshot,
+            &eval.timeline_sequences,
+        ));
+    } else if timeline_requested {
         refs.extend(browser_timeline::cited_event_refs(
             snapshot,
             &eval.timeline_sequences,
@@ -1646,6 +1773,11 @@ async fn evaluate_hypothesis(
             &eval.rendered_block_nodes,
         ));
     }
+    refs.extend(collect_offline_query_citations(
+        &hypothesis.requested_tool,
+        snapshot,
+        &eval,
+    ));
     if let Some(missing_citation) =
         uncited_query_reason(&hypothesis.requested_tool, eval.status, refs.is_empty())
     {
@@ -1686,11 +1818,164 @@ fn uncited_query_reason(
         "query_browser_timeline" => {
             Some("Timeline evaluation did not cite an event from the supplied page.".to_owned())
         }
+        "query_request_chains" => Some(
+            "Request chain evaluation did not cite a timeline sequence from the supplied chains."
+                .to_owned(),
+        ),
         "query_rendered_content" => Some(
             "Rendered content evaluation did not cite a block node from the supplied page."
                 .to_owned(),
         ),
+        tool if is_offline_evidence_query_tool(tool) => Some(format!(
+            "Evidence query `{tool}` evaluation did not cite verifiable evidence from the supplied page."
+        )),
         _ => None,
+    }
+}
+
+fn run_offline_evidence_query_tool(
+    tool_id: &str,
+    snapshot: &EvidenceSnapshot,
+    ctx: &mut InvestigationContext,
+) -> (bool, Vec<AnalyserResult>) {
+    let context_json = build_offline_query_context(tool_id, snapshot);
+    let succeeded = !context_json.contains("\"skipped\"")
+        && !context_json.contains("\"failed\"")
+        && !context_json.contains("\"unavailable\"");
+    let dwarf_id = match tool_id {
+        "query_failed_dependencies"
+        | "query_interactive_elements"
+        | "query_application_state"
+        | "query_interaction_trace"
+        | "query_service_worker_lifecycle" => DwarfId::Browser,
+        "compare_source_and_rendered" => DwarfId::Inhalts,
+        "query_element_geometry" | "query_responsive_comparison" | "query_visual_artifacts" => {
+            DwarfId::Gestaltungs
+        }
+        "query_accessibility_nodes" => DwarfId::Zugaenglichkeits,
+        "query_storage_and_cookies"
+        | "query_third_party_origins"
+        | "query_security_posture"
+        | "query_security_challenge"
+        | "query_tls_and_caa" => DwarfId::Sicherheits,
+        "query_performance_attribution" | "query_media_and_fonts" => DwarfId::Leistungs,
+        "query_indexability_authority" | "query_structured_data" => DwarfId::Such,
+        "query_link_graph" => DwarfId::Struktur,
+        _ => DwarfId::Kommandant,
+    };
+    ctx.tool_trace.push(ToolInvocationRecord {
+        tool_id: tool_id.to_owned(),
+        dwarf_id,
+        authorised: true,
+        succeeded,
+        summary: format!("offline snapshot query `{tool_id}` executed"),
+    });
+    (succeeded, Vec::new())
+}
+
+fn build_offline_query_context(requested_tool: &str, snapshot: &EvidenceSnapshot) -> String {
+    match requested_tool {
+        "query_failed_dependencies" => {
+            browser_timeline::failed_dependencies_context(Some(snapshot))
+        }
+        "compare_source_and_rendered" => evidence_query::source_vs_rendered_context(Some(snapshot)),
+        "query_interactive_elements" => {
+            evidence_query::interactive_elements_context(Some(snapshot))
+        }
+        "query_application_state" => evidence_query::application_state_context(Some(snapshot)),
+        "query_interaction_trace" => evidence_query::interaction_trace_context(Some(snapshot)),
+        "query_element_geometry" => evidence_query::element_geometry_context(Some(snapshot)),
+        "query_accessibility_nodes" => evidence_query::accessibility_nodes_context(Some(snapshot)),
+        "query_storage_and_cookies" => evidence_query::cookies_and_storage_context(Some(snapshot)),
+        "query_third_party_origins" => evidence_query::third_party_origins_context(Some(snapshot)),
+        "query_security_posture" => evidence_query::security_posture_context(Some(snapshot)),
+        "query_security_challenge" => evidence_query::security_challenges_context(Some(snapshot)),
+        "query_performance_attribution" => {
+            evidence_query::performance_attribution_context(Some(snapshot))
+        }
+        "query_media_and_fonts" => evidence_query::media_and_fonts_context(Some(snapshot)),
+        "query_indexability_authority" => {
+            evidence_query::indexability_authority_context(Some(snapshot))
+        }
+        "query_structured_data" => evidence_query::structured_entities_context(Some(snapshot)),
+        "query_responsive_comparison" => evidence_query::responsive_layout_context(Some(snapshot)),
+        "query_link_graph" => evidence_query::link_graph_context(Some(snapshot)),
+        "query_visual_artifacts" => evidence_query::visual_artifacts_context(Some(snapshot)),
+        "query_service_worker_lifecycle" => evidence_query::service_worker_context(Some(snapshot)),
+        "query_tls_and_caa" => evidence_query::tls_and_caa_context(Some(snapshot)),
+        _ => "not requested".to_owned(),
+    }
+}
+
+fn collect_offline_query_citations(
+    requested_tool: &str,
+    snapshot: &EvidenceSnapshot,
+    raw: &RawEvaluationDecision,
+) -> Vec<EvidenceRef> {
+    match requested_tool {
+        "query_failed_dependencies" => {
+            browser_timeline::cited_failed_dependency_refs(snapshot, &raw.timeline_sequences)
+        }
+        "compare_source_and_rendered" => {
+            evidence_query::cited_source_vs_rendered_refs(snapshot, &raw.source_rendered_roles)
+        }
+        "query_interactive_elements" => {
+            evidence_query::cited_interactive_element_refs(snapshot, &raw.interactive_element_nodes)
+        }
+        "query_application_state" => {
+            evidence_query::cited_application_state_refs(snapshot, raw.application_state_cited)
+        }
+        "query_interaction_trace" => {
+            evidence_query::cited_interaction_step_refs(snapshot, &raw.interaction_step_indices)
+        }
+        "query_element_geometry" => {
+            evidence_query::cited_element_geometry_refs(snapshot, &raw.geometry_element_nodes)
+        }
+        "query_accessibility_nodes" => {
+            evidence_query::cited_accessibility_node_refs(snapshot, &raw.accessibility_node_indices)
+        }
+        "query_storage_and_cookies" => {
+            evidence_query::cited_cookie_or_storage_refs(snapshot, &raw.cookie_or_storage_names)
+        }
+        "query_third_party_origins" => {
+            evidence_query::cited_third_party_origin_refs(snapshot, &raw.third_party_origins)
+        }
+        "query_security_posture" => {
+            evidence_query::cited_security_posture_refs(snapshot, raw.security_posture_cited)
+        }
+        "query_security_challenge" => {
+            evidence_query::cited_security_challenge_refs(snapshot, raw.security_challenge_cited)
+        }
+        "query_performance_attribution" => evidence_query::cited_performance_attribution_refs(
+            snapshot,
+            raw.performance_attribution_cited,
+        ),
+        "query_media_and_fonts" => {
+            evidence_query::cited_media_or_font_refs(snapshot, &raw.media_or_font_keys)
+        }
+        "query_indexability_authority" => evidence_query::cited_indexability_authority_refs(
+            snapshot,
+            raw.indexability_authority_cited,
+        ),
+        "query_structured_data" => {
+            evidence_query::cited_structured_entity_refs(snapshot, &raw.structured_entity_indices)
+        }
+        "query_responsive_comparison" => {
+            evidence_query::cited_responsive_anomaly_refs(snapshot, &raw.responsive_anomaly_nodes)
+        }
+        "query_link_graph" => {
+            evidence_query::cited_link_or_form_refs(snapshot, &raw.link_or_form_indices)
+        }
+        "query_visual_artifacts" => {
+            evidence_query::cited_visual_artifact_refs(snapshot, raw.visual_artifacts_cited)
+        }
+        "query_service_worker_lifecycle" => {
+            evidence_query::cited_service_worker_refs(snapshot, raw.service_worker_cited)
+        }
+        "query_tls_and_caa" => {
+            evidence_query::cited_tls_and_caa_refs(snapshot, raw.tls_and_caa_cited)
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -2411,6 +2696,158 @@ mod tests {
         let report = run_investigation(
             target,
             "Verify rendered content citation requirement".to_owned(),
+            TargetPolicy::PublicOnly,
+            budget,
+            backend,
+            &llm,
+        )
+        .await;
+
+        assert_eq!(report.hypotheses.len(), 2);
+        assert_eq!(report.hypotheses[1].status, HypothesisStatus::Inconclusive);
+        assert_eq!(report.hypotheses[1].supporting_evidence.len(), 0);
+    }
+
+    fn browser_with_request_chains() -> BrowserEvidence {
+        use crate::domain::{
+            BrowserEventDetail, BrowserTimeline, BrowserTimelineEvent, RequestHop, TimelineEnd,
+        };
+        BrowserEvidence {
+            final_url: "https://example.org/".to_owned(),
+            timeline: Some(BrowserTimeline {
+                events: vec![
+                    BrowserTimelineEvent {
+                        sequence: 1,
+                        time: None,
+                        request: Some(RequestHop {
+                            id: "req-chain-1".to_owned(),
+                            hop: Some(0),
+                        }),
+                        frame: None,
+                        loader: None,
+                        detail: BrowserEventDetail::RequestStarted {
+                            method: Some("GET".to_owned()),
+                            origin: Some("https://example.org".to_owned()),
+                            endpoint_path: Some("/".to_owned()),
+                            resource_type: Some("Document".to_owned()),
+                            initiator_type: Some("other".to_owned()),
+                        },
+                    },
+                    BrowserTimelineEvent {
+                        sequence: 2,
+                        time: None,
+                        request: Some(RequestHop {
+                            id: "req-chain-1".to_owned(),
+                            hop: Some(0),
+                        }),
+                        frame: None,
+                        loader: None,
+                        detail: BrowserEventDetail::Redirect {
+                            status: Some(302),
+                            origin: Some("https://example.org".to_owned()),
+                            endpoint_path: Some("/".to_owned()),
+                        },
+                    },
+                    BrowserTimelineEvent {
+                        sequence: 22,
+                        time: None,
+                        request: Some(RequestHop {
+                            id: "req-chain-1".to_owned(),
+                            hop: Some(1),
+                        }),
+                        frame: None,
+                        loader: None,
+                        detail: BrowserEventDetail::Response {
+                            status: Some(503),
+                            origin: Some("https://api.example.org".to_owned()),
+                            endpoint_path: Some("/v1/status".to_owned()),
+                            mime_type: Some("application/json".to_owned()),
+                            cache_source: Some(crate::domain::TimelineCacheSource::Network),
+                            timing: None,
+                        },
+                    },
+                ],
+                truncated: false,
+                end: TimelineEnd::ObservationEnded,
+            }),
+            ..BrowserEvidence::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn query_request_chains_reuses_snapshot_and_cites_chain_sequence() {
+        let target = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let browser_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let backend = Arc::new(CountingBrowserBackend {
+            browser: CollectorOutcome::Captured {
+                data: browser_with_request_chains(),
+            },
+            browser_calls: Arc::clone(&browser_calls),
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Capture browser runtime","requested_tool":"inspect_browser_runtime"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Browser runtime captured","conclusion":"Captured."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Inspect multi-hop redirect chain ending in HTTP 503","requested_tool":"query_request_chains"}"#.to_owned(),
+                r#"{"status":"supported","timeline_sequences":[2,22],"evaluation_summary":"Request chain req-chain-1 redirected (seq 2) and failed with HTTP 503 (seq 22)","conclusion":"Redirect chain failure confirmed."}"#.to_owned(),
+                r#"{"ready_to_conclude":true,"conclusion":"Redirect chain failure confirmed."}"#.to_owned(),
+            ])),
+        };
+
+        let budget = InvestigationBudget {
+            max_tool_calls: 4,
+            max_llm_turns: 6,
+            ..InvestigationBudget::default()
+        };
+        let report = run_investigation(
+            target,
+            "Verify request chain reconstruction".to_owned(),
+            TargetPolicy::PublicOnly,
+            budget,
+            backend,
+            &llm,
+        )
+        .await;
+
+        assert_eq!(browser_calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(report.hypotheses.len(), 2);
+        assert_eq!(report.hypotheses[1].status, HypothesisStatus::Supported);
+        assert!(
+            report.hypotheses[1]
+                .supporting_evidence
+                .iter()
+                .any(|r| r.detail == "timeline-event=22")
+        );
+    }
+
+    #[tokio::test]
+    async fn query_request_chains_without_cited_sequence_forces_inconclusive() {
+        let target = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let browser_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let backend = Arc::new(CountingBrowserBackend {
+            browser: CollectorOutcome::Captured {
+                data: browser_with_request_chains(),
+            },
+            browser_calls,
+        });
+        let llm = SequenceLlm {
+            responses: Mutex::new(VecDeque::from([
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Capture browser runtime","requested_tool":"inspect_browser_runtime"}"#.to_owned(),
+                r#"{"status":"supported","evaluation_summary":"Browser runtime captured","conclusion":"Captured."}"#.to_owned(),
+                r#"{"ready_to_conclude":false,"originating_rule":"perf.http.exchange_duration","proposed_explanation":"Inspect multi-hop redirect chain","requested_tool":"query_request_chains"}"#.to_owned(),
+                r#"{"status":"supported","timeline_sequences":[999],"evaluation_summary":"Uncited sequence","conclusion":"Should become inconclusive."}"#.to_owned(),
+                r#"{"ready_to_conclude":true,"conclusion":"Done."}"#.to_owned(),
+            ])),
+        };
+
+        let budget = InvestigationBudget {
+            max_tool_calls: 4,
+            max_llm_turns: 6,
+            ..InvestigationBudget::default()
+        };
+        let report = run_investigation(
+            target,
+            "Verify request chain citation requirement".to_owned(),
             TargetPolicy::PublicOnly,
             budget,
             backend,

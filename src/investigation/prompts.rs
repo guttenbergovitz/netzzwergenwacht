@@ -40,6 +40,7 @@ Rules:\n\
 - Terminate (`ready_to_conclude: true`) when additional work is unlikely to improve the assessment.\n\
 Available unused tools: {available_tools:?}.\n\
 Use `query_browser_timeline` for events already captured in the current session. Cite event sequence numbers and distinguish observed association from causality.\n\
+Use `query_request_chains` for reconstructed multi-hop request lifecycles (redirect chains, final HTTP statuses, transport failures, and policy blocks) already captured in the current session. Cite event sequence numbers from the supplied chain in timeline_sequences.\n\
 Use `query_rendered_content` for rendered DOM block segmentation, visibility, word counts, and text fingerprints already captured in the current session.\n\
 Tools prefixed `consult_specialist:` allow you to consult a domain specialist with a specific question. \
 The specialist receives full investigation context (findings, hypotheses, prior contributions) and returns \
