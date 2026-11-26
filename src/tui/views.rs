@@ -1518,6 +1518,7 @@ fn build_security_and_privacy_lines(
             c.same_site,
             c.third_party,
             c.observed_before_consent
+                .map_or("unobserved".to_owned(), |v| v.to_string())
         )));
     }
     for tp in third_party.origins.iter().take(5) {
@@ -1557,8 +1558,9 @@ fn build_performance_and_media_lines(
             )));
         }
         out.push(Line::from(format!(
-            " CLSTotal={}‰ ({} shift regions) | Render-blocking head: {} scripts, {} stylesheets",
-            attr.total_cls_milli,
+            " CLSTotal={} ({} shift regions) | Render-blocking head: {} scripts, {} stylesheets",
+            attr.total_cls_milli
+                .map_or("unobserved".to_owned(), |v| format!("{v}‰")),
             attr.cls_shift_regions.len(),
             attr.render_blocking_chain.blocking_head_scripts,
             attr.render_blocking_chain.blocking_head_stylesheets

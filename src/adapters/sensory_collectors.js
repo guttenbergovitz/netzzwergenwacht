@@ -556,8 +556,10 @@ function collectInPageSensoryBundle() {
         if (
           visible &&
           !disabled &&
-          safety === 'read_only_ui_toggle' &&
-          (kind === 'accordion' || kind === 'tabs' || kind === 'navigation_menu' || tag === 'summary' || role === 'tab' || el.hasAttribute('aria-expanded')) &&
+          tag === 'summary' &&
+          el.parentElement &&
+          el.parentElement.tagName === 'DETAILS' &&
+          !el.closest('form,a[href]') &&
           readOnlyToggleCandidates.length < 4
         ) {
           readOnlyToggleCandidates.push({
@@ -848,6 +850,30 @@ function collectInPageSensoryBundle() {
     aboveFoldCoverageMilli = Math.min(1000, Math.round((coveredCells / (GRID_X * GRID_Y)) * 1000));
   }
 
+  // Bounded structural digest over the real DOM tree: tag, role, id uniqueness, and
+  // disclosure state. Only a hash of this walk is persisted, never the raw structure.
+  const structureSignature = () => {
+    const parts = [];
+    const walkStructure = (el, depth) => {
+      if (!el || parts.length >= 512 || depth > 16) return;
+      const tag = (el.tagName || '').toLowerCase();
+      if (!tag) return;
+      const roleAttr = el.getAttribute ? el.getAttribute('role') : null;
+      const role = roleAttr ? roleAttr.toLowerCase() : '';
+      const rawId = typeof el.id === 'string' ? el.id.trim() : '';
+      const idMarker = rawId ? (idCounts.get(rawId) === 1 ? '#' : '~') : '';
+      const expanded = el.getAttribute ? (el.getAttribute('aria-expanded') || '') : '';
+      const open = el.open === true ? 'o' : '';
+      parts.push(`${depth}${tag}${role ? '[' + role + ']' : ''}${idMarker}${expanded}${open}`);
+      const children = el.children || [];
+      for (let i = 0; i < children.length && parts.length < 512; i += 1) {
+        walkStructure(children[i], depth + 1);
+      }
+    };
+    walkStructure(document.body || document.documentElement, 0);
+    return parts.join('|');
+  };
+
   const readStateMetrics = () => {
     const activeEl = document.activeElement;
     const activeTag = activeEl && activeEl.tagName ? activeEl.tagName.toLowerCase() : null;
@@ -863,7 +889,6 @@ function collectInPageSensoryBundle() {
     } catch {}
     const loadingIndicators = document.querySelectorAll('[aria-busy="true"],[role="progressbar"]').length;
     const alertRegions = document.querySelectorAll('[role="alert"]').length;
-    const sig = `d=${openDialogs}:t=${activeTabs}:e=${expandedControls}:dis=${disabledControls}:req=${requiredInputs}:inv=${invalidInputs}:i=${interactiveElements.length}`;
     return {
       activeTag,
       activeRole,
@@ -875,7 +900,6 @@ function collectInPageSensoryBundle() {
       invalidInputs,
       loadingIndicators,
       alertRegions,
-      sig,
     };
   };
 
@@ -903,7 +927,7 @@ function collectInPageSensoryBundle() {
       Math.round(document.documentElement?.scrollHeight || document.body?.scrollHeight || 0)
     ),
     network_idle_reached: false,
-    _raw_structural_sig: initialMetrics.sig,
+    _raw_structural_sig: structureSignature(),
     structural_fingerprint: null,
   };
 
@@ -926,16 +950,22 @@ function collectInPageSensoryBundle() {
   for (let i = 0; i < readOnlyToggleCandidates.length; i += 1) {
     const cand = readOnlyToggleCandidates[i];
     const before = readStateMetrics();
-    const actionKind = cand.role === 'tab' || cand.kind === 'tabs' ? 'tab_select' : 'disclosure_toggle';
+    const beforeStructure = structureSignature();
+    const beforeResources = performance.getEntriesByType('resource').length;
+    const beforeErrors = Number(window.__nzwPerf?.errors || 0);
+    const actionKind = 'disclosure_toggle';
     try {
       cand.el.focus();
       cand.el.click();
     } catch {}
     const after = readStateMetrics();
+    const afterStructure = structureSignature();
+    const afterResources = performance.getEntriesByType('resource').length;
+    const afterErrors = Number(window.__nzwPerf?.errors || 0);
     const focusChanged = after.activeTag !== before.activeTag || after.activeRole !== before.activeRole;
     const expandedChanged = after.expandedControls !== before.expandedControls;
     const dialogChanged = after.openDialogs !== before.openDialogs;
-    const sigChanged = after.sig !== before.sig;
+    const sigChanged = afterStructure !== beforeStructure;
     interactionSteps.push({
       step_index: interactionSteps.length,
       action: actionKind,
@@ -948,11 +978,11 @@ function collectInPageSensoryBundle() {
       expanded_changed: expandedChanged,
       dialog_changed: dialogChanged,
       dom_fingerprint_changed: sigChanged,
-      new_runtime_errors: 0,
-      triggered_requests: 0,
+      new_runtime_errors: Math.max(0, afterErrors - beforeErrors),
+      triggered_requests: Math.max(0, afterResources - beforeResources),
     });
     // Restore original toggle state if we changed expansion
-    if (expandedChanged && actionKind === 'disclosure_toggle') {
+    if (expandedChanged) {
       try {
         cand.el.click();
       } catch {}
@@ -1434,7 +1464,7 @@ function assembleSensoryInventories(params, sha256HexFn) {
       value_byte_len: typeof c.value === 'string' ? c.value.length : Number(c.size || 0),
       third_party: thirdParty,
       has_security_prefix: name.startsWith('__Host-') || name.startsWith('__Secure-'),
-      observed_before_consent: true,
+      observed_before_consent: null,
     };
   });
 
@@ -1580,20 +1610,43 @@ function assembleSensoryInventories(params, sha256HexFn) {
   const lcp = bundle.performance_dom?.lcp_candidate || null;
   if (lcp && lcp.identity) {
     hashIdentity(lcp.identity);
-    if (typeof perfObs?.fcp_ms === 'number') {
-      lcp.render_time_ms = perfObs.fcp_ms;
-    }
   }
+  if (lcp && typeof perfObs?.lcp_ms === 'number') {
+    lcp.render_time_ms = Math.max(0, Math.round(perfObs.lcp_ms));
+  }
+  const shiftRegions = Array.isArray(perfObs?.shift_regions)
+    ? perfObs.shift_regions.slice(0, 16).map((s, idx) => ({
+        shift_index: idx,
+        score_milli: Math.max(0, Math.round(Number(s.value || 0) * 1000)),
+        start_time_ms: Math.max(0, Math.round(Number(s.start_time || 0))),
+        primary_node_identity: null,
+        primary_node_tag: s.tag ? String(s.tag).slice(0, 32) : null,
+      }))
+    : [];
+  const totalClsMilli =
+    typeof perfObs?.cls_thousandths === 'number'
+      ? Math.max(0, Math.round(perfObs.cls_thousandths))
+      : null;
+  const blockingResources = (Array.isArray(resources) ? resources : []).filter((r) => {
+    const t = String(r?.resource_type || '').toLowerCase();
+    return t === 'script' || t === 'stylesheet';
+  });
+  const blockingBytesKnown =
+    blockingResources.length > 0 &&
+    blockingResources.every((r) => typeof r?.transfer_size === 'number');
+  const blockingTransferBytes = blockingBytesKnown
+    ? blockingResources.reduce((sum, r) => sum + Math.max(0, Number(r.transfer_size || 0)), 0)
+    : null;
   const performanceAttribution = {
     lcp_candidate: lcp,
-    total_cls_milli: 0,
-    cls_shift_regions: [],
+    total_cls_milli: totalClsMilli,
+    cls_shift_regions: shiftRegions,
     render_blocking_chain: {
       blocking_head_scripts: Number(bundle.performance_dom?.blocking_head_scripts || 0),
       blocking_head_stylesheets: Number(bundle.performance_dom?.blocking_head_stylesheets || 0),
       preload_hint_count: Number(bundle.performance_dom?.preload_hint_count || 0),
       preconnect_hint_count: Number(bundle.performance_dom?.preconnect_hint_count || 0),
-      blocking_transfer_bytes: 0,
+      blocking_transfer_bytes: blockingTransferBytes,
     },
   };
 
@@ -1703,8 +1756,12 @@ function assembleSensoryInventories(params, sha256HexFn) {
     mobile_scroll_width: Number(mobileVp.scroll_width || Number(mobileVp.width || 375) + Number(mobileVp.horizontal_overflow_px || 0)),
     desktop_viewport_width: Number(desktopVp.width || 1280),
     desktop_scroll_width: Number(desktopVp.scroll_width || Number(desktopVp.width || 1280) + Number(desktopVp.horizontal_overflow_px || 0)),
-    desktop_visible_controls: Number(desktopVp.visible_controls ?? (bundle.interactive_inventory?.elements?.filter((e) => e.visible).length || 0)),
-    mobile_visible_controls: Number(mobileVp.visible_controls ?? desktopVp.visible_controls ?? 0),
+    desktop_visible_controls: Number.isFinite(Number(desktopVp.visible_controls))
+      ? Number(desktopVp.visible_controls)
+      : null,
+    mobile_visible_controls: Number.isFinite(Number(mobileVp.visible_controls))
+      ? Number(mobileVp.visible_controls)
+      : null,
     mobile_undersized_touch_targets: Number(mobileVp.small_touch_targets_count || 0),
     anomalies,
     anomalies_truncated: false,

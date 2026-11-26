@@ -62,7 +62,8 @@ pub struct RenderBlockingChainSummary {
     /// Number of `<link rel="preconnect">` hints declared.
     pub preconnect_hint_count: u32,
     /// Total transfer bytes of render-blocking scripts and stylesheets, when known.
-    pub blocking_transfer_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking_transfer_bytes: Option<u64>,
 }
 
 /// Consolidated performance attribution evidence (LCP, CLS regions, blocking chain).
@@ -72,9 +73,9 @@ pub struct PerformanceAttributionEvidence {
     /// Final Largest Contentful Paint candidate element attribution, if observed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lcp_candidate: Option<LcpCandidateObs>,
-    /// Total Cumulative Layout Shift score in thousandths (`0.100` = `100`).
-    #[serde(default)]
-    pub total_cls_milli: u32,
+    /// Total Cumulative Layout Shift score in thousandths (`0.100` = `100`), when observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_cls_milli: Option<u32>,
     /// Bounded list of layout shift regions (capped at 16).
     pub cls_shift_regions: Vec<ClsShiftRegionObs>,
     /// Render-blocking head critical path summary.

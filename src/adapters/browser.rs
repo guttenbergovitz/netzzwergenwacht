@@ -317,7 +317,20 @@ function findBrowser() {
     await call('Page.addScriptToEvaluateOnNewDocument', {
       source: `window.__nzwCspViolations = [];
       window.addEventListener('securitypolicyviolation', (e) => { if (window.__nzwCspViolations.length < 50) window.__nzwCspViolations.push({ directive: e.violatedDirective || '', blocked_uri: e.blockedURI || '', source_file: e.sourceFile || null, line_number: e.lineNumber || null }); });
-      window.__nzwPerf = { lcpMs: null, lcpElement: null, lcpUrl: null, cls: 0, shiftCount: 0, longTaskCount: 0, longTaskTotalMs: 0, maxLongTaskMs: 0 };
+      window.__nzwPerf = { lcpMs: null, lcpElement: null, lcpUrl: null, cls: 0, shiftCount: 0, shifts: [], errors: 0, longTaskCount: 0, longTaskTotalMs: 0, maxLongTaskMs: 0 };
+      window.addEventListener('error', () => { window.__nzwPerf.errors += 1; }, true);
+      window.addEventListener('unhandledrejection', () => { window.__nzwPerf.errors += 1; });
+      const nzwNodePath = (node) => {
+        const parts = [];
+        let cur = node;
+        let guard = 0;
+        while (cur && cur.tagName && guard < 8) {
+          parts.unshift(cur.tagName.toLowerCase());
+          cur = cur.parentElement;
+          guard += 1;
+        }
+        return parts.join('>');
+      };
       try {
         new PerformanceObserver((list) => {
           for (const e of list.getEntries()) {
@@ -328,7 +341,19 @@ function findBrowser() {
         }).observe({ type: 'largest-contentful-paint', buffered: true });
         new PerformanceObserver((list) => {
           for (const e of list.getEntries()) {
-            if (!e.hadRecentInput) { window.__nzwPerf.cls += e.value || 0; window.__nzwPerf.shiftCount++; }
+            if (e.hadRecentInput) continue;
+            window.__nzwPerf.cls += e.value || 0;
+            window.__nzwPerf.shiftCount += 1;
+            if (window.__nzwPerf.shifts.length < 16) {
+              const src = (e.sources && e.sources[0]) || null;
+              const node = src && src.node ? src.node : null;
+              window.__nzwPerf.shifts.push({
+                value: Number(e.value || 0),
+                start_time: Math.round(e.startTime || 0),
+                tag: node && node.tagName ? node.tagName.toLowerCase() : null,
+                node_path: node && node.tagName ? nzwNodePath(node) : null,
+              });
+            }
           }
         }).observe({ type: 'layout-shift', buffered: true });
         new PerformanceObserver((list) => {
@@ -486,6 +511,9 @@ function findBrowser() {
           lcp_url: p.lcpUrl || null,
           cls_thousandths: typeof p.cls === 'number' ? Math.round(p.cls * 1000) : null,
           layout_shift_count: p.shiftCount || 0,
+          shift_regions: Array.isArray(p.shifts) ? p.shifts : [],
+          runtime_error_count: typeof p.errors === 'number' ? p.errors : 0,
+          resource_entry_count: performance.getEntriesByType('resource').length,
           long_task_count: p.longTaskCount || 0,
           long_task_total_ms: p.longTaskTotalMs || 0,
           max_long_task_ms: p.maxLongTaskMs || 0,

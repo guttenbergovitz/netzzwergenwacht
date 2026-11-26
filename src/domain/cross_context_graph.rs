@@ -49,10 +49,13 @@ pub struct ResponsiveComparisonEvidence {
     pub desktop_viewport_width: u32,
     /// Desktop document `scrollWidth` in CSS pixels.
     pub desktop_scroll_width: u32,
-    /// Count of interactive controls visible on desktop.
-    pub desktop_visible_controls: u32,
-    /// Count of interactive controls visible on mobile.
-    pub mobile_visible_controls: u32,
+    /// Count of interactive controls visible on desktop, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop_visible_controls: Option<u32>,
+    /// Count of interactive controls visible on mobile, when measured. Never inferred
+    /// from the desktop viewport.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mobile_visible_controls: Option<u32>,
     /// Count of undersized (`< 24x24px`) touch targets on mobile.
     pub mobile_undersized_touch_targets: u32,
     /// Bounded list of element-level responsive anomalies (capped at 64).

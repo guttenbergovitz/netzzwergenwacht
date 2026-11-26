@@ -44,8 +44,10 @@ pub struct RuntimeCookieObs {
     pub third_party: bool,
     /// Whether the cookie uses `__Host-` or `__Secure-` prefix naming.
     pub has_security_prefix: bool,
-    /// Whether the cookie was present before any consent interaction.
-    pub observed_before_consent: bool,
+    /// Whether the cookie was present before any consent interaction, when a consent
+    /// probe actually established the ordering (`None` means unobserved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_before_consent: Option<bool>,
 }
 
 /// Web Storage (`localStorage` / `sessionStorage`) area selector.
