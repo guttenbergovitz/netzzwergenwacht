@@ -3,6 +3,17 @@
 // SHA-256 digests in the Node.js CDP harness so raw untrusted text or secrets
 // never cross into LLM prompts or persisted inventories.
 
+// UTF-8 byte length for retained value sizes. JavaScript string length counts
+// UTF-16 code units, which understates multibyte content.
+function utf8ByteLength(value) {
+  if (typeof value !== 'string') return 0;
+  try {
+    return new TextEncoder().encode(value).length;
+  } catch {
+    return 0;
+  }
+}
+
 function buildAxNodeInventoryFromCdp(cdpNodes, sha256HexFn) {
   if (!Array.isArray(cdpNodes)) return null;
   const MAX_RETAINED = 256;
@@ -106,6 +117,14 @@ function collectInPageSensoryBundle() {
   const vw = Math.max(0, Math.round(window.innerWidth || document.documentElement?.clientWidth || 0));
   const vh = Math.max(0, Math.round(window.innerHeight || document.documentElement?.clientHeight || 0));
   const pageOrigin = window.location?.origin || '';
+  const utf8ByteLength = (value) => {
+    if (typeof value !== 'string') return 0;
+    try {
+      return new TextEncoder().encode(value).length;
+    } catch {
+      return 0;
+    }
+  };
 
   const idCounts = new Map();
   let idVisited = 0;
@@ -992,8 +1011,12 @@ function collectInPageSensoryBundle() {
   // Web Storage enumeration using storage.key(i)
   const storageKeys = [];
   let storageKeysTruncated = false;
+  let storageEnumerated = true;
   const collectStorageArea = (storageObj, areaName) => {
-    if (!storageObj) return;
+    if (!storageObj) {
+      storageEnumerated = false;
+      return;
+    }
     try {
       const len = Number(storageObj.length || 0);
       for (let i = 0; i < len; i += 1) {
@@ -1007,10 +1030,12 @@ function collectInPageSensoryBundle() {
         storageKeys.push({
           area: areaName,
           key: k.slice(0, 128),
-          value_byte_len: typeof val === 'string' ? val.length : 0,
+          value_byte_len: typeof val === 'string' ? utf8ByteLength(val) : 0,
         });
       }
-    } catch {}
+    } catch {
+      storageEnumerated = false;
+    }
   };
   collectStorageArea(window.localStorage, 'local_storage');
   collectStorageArea(window.sessionStorage, 'session_storage');
@@ -1292,6 +1317,7 @@ function collectInPageSensoryBundle() {
     storage_partial: {
       storage_keys: storageKeys,
       storage_keys_truncated: storageKeysTruncated,
+      storage_enumerated: storageEnumerated,
     },
     third_party_capabilities: Array.from(thirdPartyCapabilities.entries()),
     security_dom: {
@@ -1382,6 +1408,7 @@ function assembleSensoryInventories(params, sha256HexFn) {
     screenshotByteLen,
     swInfo,
     indexedDbInfo,
+    cookiesEnumerated,
     loadTimedOut,
     pendingRequestsCount,
   } = params;
@@ -1461,7 +1488,7 @@ function assembleSensoryInventories(params, sha256HexFn) {
       http_only: Boolean(c.httpOnly),
       same_site: sameSite,
       session: Boolean(c.session),
-      value_byte_len: typeof c.value === 'string' ? c.value.length : Number(c.size || 0),
+      value_byte_len: utf8ByteLength(c.value),
       third_party: thirdParty,
       has_security_prefix: name.startsWith('__Host-') || name.startsWith('__Secure-'),
       observed_before_consent: null,
@@ -1475,6 +1502,8 @@ function assembleSensoryInventories(params, sha256HexFn) {
     indexed_db_count: idbList.length,
     indexed_db_databases: idbList,
     indexed_db_enumerated: Boolean(indexedDbInfo?.enumerated),
+    cookies_enumerated: Boolean(cookiesEnumerated),
+    storage_enumerated: Boolean(bundle.storage_partial?.storage_enumerated),
     limits: {
       max_cookies: 128,
       cookies_truncated: rawCookies.length > 128,
@@ -1719,57 +1748,62 @@ function assembleSensoryInventories(params, sha256HexFn) {
     delete structuredData.social_card._raw_title;
   }
 
-  // Responsive comparison from real viewport observations
-  const desktopVp = (Array.isArray(viewports) ? viewports : []).find((v) => v.name === 'desktop') || {
-    width: 1280,
-    scroll_width: 1280,
-    visible_controls: bundle.interactive_inventory?.elements?.filter((e) => e.visible).length || 0,
-    horizontal_overflow_px: 0,
-    small_touch_targets_count: 0,
+  // Responsive comparison requires two real viewport observations. A missing
+  // viewport must never be replaced by an assumed width, and an unknown metric
+  // must never be coerced to zero.
+  const observedNumber = (value) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  const observedViewport = (name) => {
+    const vp = (Array.isArray(viewports) ? viewports : []).find((v) => v.name === name);
+    if (!vp || typeof vp !== 'object') return null;
+    const width = observedNumber(vp.width);
+    const scrollWidth = observedNumber(vp.scroll_width);
+    if (width === null || scrollWidth === null) return null;
+    return {
+      width,
+      scrollWidth,
+      visibleControls: observedNumber(vp.visible_controls),
+      overflowPx: observedNumber(vp.horizontal_overflow_px),
+      smallTargets: observedNumber(vp.small_touch_targets_count),
+    };
   };
-  const mobileVp = (Array.isArray(viewports) ? viewports : []).find((v) => v.name === 'mobile') || {
-    width: 375,
-    scroll_width: 375,
-    visible_controls: desktopVp.visible_controls,
-    horizontal_overflow_px: 0,
-    small_touch_targets_count: 0,
-  };
-  const anomalies = [];
-  if (Number(mobileVp.horizontal_overflow_px || 0) > 0) {
-    anomalies.push({
-      anomaly_index: anomalies.length,
-      kind: 'mobile_horizontal_overflow',
-      identity: null,
-      tag: 'body',
-      mobile_metric_px: Number(mobileVp.scroll_width || mobileVp.width + mobileVp.horizontal_overflow_px),
-      desktop_metric_px: Number(desktopVp.scroll_width || desktopVp.width),
-    });
+  const desktopVp = observedViewport('desktop');
+  const mobileVp = observedViewport('mobile');
+  let responsiveComparison = null;
+  if (desktopVp && mobileVp) {
+    const anomalies = [];
+    if (mobileVp.overflowPx !== null && mobileVp.overflowPx > 0) {
+      anomalies.push({
+        anomaly_index: anomalies.length,
+        kind: 'mobile_horizontal_overflow',
+        identity: null,
+        tag: 'body',
+        mobile_metric_px: mobileVp.scrollWidth,
+        desktop_metric_px: desktopVp.scrollWidth,
+      });
+    }
+    if (mobileVp.smallTargets !== null && mobileVp.smallTargets > 0) {
+      anomalies.push({
+        anomaly_index: anomalies.length,
+        kind: 'undersized_mobile_touch_target',
+        identity: null,
+        tag: 'button',
+        mobile_metric_px: mobileVp.smallTargets,
+        desktop_metric_px: desktopVp.smallTargets,
+      });
+    }
+    responsiveComparison = {
+      mobile_viewport_width: mobileVp.width,
+      mobile_scroll_width: mobileVp.scrollWidth,
+      desktop_viewport_width: desktopVp.width,
+      desktop_scroll_width: desktopVp.scrollWidth,
+      desktop_visible_controls: desktopVp.visibleControls,
+      mobile_visible_controls: mobileVp.visibleControls,
+      mobile_undersized_touch_targets: mobileVp.smallTargets,
+      anomalies,
+      anomalies_truncated: false,
+    };
   }
-  if (Number(mobileVp.small_touch_targets_count || 0) > 0) {
-    anomalies.push({
-      anomaly_index: anomalies.length,
-      kind: 'undersized_mobile_touch_target',
-      identity: null,
-      tag: 'button',
-      mobile_metric_px: Number(mobileVp.small_touch_targets_count),
-      desktop_metric_px: Number(desktopVp.small_touch_targets_count || 0),
-    });
-  }
-  const responsiveComparison = {
-    mobile_viewport_width: Number(mobileVp.width || 375),
-    mobile_scroll_width: Number(mobileVp.scroll_width || Number(mobileVp.width || 375) + Number(mobileVp.horizontal_overflow_px || 0)),
-    desktop_viewport_width: Number(desktopVp.width || 1280),
-    desktop_scroll_width: Number(desktopVp.scroll_width || Number(desktopVp.width || 1280) + Number(desktopVp.horizontal_overflow_px || 0)),
-    desktop_visible_controls: Number.isFinite(Number(desktopVp.visible_controls))
-      ? Number(desktopVp.visible_controls)
-      : null,
-    mobile_visible_controls: Number.isFinite(Number(mobileVp.visible_controls))
-      ? Number(mobileVp.visible_controls)
-      : null,
-    mobile_undersized_touch_targets: Number(mobileVp.small_touch_targets_count || 0),
-    anomalies,
-    anomalies_truncated: false,
-  };
 
   // Link graph
   const linkGraph = bundle.link_graph || {

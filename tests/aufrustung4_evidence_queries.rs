@@ -437,6 +437,8 @@ fn cookie_and_storage() -> CookieAndStorageInventory {
         indexed_db_count: 1,
         indexed_db_databases: vec!["app".to_owned()],
         indexed_db_enumerated: true,
+        cookies_enumerated: true,
+        storage_enumerated: true,
         limits: CookieStorageLimits {
             max_cookies: 64,
             cookies_truncated: false,
@@ -584,14 +586,14 @@ fn responsive() -> ResponsiveComparisonEvidence {
         desktop_scroll_width: 1280,
         desktop_visible_controls: Some(12),
         mobile_visible_controls: Some(9),
-        mobile_undersized_touch_targets: 2,
+        mobile_undersized_touch_targets: Some(2),
         anomalies: vec![ResponsiveAnomalyObs {
             anomaly_index: 0,
             kind: ResponsiveAnomalyKind::MobileHorizontalOverflow,
             identity: None,
             tag: "div".to_owned(),
             mobile_metric_px: 620,
-            desktop_metric_px: 1280,
+            desktop_metric_px: Some(1280),
         }],
         anomalies_truncated: false,
     }

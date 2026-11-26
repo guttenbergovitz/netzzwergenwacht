@@ -2387,8 +2387,8 @@ pub struct ResponsiveLayoutQueryPage<'a> {
     pub desktop_viewport_width: u32,
     /// Desktop scroll width.
     pub desktop_scroll_width: u32,
-    /// Count of undersized (`< 24x24px`) touch targets on mobile.
-    pub mobile_undersized_touch_targets: u32,
+    /// Count of undersized (`< 24x24px`) touch targets on mobile, when measured.
+    pub mobile_undersized_touch_targets: Option<u32>,
     /// Total responsive anomalies matching the filter.
     pub total_matching_anomalies: usize,
     /// Alias for `total_matching_anomalies`.
@@ -2415,7 +2415,7 @@ pub fn query_responsive_comparison<'a>(
                 mobile_scroll_width: 0,
                 desktop_viewport_width: 0,
                 desktop_scroll_width: 0,
-                mobile_undersized_touch_targets: 0,
+                mobile_undersized_touch_targets: None,
                 total_matching_anomalies: 0,
                 total_matching: 0,
                 anomalies: Vec::new(),
@@ -2432,7 +2432,7 @@ pub fn query_responsive_comparison<'a>(
             mobile_scroll_width: 0,
             desktop_viewport_width: 0,
             desktop_scroll_width: 0,
-            mobile_undersized_touch_targets: 0,
+            mobile_undersized_touch_targets: None,
             total_matching_anomalies: 0,
             total_matching: 0,
             anomalies: Vec::new(),

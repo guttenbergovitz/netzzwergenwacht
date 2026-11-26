@@ -101,6 +101,13 @@ pub struct CookieAndStorageInventory {
     /// Whether asynchronous `indexedDB.databases()` enumeration was attempted and succeeded.
     #[serde(default)]
     pub indexed_db_enumerated: bool,
+    /// Whether the CDP cookie request succeeded. A failed request must not be read
+    /// as an empty cookie inventory.
+    #[serde(default)]
+    pub cookies_enumerated: bool,
+    /// Whether `localStorage` and `sessionStorage` enumeration succeeded for every area.
+    #[serde(default)]
+    pub storage_enumerated: bool,
     /// Collection bounds and truncation flags.
     pub limits: CookieStorageLimits,
 }

@@ -1678,6 +1678,7 @@ fn build_responsive_and_links_lines(
             sanitize_line(&anom.tag, 12),
             anom.mobile_metric_px,
             anom.desktop_metric_px
+                .map_or_else(|| "unobserved".to_owned(), |value| value.to_string())
         )));
     }
     for link in links.links.iter().take(7) {

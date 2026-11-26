@@ -918,6 +918,7 @@ function findBrowser() {
 
     let sensoryBundle = null;
     let cdpCookies = [];
+    let cookiesEnumerated = false;
     let layoutMetrics = null;
     let screenshotSha256 = null;
     let swInfo = { controller_present: false, registrations: [], cache_names: [], caches_truncated: false };
@@ -931,6 +932,7 @@ function findBrowser() {
     try {
       const cookieRes = await call('Network.getCookies');
       cdpCookies = Array.isArray(cookieRes?.cookies) ? cookieRes.cookies : [];
+      cookiesEnumerated = true;
     } catch {}
     try {
       const lmRes = await call('Page.getLayoutMetrics');
@@ -1028,6 +1030,7 @@ function findBrowser() {
       mainStatusCode,
       resources,
       cookies: cdpCookies,
+      cookiesEnumerated,
       viewports,
       perfObs: domAndImages.performance || null,
       screenshotSha256,

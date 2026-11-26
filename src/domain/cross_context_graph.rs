@@ -33,8 +33,10 @@ pub struct ResponsiveAnomalyObs {
     pub tag: String,
     /// Measured metric value on mobile (`375px` viewport) in CSS pixels.
     pub mobile_metric_px: u32,
-    /// Measured metric value on desktop (`1280px` viewport) in CSS pixels.
-    pub desktop_metric_px: u32,
+    /// Measured metric value on desktop (`1280px` viewport) in CSS pixels, when the
+    /// anomaly has a meaningful desktop counterpart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub desktop_metric_px: Option<u32>,
 }
 
 /// Consolidated responsive cross-viewport comparison evidence.
@@ -56,8 +58,9 @@ pub struct ResponsiveComparisonEvidence {
     /// from the desktop viewport.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mobile_visible_controls: Option<u32>,
-    /// Count of undersized (`< 24x24px`) touch targets on mobile.
-    pub mobile_undersized_touch_targets: u32,
+    /// Count of undersized (`< 24x24px`) touch targets on mobile, when measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mobile_undersized_touch_targets: Option<u32>,
     /// Bounded list of element-level responsive anomalies (capped at 64).
     pub anomalies: Vec<ResponsiveAnomalyObs>,
     /// Whether additional anomalies were truncated.
