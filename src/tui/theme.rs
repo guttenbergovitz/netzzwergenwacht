@@ -26,6 +26,12 @@ pub enum ThemeMode {
 impl ThemeMode {
     /// Detects the initial theme mode from process environment variables (`NO_COLOR`, `TERM`).
     #[must_use]
+    pub fn detect_from_env() -> Self {
+        Self::from_env(false)
+    }
+
+    /// Detects the initial theme mode from process environment variables (`NO_COLOR`, `TERM`).
+    #[must_use]
     pub fn from_env(force_monochrome: bool) -> Self {
         if force_monochrome {
             return Self::Monochrome;
@@ -105,35 +111,64 @@ impl OperationalStatus {
 }
 
 /// Character glyph set supporting both Unicode and pure-ASCII terminals.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GlyphSet {
-    /// Whether pure-ASCII mode is active.
-    pub ascii_only: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GlyphSet {
+    /// Standard Unicode box-drawing and indicator glyphs.
+    #[default]
+    Unicode,
+    /// Pure 7-bit ASCII fallback glyphs.
+    Ascii,
 }
 
 impl GlyphSet {
-    /// Creates a glyph set.
+    /// Creates a glyph set from a boolean ASCII-only flag.
     #[must_use]
     pub const fn new(ascii_only: bool) -> Self {
-        Self { ascii_only }
+        if ascii_only {
+            Self::Ascii
+        } else {
+            Self::Unicode
+        }
+    }
+
+    /// Detects the glyph set from environment variables (`TERM=dumb`).
+    #[must_use]
+    pub fn detect_from_env() -> Self {
+        if std::env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")) {
+            Self::Ascii
+        } else {
+            Self::Unicode
+        }
+    }
+
+    /// Returns `true` when pure-ASCII mode is active.
+    #[must_use]
+    pub const fn is_ascii(self) -> bool {
+        matches!(self, Self::Ascii)
     }
 
     /// Selection cursor prefix for active table/list rows.
     #[must_use]
     pub const fn cursor(self) -> &'static str {
-        if self.ascii_only { "> " } else { "▸ " }
+        if self.is_ascii() { "> " } else { "▸ " }
     }
 
-    /// Solid bar character for horizontal charts and waterfalls.
+    /// Selection cursor prefix alias for table/list rows.
     #[must_use]
-    pub const fn bar_fill(self) -> char {
-        if self.ascii_only { '#' } else { '█' }
+    pub const fn selection_indicator(self) -> &'static str {
+        self.cursor()
+    }
+
+    /// Solid bar string for horizontal charts and waterfalls.
+    #[must_use]
+    pub const fn bar_fill(self) -> &'static str {
+        if self.is_ascii() { "#" } else { "█" }
     }
 
     /// Tree branch prefix for intermediate child nodes.
     #[must_use]
     pub const fn tree_branch(self) -> &'static str {
-        if self.ascii_only {
+        if self.is_ascii() {
             "|-- "
         } else {
             "├── "
@@ -143,7 +178,7 @@ impl GlyphSet {
     /// Tree branch prefix for final child nodes.
     #[must_use]
     pub const fn tree_last(self) -> &'static str {
-        if self.ascii_only {
+        if self.is_ascii() {
             "`-- "
         } else {
             "└── "
@@ -152,8 +187,8 @@ impl GlyphSet {
 
     /// Border set for Ratatui blocks.
     #[must_use]
-    pub const fn border_set(self) -> border::Set {
-        if self.ascii_only {
+    pub const fn border_set(self) -> border::Set<'static> {
+        if self.is_ascii() {
             border::Set {
                 top_left: "+",
                 top_right: "+",
@@ -180,9 +215,15 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Constructs a theme from explicit mode and glyph set.
+    #[must_use]
+    pub const fn new(mode: ThemeMode, glyphs: GlyphSet) -> Self {
+        Self { mode, glyphs }
+    }
+
     /// Constructs a theme from environment defaults and CLI flags.
     #[must_use]
-    pub fn new(force_monochrome: bool, ascii_only: bool) -> Self {
+    pub fn from_flags(force_monochrome: bool, ascii_only: bool) -> Self {
         Self {
             mode: ThemeMode::from_env(force_monochrome),
             glyphs: GlyphSet::new(ascii_only),
@@ -198,6 +239,12 @@ impl Theme {
         }
     }
 
+    /// Base text style alias.
+    #[must_use]
+    pub fn primary_style(self) -> Style {
+        self.primary()
+    }
+
     /// Secondary/muted label style.
     #[must_use]
     pub fn muted(self) -> Style {
@@ -206,6 +253,12 @@ impl Theme {
             ThemeMode::HighContrast => Style::default().fg(Color::Gray),
             ThemeMode::Monochrome => Style::default().add_modifier(Modifier::DIM),
         }
+    }
+
+    /// Secondary/muted label style alias.
+    #[must_use]
+    pub fn muted_style(self) -> Style {
+        self.muted()
     }
 
     /// Warm brass/amber accent style for titles and brigade identity.
@@ -220,6 +273,40 @@ impl Theme {
                 .add_modifier(Modifier::BOLD),
             ThemeMode::Monochrome => Style::default().add_modifier(Modifier::BOLD),
         }
+    }
+
+    /// Title style alias.
+    #[must_use]
+    pub fn title_style(self) -> Style {
+        self.accent()
+    }
+
+    /// Border style for focused or unfocused panels.
+    #[must_use]
+    pub fn border_style(self, focused: bool) -> Style {
+        if focused {
+            self.border_focused()
+        } else {
+            self.border_unfocused()
+        }
+    }
+
+    /// Selected row style alias.
+    #[must_use]
+    pub fn selected_style(self) -> Style {
+        self.selected_row()
+    }
+
+    /// Warning text style.
+    #[must_use]
+    pub fn warning_style(self) -> Style {
+        self.severity_style(Severity::Medium)
+    }
+
+    /// Error text style.
+    #[must_use]
+    pub fn error_style(self) -> Style {
+        self.severity_style(Severity::Critical)
     }
 
     /// Border style for the currently focused panel.

@@ -12,22 +12,17 @@ use tokio::task::JoinHandle;
 
 use crate::adapters;
 use crate::analysis::{self, AuditReport};
-use crate::budget::ExecutionBudget;
 use crate::collection;
-use crate::config::IntelligenceFileConfig;
 use crate::domain::{
-    AuditTarget, CollectorOutcome, EvidenceSnapshot, TargetPolicy, TargetUrl, ValidationError,
+    AuditTarget, CollectorOutcome, EvidenceSnapshot, ExecutionBudget, TargetError, TargetPolicy,
 };
 use crate::events::{
     CollectorId, DiagnosticEventPayload, DiagnosticEventReceiver, DiagnosticEventSink,
     DiagnosticRunMode, EventContext, RunId, diagnostic_event_channel,
 };
-use crate::intelligence::IntelligenceConfig;
-use crate::investigation::{
-    self, InvestigationBudget, InvestigationReport, LiveCollectorBackend,
-    RigInvestigationSpecialists,
-};
-use crate::patrol::{self, PatrolBudget, PatrolMemory, PatrolReport};
+use crate::intelligence::OpenAiCompatibleProvider;
+use crate::investigation::{self, InvestigationBudget, InvestigationReport, LiveDiagnosticBackend};
+use crate::patrol::{self, PatrolBudget, PatrolReport};
 use crate::persistence;
 use crate::tui::action::{AppAction, AppEffect, RunLaunchSpec};
 use crate::tui::keymap::translate_key_event;
@@ -40,6 +35,7 @@ use crate::tui::views::render;
 static RUN_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 /// Startup configuration passed from the CLI (`nzw tui` or `--tui`) into the workbench runtime.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct TuiStartupOptions {
     /// Optional initial target URL. If `Some` and no report/history path is provided, starts immediately.
@@ -68,8 +64,6 @@ pub struct TuiStartupOptions {
     pub theme_mode: Option<ThemeMode>,
     /// Force ASCII-only borders and indicators (`--ascii`).
     pub ascii_only: bool,
-    /// Optional loaded `[intelligence]` configuration section.
-    pub intelligence_file: Option<IntelligenceFileConfig>,
 }
 
 impl Default for TuiStartupOptions {
@@ -83,14 +77,13 @@ impl Default for TuiStartupOptions {
             report_path: None,
             history_path: None,
             output_path: None,
-            policy: TargetPolicy::default(),
+            policy: TargetPolicy::PublicOnly,
             budget: ExecutionBudget::default(),
             objective: String::from(
                 "Identify high-impact web quality, reliability, accessibility, and security issues",
             ),
             theme_mode: None,
             ascii_only: false,
-            intelligence_file: None,
         }
     }
 }
@@ -123,7 +116,7 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
             target: inv_report.target.as_str().to_owned(),
             mode: DiagnosticRunMode::AgenticInvestigation,
             snapshot: None,
-            audit_report: Some(inv_report.initial_report.clone()),
+            audit_report: inv_report.initial_report.clone(),
             investigation_report: Some(inv_report),
             patrol_report: None,
             history_reports: Vec::new(),
@@ -133,16 +126,11 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
     }
 
     if let Ok(patrol_report) = serde_json::from_str::<PatrolReport>(&raw) {
-        let target = patrol_report
-            .targets
-            .first()
-            .cloned()
-            .unwrap_or_else(|| String::from("https://example.org"));
-        let first_inv = patrol_report.escalated_investigations.first().cloned();
+        let target = patrol_report.target.as_str().to_owned();
+        let first_inv = patrol_report.investigation.clone();
         let first_audit = first_inv
             .as_ref()
-            .map(|inv| inv.initial_report.clone())
-            .or_else(|| patrol_report.entry_report.clone());
+            .and_then(|inv| inv.initial_report.clone());
         return Ok(DiagnosticArtefacts {
             target,
             mode: DiagnosticRunMode::AutonomousPatrol,
@@ -168,7 +156,7 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
 ///
 /// Returns an error string if the history file cannot be read or parsed.
 pub fn load_offline_history(path: &Path) -> Result<DiagnosticArtefacts, String> {
-    let reports = persistence::load_history(path)
+    let reports = persistence::load_reports(path)
         .map_err(|err| format!("failed to load history {}: {err}", path.display()))?;
     let latest = reports.last().cloned();
     let target = latest.as_ref().map_or_else(
@@ -176,7 +164,9 @@ pub fn load_offline_history(path: &Path) -> Result<DiagnosticArtefacts, String> 
         |r| r.target.as_str().to_owned(),
     );
     let regression_report = if reports.len() >= 2 {
-        Some(persistence::diff_history(&reports))
+        let prior = &reports[..reports.len() - 1];
+        let current = &reports[reports.len() - 1];
+        Some(persistence::diff_history(prior, current))
     } else {
         None
     };
@@ -194,7 +184,7 @@ pub fn load_offline_history(path: &Path) -> Result<DiagnosticArtefacts, String> 
     })
 }
 
-/// Saves the current [`AuditReport`] from [`AppState`] to the target JSON path.
+/// Saves the current [`AuditReport`] from [`AppState`] to the target JSONL/JSON path.
 ///
 /// # Errors
 ///
@@ -204,7 +194,7 @@ pub fn save_current_report(state: &AppState, path: &Path) -> Result<PathBuf, Str
         .audit_report
         .as_ref()
         .ok_or_else(|| String::from("no completed audit report available to save"))?;
-    persistence::save_report(path, report)
+    persistence::append_report(path, report)
         .map_err(|err| format!("failed to save report to {}: {err}", path.display()))?;
     Ok(path.to_path_buf())
 }
@@ -230,6 +220,7 @@ pub fn initialize_state(options: &TuiStartupOptions) -> Result<(AppState, Vec<Ap
     state.launcher.enable_browser = options.enable_browser;
     state.launcher.enable_axe = options.enable_axe;
     state.launcher.enable_lighthouse = options.enable_lighthouse;
+    state.launcher.policy = options.policy;
 
     if let Some(target) = &options.target {
         state.launcher.target_input.clone_from(target);
@@ -259,11 +250,11 @@ pub fn initialize_state(options: &TuiStartupOptions) -> Result<(AppState, Vec<Ap
     }
 
     if let Some(raw_target) = &options.target {
-        let validated = parse_target_with_policy(raw_target, &options.policy)
+        let validated = parse_target_with_policy(raw_target, options.policy)
             .map_err(|err| format!("invalid target URL '{raw_target}': {err}"))?;
         state.launcher.open = false;
-        state.lifecycle = RunLifecycleState::Starting;
-        state.target_url = validated.as_str().to_owned();
+        state.lifecycle = RunLifecycleState::Running;
+        validated.as_str().clone_into(&mut state.target_url);
         state.run_mode = options.mode;
         let spec = RunLaunchSpec {
             target: validated,
@@ -278,12 +269,8 @@ pub fn initialize_state(options: &TuiStartupOptions) -> Result<(AppState, Vec<Ap
     Ok((state, Vec::new()))
 }
 
-fn parse_target_with_policy(
-    raw: &str,
-    policy: &TargetPolicy,
-) -> Result<AuditTarget, ValidationError> {
-    let url = TargetUrl::parse_with_policy(raw, policy)?;
-    Ok(AuditTarget::from(url))
+fn parse_target_with_policy(raw: &str, policy: TargetPolicy) -> Result<AuditTarget, TargetError> {
+    AuditTarget::parse(raw, policy)
 }
 
 struct ActiveBackgroundTask {
@@ -297,6 +284,7 @@ struct ActiveBackgroundTask {
 /// # Errors
 ///
 /// Returns an `io::Error` if terminal setup, rendering, or startup report loading fails.
+#[allow(clippy::too_many_lines)]
 pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
     let (mut state, initial_effects) = initialize_state(&options)
         .map_err(|msg| io::Error::new(io::ErrorKind::InvalidInput, msg))?;
@@ -325,10 +313,9 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                     active_task = Some(spawn_background_run(
                         run_id,
                         spec,
-                        options.policy.clone(),
-                        options.budget.clone(),
+                        options.policy,
+                        options.budget,
                         options.objective.clone(),
-                        options.intelligence_file.clone(),
                     ));
                 }
                 AppEffect::CancelActiveRun => {
@@ -388,10 +375,7 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {}
                 Err(mpsc::error::TryRecvError::Disconnected) => {
-                    if matches!(
-                        state.lifecycle,
-                        RunLifecycleState::Starting | RunLifecycleState::Running
-                    ) {
+                    if matches!(state.lifecycle, RunLifecycleState::Running) {
                         let effs = reduce(
                             &mut state,
                             AppAction::RunFailed(String::from(
@@ -438,15 +422,16 @@ fn spawn_background_run(
     policy: TargetPolicy,
     budget: ExecutionBudget,
     objective: String,
-    intelligence_file: Option<IntelligenceFileConfig>,
 ) -> ActiveBackgroundTask {
     let (sink, event_rx) = diagnostic_event_channel(run_id);
     let (result_tx, result_rx) = mpsc::channel(1);
 
     let handle = tokio::spawn(async move {
-        let outcome =
-            execute_diagnostic_run(spec, policy, budget, objective, intelligence_file, sink).await;
-        let _ = result_tx.send(outcome).await;
+        let outcome = Box::pin(execute_diagnostic_run(
+            spec, policy, budget, objective, sink,
+        ))
+        .await;
+        let _ = Box::pin(result_tx.send(outcome)).await;
     });
 
     ActiveBackgroundTask {
@@ -461,21 +446,21 @@ fn spawn_background_run(
 /// # Errors
 ///
 /// Returns an error string if target resolution or mandatory execution steps fail.
+#[allow(clippy::too_many_lines)]
 pub async fn execute_diagnostic_run(
     spec: RunLaunchSpec,
     policy: TargetPolicy,
     budget: ExecutionBudget,
     objective: String,
-    intelligence_file: Option<IntelligenceFileConfig>,
     sink: DiagnosticEventSink,
 ) -> Result<DiagnosticArtefacts, String> {
     let start = Instant::now();
     let target_str = spec.target.as_str().to_owned();
-    let target_url = TargetUrl::parse_with_policy(&target_str, &policy)
+    let target = AuditTarget::parse(&target_str, policy)
         .map_err(|err| format!("target blocked by policy: {err}"))?;
 
-    sink.emit_critical(
-        EventContext::for_target(&target_str),
+    sink.emit(
+        EventContext::new().with_target(&target_str),
         DiagnosticEventPayload::RunStarted {
             mode: spec.mode,
             target: target_str.clone(),
@@ -485,15 +470,21 @@ pub async fn execute_diagnostic_run(
     match spec.mode {
         DiagnosticRunMode::DeterministicCheck | DiagnosticRunMode::OfflineExploration => {
             let snapshot =
-                collect_snapshot_with_events(&target_url, &spec, &budget, &policy, &sink).await;
+                collect_snapshot_with_events(&target, &spec, &budget, policy, &sink).await;
 
-            let report = analysis::run_all_with_events(&snapshot, Some(&sink));
+            let report = analysis::run_all_with_events(&snapshot, &sink);
             let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-            sink.emit_critical(
-                EventContext::for_target(&target_str),
+            let total_findings = report.summary.critical_findings
+                + report.summary.high_findings
+                + report.summary.medium_findings
+                + report.summary.low_findings
+                + report.summary.info_findings;
+            sink.emit(
+                EventContext::new().with_target(&target_str),
                 DiagnosticEventPayload::RunCompleted {
-                    total_findings: report.summary.total_findings,
-                    elapsed_ms,
+                    summary: format!(
+                        "Completed deterministic check with {total_findings} findings in {elapsed_ms} ms"
+                    ),
                 },
             );
 
@@ -510,22 +501,18 @@ pub async fn execute_diagnostic_run(
             })
         }
         DiagnosticRunMode::AgenticInvestigation => {
-            let intel_config =
-                IntelligenceConfig::from_env_and_file(None, intelligence_file.as_ref());
-            if let Some(config) = intel_config {
-                let specialists = RigInvestigationSpecialists::new(config);
-                let backend = Arc::new(LiveCollectorBackend::with_policy(policy.clone()));
+            if let Ok(llm) = OpenAiCompatibleProvider::from_env() {
+                let backend = Arc::new(LiveDiagnosticBackend);
                 let inv_budget = InvestigationBudget::default();
                 let inv_report = investigation::run_investigation_with_events(
-                    &target_url,
-                    &objective,
-                    &budget,
-                    &policy,
-                    &inv_budget,
-                    &specialists,
+                    target,
+                    objective,
+                    policy,
+                    inv_budget,
                     backend,
-                    None,
-                    Some(&sink),
+                    &llm,
+                    Vec::new(),
+                    &sink,
                 )
                 .await;
 
@@ -534,7 +521,7 @@ pub async fn execute_diagnostic_run(
                     target: target_str,
                     mode: DiagnosticRunMode::AgenticInvestigation,
                     snapshot: None,
-                    audit_report: Some(inv_report.initial_report.clone()),
+                    audit_report: inv_report.initial_report.clone(),
                     investigation_report: Some(inv_report),
                     patrol_report: None,
                     history_reports: Vec::new(),
@@ -542,8 +529,8 @@ pub async fn execute_diagnostic_run(
                     elapsed_ms,
                 })
             } else {
-                sink.emit_critical(
-                    EventContext::for_target(&target_str),
+                sink.emit(
+                    EventContext::new().with_target(&target_str),
                     DiagnosticEventPayload::Warning {
                         message: String::from(
                             "No LLM provider configured; falling back to deterministic brigade audit.",
@@ -551,17 +538,15 @@ pub async fn execute_diagnostic_run(
                     },
                 );
                 let snapshot =
-                    collect_snapshot_with_events(&target_url, &spec, &budget, &policy, &sink).await;
-                let report = analysis::run_all_with_events(&snapshot, Some(&sink));
+                    collect_snapshot_with_events(&target, &spec, &budget, policy, &sink).await;
+                let report = analysis::run_all_with_events(&snapshot, &sink);
                 let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-                sink.emit_critical(
-                    EventContext::for_target(&target_str),
+                sink.emit(
+                    EventContext::new().with_target(&target_str),
                     DiagnosticEventPayload::RunPartiallyCompleted {
                         reason: String::from(
                             "Agent provider unavailable; deterministic diagnostics completed",
                         ),
-                        total_findings: report.summary.total_findings,
-                        elapsed_ms,
                     },
                 );
                 Ok(DiagnosticArtefacts {
@@ -578,8 +563,10 @@ pub async fn execute_diagnostic_run(
             }
         }
         DiagnosticRunMode::AutonomousPatrol => {
-            sink.emit_critical(
-                EventContext::for_target(&target_str).with_collector(CollectorId::Http),
+            sink.emit(
+                EventContext::new()
+                    .with_target(&target_str)
+                    .with_collector(CollectorId::Http),
                 DiagnosticEventPayload::CollectionStarted {
                     collector: CollectorId::Http,
                 },
@@ -588,40 +575,54 @@ pub async fn execute_diagnostic_run(
                 enable_level2: spec.enable_browser,
                 ..PatrolBudget::default()
             };
-            let mut memory = PatrolMemory::default();
-            let patrol_report = patrol::run_patrol(
-                &[target_url.clone()],
-                &budget,
-                &policy,
-                &patrol_budget,
-                &mut memory,
+            let backend: Arc<dyn investigation::DiagnosticBackend> =
+                Arc::new(LiveDiagnosticBackend);
+            let patrol_report = Box::pin(patrol::run_patrol_with_router(
+                target,
+                policy,
+                budget,
+                patrol_budget,
                 None,
                 None,
-            )
+                backend,
+            ))
             .await;
 
-            for page in &patrol_report.application_map.pages {
-                sink.emit_critical(
-                    EventContext::for_target(&target_str).with_page(page.url.clone()),
+            for url in &patrol_report.application_map.discovered_urls {
+                sink.emit(
+                    EventContext::new()
+                        .with_target(&target_str)
+                        .with_page(url.as_str()),
                     DiagnosticEventPayload::TargetDiscovered {
-                        url: page.url.clone(),
-                        source: format!("{:?}", page.discovery_source),
-                        depth: page.depth,
+                        url: url.clone(),
+                        source: String::from("patrol"),
+                        depth: 0,
+                        status: String::from("completed"),
                     },
                 );
             }
 
             let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-            let first_audit = patrol_report.entry_report.clone();
+            let first_inv = patrol_report.investigation.clone();
+            let first_audit = first_inv
+                .as_ref()
+                .and_then(|inv| inv.initial_report.clone());
             let total_findings = first_audit
                 .as_ref()
-                .map_or(patrol_report.anomalies.len(), |r| r.summary.total_findings);
+                .map_or(patrol_report.anomalies.len(), |r| {
+                    r.summary.critical_findings
+                        + r.summary.high_findings
+                        + r.summary.medium_findings
+                        + r.summary.low_findings
+                        + r.summary.info_findings
+                });
 
-            sink.emit_critical(
-                EventContext::for_target(&target_str),
+            sink.emit(
+                EventContext::new().with_target(&target_str),
                 DiagnosticEventPayload::RunCompleted {
-                    total_findings,
-                    elapsed_ms,
+                    summary: format!(
+                        "Completed autonomous patrol with {total_findings} findings in {elapsed_ms} ms"
+                    ),
                 },
             );
 
@@ -630,7 +631,7 @@ pub async fn execute_diagnostic_run(
                 mode: DiagnosticRunMode::AutonomousPatrol,
                 snapshot: None,
                 audit_report: first_audit,
-                investigation_report: patrol_report.escalated_investigations.first().cloned(),
+                investigation_report: first_inv,
                 patrol_report: Some(patrol_report),
                 history_reports: Vec::new(),
                 regression_report: None,
@@ -641,118 +642,83 @@ pub async fn execute_diagnostic_run(
 }
 
 async fn collect_snapshot_with_events(
-    target_url: &TargetUrl,
+    target: &AuditTarget,
     spec: &RunLaunchSpec,
     budget: &ExecutionBudget,
-    policy: &TargetPolicy,
+    policy: TargetPolicy,
     sink: &DiagnosticEventSink,
 ) -> EvidenceSnapshot {
-    let target_str = target_url.as_str();
+    let target_str = target.as_str();
 
-    sink.emit_critical(
-        EventContext::for_target(target_str).with_collector(CollectorId::Http),
+    sink.emit(
+        EventContext::new()
+            .with_target(target_str)
+            .with_collector(CollectorId::Http),
         DiagnosticEventPayload::CollectionStarted {
             collector: CollectorId::Http,
         },
     );
-    let http = collection::collect_http(target_url, budget, policy).await;
-    emit_collector_outcome(sink, target_str, CollectorId::Http, &http);
-
-    let tls = if target_url.scheme() == "https" {
-        sink.emit_critical(
-            EventContext::for_target(target_str).with_collector(CollectorId::Tls),
+    if target.as_str().starts_with("https://") {
+        sink.emit(
+            EventContext::new()
+                .with_target(target_str)
+                .with_collector(CollectorId::Tls),
             DiagnosticEventPayload::CollectionStarted {
                 collector: CollectorId::Tls,
             },
         );
-        let outcome = collection::collect_tls(target_url, budget, policy).await;
-        emit_collector_outcome(sink, target_str, CollectorId::Tls, &outcome);
-        outcome
-    } else {
-        let reason = String::from("target uses http scheme");
-        sink.emit_critical(
-            EventContext::for_target(target_str).with_collector(CollectorId::Tls),
-            DiagnosticEventPayload::CollectionSkipped {
-                collector: CollectorId::Tls,
-                reason: reason.clone(),
-            },
-        );
-        CollectorOutcome::Skipped { reason }
-    };
+    }
 
-    let browser = if spec.enable_browser {
-        sink.emit_critical(
-            EventContext::for_target(target_str).with_collector(CollectorId::Browser),
+    let mut snapshot = collection::collect_http(target, budget, policy).await;
+    emit_collector_outcome(sink, target_str, CollectorId::Http, &snapshot.http);
+    emit_collector_outcome(sink, target_str, CollectorId::Tls, &snapshot.tls);
+
+    if spec.enable_browser {
+        sink.emit(
+            EventContext::new()
+                .with_target(target_str)
+                .with_collector(CollectorId::Browser),
             DiagnosticEventPayload::CollectionStarted {
                 collector: CollectorId::Browser,
             },
         );
-        let outcome = adapters::browser::collect_browser_with_policy(
-            target_url,
-            budget.browser_timeout,
-            policy,
-        )
-        .await;
+        let outcome =
+            adapters::browser::run_browser_with_policy(target, budget.audit_timeout, policy).await;
         emit_collector_outcome(sink, target_str, CollectorId::Browser, &outcome);
-        outcome
-    } else {
-        CollectorOutcome::Skipped {
-            reason: String::from("not collected"),
-        }
-    };
+        snapshot.browser = outcome;
+    }
 
-    let lighthouse = if spec.enable_lighthouse {
-        sink.emit_critical(
-            EventContext::for_target(target_str).with_collector(CollectorId::Lighthouse),
+    if spec.enable_lighthouse {
+        sink.emit(
+            EventContext::new()
+                .with_target(target_str)
+                .with_collector(CollectorId::Lighthouse),
             DiagnosticEventPayload::CollectionStarted {
                 collector: CollectorId::Lighthouse,
             },
         );
-        let outcome = adapters::lighthouse::collect_lighthouse_with_policy(
-            target_url,
-            budget.browser_timeout,
-            policy,
-        )
-        .await;
+        let outcome =
+            adapters::lighthouse::run_lighthouse_with_policy(target, budget.audit_timeout, policy)
+                .await;
         emit_collector_outcome(sink, target_str, CollectorId::Lighthouse, &outcome);
-        outcome
-    } else {
-        CollectorOutcome::Skipped {
-            reason: String::from("not collected"),
-        }
-    };
+        snapshot.lighthouse = outcome;
+    }
 
-    let axe = if spec.enable_axe {
-        sink.emit_critical(
-            EventContext::for_target(target_str).with_collector(CollectorId::Axe),
+    if spec.enable_axe {
+        sink.emit(
+            EventContext::new()
+                .with_target(target_str)
+                .with_collector(CollectorId::Axe),
             DiagnosticEventPayload::CollectionStarted {
                 collector: CollectorId::Axe,
             },
         );
-        let outcome =
-            adapters::axe::collect_axe_with_policy(target_url, budget.browser_timeout, policy)
-                .await;
+        let outcome = adapters::axe::run_axe(target, budget.audit_timeout).await;
         emit_collector_outcome(sink, target_str, CollectorId::Axe, &outcome);
-        outcome
-    } else {
-        CollectorOutcome::Skipped {
-            reason: String::from("not collected"),
-        }
-    };
-
-    let captured_at_unix_secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-
-    EvidenceSnapshot {
-        target: target_url.clone(),
-        captured_at_unix_secs,
-        http,
-        tls,
-        browser,
-        lighthouse,
-        axe,
+        snapshot.axe = outcome;
     }
+
+    snapshot
 }
 
 fn emit_collector_outcome<T>(
@@ -761,10 +727,12 @@ fn emit_collector_outcome<T>(
     collector: CollectorId,
     outcome: &CollectorOutcome<T>,
 ) {
-    let ctx = EventContext::for_target(target_str).with_collector(collector);
+    let ctx = EventContext::new()
+        .with_target(target_str)
+        .with_collector(collector);
     match outcome {
-        CollectorOutcome::Captured(_) => {
-            sink.emit_critical(
+        CollectorOutcome::Captured { .. } => {
+            sink.emit(
                 ctx,
                 DiagnosticEventPayload::CollectionCompleted {
                     collector,
@@ -774,7 +742,7 @@ fn emit_collector_outcome<T>(
             );
         }
         CollectorOutcome::Partial { warnings, .. } => {
-            sink.emit_critical(
+            sink.emit(
                 ctx,
                 DiagnosticEventPayload::CollectionCompleted {
                     collector,
@@ -784,7 +752,7 @@ fn emit_collector_outcome<T>(
             );
         }
         CollectorOutcome::Failed { error } => {
-            sink.emit_critical(
+            sink.emit(
                 ctx,
                 DiagnosticEventPayload::CollectionFailed {
                     collector,
@@ -792,8 +760,8 @@ fn emit_collector_outcome<T>(
                 },
             );
         }
-        CollectorOutcome::Skipped { reason } | CollectorOutcome::Unavailable { reason } => {
-            sink.emit_critical(
+        CollectorOutcome::Skipped { reason } => {
+            sink.emit(
                 ctx,
                 DiagnosticEventPayload::CollectionSkipped {
                     collector,

@@ -13,7 +13,7 @@ use crate::brigade::{DwarfId, DwarfRole, ZWERGENBRIGADE};
 use crate::discovery::{DiscoveredPage, PageCrawlStatus};
 use crate::domain::{
     CollectorOutcome, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot, EvidenceSource,
-    Finding, Measurement, Severity,
+    Finding, Severity, TargetPolicy,
 };
 use crate::events::{CollectorId, DiagnosticRunMode};
 use crate::investigation::{DiagnosticHypothesis, HypothesisStatus, InvestigationReport};
@@ -132,16 +132,34 @@ impl WorkbenchView {
 pub enum EvidenceCategory {
     /// Level 1 HTTP response metadata, redirect chain, headers, and source excerpt.
     Http,
-    /// Level 1 TLS certificate subject, issuer, SANs, and validity period.
+    /// Level 1 TLS certificate subject, issuer, SANs, algorithms, and validity period.
     Tls,
     /// Rendered DOM block segmentation (via `query_rendered_content`, omitting raw `visible_text`).
     RenderedContent,
+    /// Source HTML vs rendered DOM content comparison (via `compare_source_and_rendered`).
+    SourceRenderedDiff,
     /// Subresource inventory and transfer waterfall (via `query_network_resources`).
     NetworkResources,
     /// Chronological network and runtime event timeline (via `query_browser_timeline`).
     BrowserTimeline,
+    /// Multi-hop request chains and failed dependencies (via `query_request_chains` & `query_failed_dependencies`).
+    RequestChainsAndFailures,
     /// Console and uncaught runtime errors (via `query_runtime_errors`).
     RuntimeErrors,
+    /// Wave IV-B interactive elements, application state, and interaction trace.
+    InteractiveAndState,
+    /// Wave IV-C visual geometry, overflow/occlusion, and AX node inventory.
+    VisualGeometryAndAx,
+    /// Wave IV-D security header posture, challenge detection, cookies/storage, and third-party origins.
+    SecurityAndPrivacy,
+    /// Wave IV-E LCP/CLS/render-blocking attribution and media/font efficiency.
+    PerformanceAndMedia,
+    /// Wave IV-F SEO indexability authority and JSON-LD/Microdata/social structured data.
+    SeoAndStructuredData,
+    /// Wave IV-G cross-breakpoint responsive anomalies and rendered link graph.
+    ResponsiveAndLinks,
+    /// Wave IV-H visual landmark signatures, Service Worker lifecycle, and TLS/CAA diagnostics.
+    VisualSwAndTlsCaa,
     /// Core Web Vitals, Navigation Timing, CPU profile, and JS/CSS coverage.
     Performance,
     /// Accessibility tree (`AxTreeSnapshot`) and behavioural keyboard/focus probe.
@@ -154,13 +172,22 @@ pub enum EvidenceCategory {
 
 impl EvidenceCategory {
     /// All evidence categories in display order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 19] = [
         Self::Http,
         Self::Tls,
         Self::RenderedContent,
+        Self::SourceRenderedDiff,
         Self::NetworkResources,
         Self::BrowserTimeline,
+        Self::RequestChainsAndFailures,
         Self::RuntimeErrors,
+        Self::InteractiveAndState,
+        Self::VisualGeometryAndAx,
+        Self::SecurityAndPrivacy,
+        Self::PerformanceAndMedia,
+        Self::SeoAndStructuredData,
+        Self::ResponsiveAndLinks,
+        Self::VisualSwAndTlsCaa,
         Self::Performance,
         Self::Accessibility,
         Self::Lighthouse,
@@ -174,9 +201,18 @@ impl EvidenceCategory {
             Self::Http => "HTTP & Source",
             Self::Tls => "TLS Certificate",
             Self::RenderedContent => "Rendered Blocks",
+            Self::SourceRenderedDiff => "Source vs Rendered",
             Self::NetworkResources => "Network & Waterfall",
             Self::BrowserTimeline => "Browser Timeline",
+            Self::RequestChainsAndFailures => "Chains & Failures",
             Self::RuntimeErrors => "Runtime Errors",
+            Self::InteractiveAndState => "Interactive & State",
+            Self::VisualGeometryAndAx => "Geometry & AX Nodes",
+            Self::SecurityAndPrivacy => "Security & Privacy",
+            Self::PerformanceAndMedia => "Perf Attribution & Media",
+            Self::SeoAndStructuredData => "SEO & Structured Data",
+            Self::ResponsiveAndLinks => "Responsive & Links",
+            Self::VisualSwAndTlsCaa => "Visual, SW & TLS/CAA",
             Self::Performance => "Performance & CPU",
             Self::Accessibility => "Accessibility Tree",
             Self::Lighthouse => "Lighthouse",
@@ -190,10 +226,19 @@ impl EvidenceCategory {
         match self {
             Self::Http => Self::Tls,
             Self::Tls => Self::RenderedContent,
-            Self::RenderedContent => Self::NetworkResources,
+            Self::RenderedContent => Self::SourceRenderedDiff,
+            Self::SourceRenderedDiff => Self::NetworkResources,
             Self::NetworkResources => Self::BrowserTimeline,
-            Self::BrowserTimeline => Self::RuntimeErrors,
-            Self::RuntimeErrors => Self::Performance,
+            Self::BrowserTimeline => Self::RequestChainsAndFailures,
+            Self::RequestChainsAndFailures => Self::RuntimeErrors,
+            Self::RuntimeErrors => Self::InteractiveAndState,
+            Self::InteractiveAndState => Self::VisualGeometryAndAx,
+            Self::VisualGeometryAndAx => Self::SecurityAndPrivacy,
+            Self::SecurityAndPrivacy => Self::PerformanceAndMedia,
+            Self::PerformanceAndMedia => Self::SeoAndStructuredData,
+            Self::SeoAndStructuredData => Self::ResponsiveAndLinks,
+            Self::ResponsiveAndLinks => Self::VisualSwAndTlsCaa,
+            Self::VisualSwAndTlsCaa => Self::Performance,
             Self::Performance => Self::Accessibility,
             Self::Accessibility => Self::Lighthouse,
             Self::Lighthouse => Self::Axe,
@@ -208,10 +253,19 @@ impl EvidenceCategory {
             Self::Http => Self::Axe,
             Self::Tls => Self::Http,
             Self::RenderedContent => Self::Tls,
-            Self::NetworkResources => Self::RenderedContent,
+            Self::SourceRenderedDiff => Self::RenderedContent,
+            Self::NetworkResources => Self::SourceRenderedDiff,
             Self::BrowserTimeline => Self::NetworkResources,
-            Self::RuntimeErrors => Self::BrowserTimeline,
-            Self::Performance => Self::RuntimeErrors,
+            Self::RequestChainsAndFailures => Self::BrowserTimeline,
+            Self::RuntimeErrors => Self::RequestChainsAndFailures,
+            Self::InteractiveAndState => Self::RuntimeErrors,
+            Self::VisualGeometryAndAx => Self::InteractiveAndState,
+            Self::SecurityAndPrivacy => Self::VisualGeometryAndAx,
+            Self::PerformanceAndMedia => Self::SecurityAndPrivacy,
+            Self::SeoAndStructuredData => Self::PerformanceAndMedia,
+            Self::ResponsiveAndLinks => Self::SeoAndStructuredData,
+            Self::VisualSwAndTlsCaa => Self::ResponsiveAndLinks,
+            Self::Performance => Self::VisualSwAndTlsCaa,
             Self::Accessibility => Self::Performance,
             Self::Lighthouse => Self::Accessibility,
             Self::Axe => Self::Lighthouse,
@@ -301,6 +355,7 @@ impl LauncherField {
 }
 
 /// Runtime availability of external diagnostic instruments and AI providers.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstrumentAvailability {
     /// Whether a headless Chromium binary was detected.
@@ -354,7 +409,7 @@ impl InstrumentAvailability {
             "OPENROUTER_API_KEY",
         ]
         .iter()
-        .any(|k| std::env::var(k).ok().is_some_and(|v| !v.trim().is_empty()));
+        .any(|k| std::env::var(k).is_ok_and(|v| !v.trim().is_empty()));
 
         let llm_detail = if llm_key_present {
             "API key configured".to_owned()
@@ -387,6 +442,7 @@ fn which_in_path(candidates: &[&str]) -> Option<String> {
 }
 
 /// Launcher dialog state.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherState {
     /// Whether the Launcher modal is currently visible.
@@ -403,6 +459,8 @@ pub struct LauncherState {
     pub enable_axe: bool,
     /// Enable Level 2 Lighthouse collection.
     pub enable_lighthouse: bool,
+    /// Target validation policy (e.g. `PublicOnly` vs `AllowPrivate`).
+    pub policy: TargetPolicy,
     /// Validation error message displayed inside the Launcher if URL parsing fails.
     pub error_message: Option<String>,
 }
@@ -417,6 +475,7 @@ impl Default for LauncherState {
             enable_browser: false,
             enable_axe: false,
             enable_lighthouse: false,
+            policy: TargetPolicy::PublicOnly,
             error_message: None,
         }
     }
@@ -684,22 +743,22 @@ impl From<&DiagnosticHypothesis> for HypothesisRow {
             id: sanitize_line(&h.id, 32),
             originating_rule: sanitize_line(&h.originating_rule.0, 96),
             originating_rule_verified: h.originating_rule_verified,
-            proposed_explanation: sanitize_multiline(&h.proposed_explanation, 4, 240),
+            proposed_explanation: sanitize_multiline(&h.proposed_explanation, 240),
             requested_tool: sanitize_line(&h.requested_tool, 64),
             status: h.status,
             evaluation_summary: h
                 .evaluation_summary
                 .as_deref()
-                .map(|s| sanitize_multiline(s, 4, 240)),
+                .map(|s| sanitize_multiline(s, 240)),
             supporting_evidence: h
                 .supporting_evidence
                 .iter()
-                .map(|r| sanitize_line(&format!("{:?}: {}", r.source, r.locator), 120))
+                .map(|r| sanitize_line(&format!("{:?}: {}", r.source, r.detail), 120))
                 .collect(),
             contradictory_evidence: h
                 .contradictory_evidence
                 .iter()
-                .map(|r| sanitize_line(&format!("{:?}: {}", r.source, r.locator), 120))
+                .map(|r| sanitize_line(&format!("{:?}: {}", r.source, r.detail), 120))
                 .collect(),
             missing_evidence: h
                 .missing_evidence
@@ -1113,7 +1172,7 @@ impl AppState {
                     (
                         s.dwarf_id,
                         sanitize_line(&s.focus, 96),
-                        sanitize_multiline(&s.observations.join("; "), 3, 220),
+                        sanitize_multiline(&s.observations.join("; "), 220),
                     )
                 })
                 .collect();
@@ -1132,7 +1191,7 @@ impl AppState {
                     summary: sanitize_line(&t.summary, 120),
                 })
                 .collect();
-            self.investigation_conclusion = Some(sanitize_multiline(&inv.conclusion, 6, 360));
+            self.investigation_conclusion = Some(sanitize_multiline(&inv.conclusion, 360));
             self.system_metrics.llm_turns_used = inv.ledger.llm_turns_used;
             self.system_metrics.max_llm_turns = inv.ledger.budget.max_llm_turns;
             self.system_metrics.tool_calls_used = inv.ledger.tool_calls_used;
@@ -1145,8 +1204,8 @@ impl AppState {
 
         if let Some(ref patrol) = artefacts.patrol_report {
             self.system_metrics.http_requests = patrol.resource_ledger.http_requests;
-            self.system_metrics.browser_sessions = patrol.resource_ledger.level2_runs;
-            self.system_metrics.llm_turns_used = patrol.resource_ledger.ai_calls;
+            self.system_metrics.browser_sessions = patrol.resource_ledger.browser_sessions;
+            self.system_metrics.llm_turns_used = patrol.resource_ledger.llm_requests;
             self.populate_targets_from_patrol(patrol);
             if self.regression.is_none() {
                 self.regression.clone_from(&patrol.regression);
@@ -1215,13 +1274,13 @@ impl AppState {
         ];
         if matches!(
             snapshot.http,
-            CollectorOutcome::Collected(_) | CollectorOutcome::Partial { .. }
+            CollectorOutcome::Captured { .. } | CollectorOutcome::Partial { .. }
         ) {
             self.system_metrics.http_requests = self.system_metrics.http_requests.max(1);
         }
         if matches!(
             snapshot.browser,
-            CollectorOutcome::Collected(_) | CollectorOutcome::Partial { .. }
+            CollectorOutcome::Captured { .. } | CollectorOutcome::Partial { .. }
         ) {
             self.system_metrics.browser_sessions = self.system_metrics.browser_sessions.max(1);
         }
@@ -1233,7 +1292,7 @@ impl AppState {
 
         // Update Brigade rows from analyser results.
         for row in &mut self.brigade_rows {
-            if let Some(analyser) = report.analysers.iter().find(|a| a.dwarf == row.dwarf_id) {
+            if let Some(analyser) = report.analysers.iter().find(|a| a.dwarf_id == row.dwarf_id) {
                 let mut passed = 0usize;
                 let mut failed = 0usize;
                 let mut skipped = 0usize;
@@ -1276,7 +1335,7 @@ impl AppState {
                 let idx = all_findings.len();
                 all_findings.push(finding_to_row(
                     idx,
-                    analyser.dwarf,
+                    analyser.dwarf_id,
                     &display_target,
                     finding,
                 ));
@@ -1288,13 +1347,14 @@ impl AppState {
         // Populate seed target row if no multi-page crawl was loaded.
         if self.target_rows.is_empty() {
             let (http_status, state) = match &report.http {
-                Measurement::Measured { value } => {
-                    (Some(value.status_code), TargetInspectionState::Completed)
+                CollectorOutcome::Captured { data } => {
+                    (Some(data.status_code), TargetInspectionState::Completed)
                 }
-                Measurement::Failed { .. } => (None, TargetInspectionState::Failed),
-                Measurement::Skipped { .. } | Measurement::Unavailable { .. } => {
-                    (None, TargetInspectionState::Partial)
+                CollectorOutcome::Partial { data, .. } => {
+                    (Some(data.status_code), TargetInspectionState::Partial)
                 }
+                CollectorOutcome::Failed { .. } => (None, TargetInspectionState::Failed),
+                CollectorOutcome::Skipped { .. } => (None, TargetInspectionState::Partial),
             };
             let has_rendered = report.rendered_history.is_some();
             self.target_rows.push(TargetSurfaceRow {
@@ -1345,7 +1405,7 @@ impl AppState {
 
     fn populate_targets_from_patrol(&mut self, patrol: &PatrolReport) {
         let mut rows = Vec::new();
-        for selected in &patrol.sampling_plan.selected {
+        for selected in &patrol.sampling_plan.selections {
             rows.push(TargetSurfaceRow {
                 display_url: sanitize_url_for_display(selected.url.as_str(), 100),
                 discovery_source: format!("{:?}", selected.reason),
@@ -1369,18 +1429,6 @@ impl AppState {
                 findings_count: 0,
             });
         }
-        for deferred in &patrol.sampling_plan.deferred_urls {
-            rows.push(TargetSurfaceRow {
-                display_url: sanitize_url_for_display(deferred.as_str(), 100),
-                discovery_source: String::from("discovery"),
-                depth: 1,
-                page_type: String::from("Deferred"),
-                http_status: None,
-                state: TargetInspectionState::SkippedBudget,
-                evidence_summary: String::from("Not sampled (budget)"),
-                findings_count: 0,
-            });
-        }
         if !rows.is_empty() {
             self.target_rows = rows;
             self.selected_target_index = 0;
@@ -1398,7 +1446,9 @@ impl AppState {
             directly_observed: true,
         });
 
-        if let Some(http) = snapshot.http.evidence() {
+        if let CollectorOutcome::Captured { data: http }
+        | CollectorOutcome::Partial { data: http, .. } = &snapshot.http
+        {
             for hop in &http.redirect_chain {
                 rows.push(TopologyNodeRow {
                     depth: 1,
@@ -1421,7 +1471,9 @@ impl AppState {
             });
         }
 
-        if let Some(browser) = snapshot.browser.evidence() {
+        if let CollectorOutcome::Captured { data: browser }
+        | CollectorOutcome::Partial { data: browser, .. } = &snapshot.browser
+        {
             for res in browser.resources.iter().take(48) {
                 let status_str = res
                     .status_code
@@ -1449,12 +1501,18 @@ impl AppState {
             detail: String::from("Saved AuditReport"),
             directly_observed: true,
         });
-        if let Measurement::Measured { value } = &report.http {
+        if let CollectorOutcome::Captured { data: value }
+        | CollectorOutcome::Partial { data: value, .. } = &report.http
+        {
             rows.push(TopologyNodeRow {
                 depth: 1,
                 relation_kind: "FINAL",
                 label: sanitize_url_for_display(&value.final_url, 100),
-                detail: format!("HTTP {} ({} redirects)", value.status_code, value.redirects),
+                detail: format!(
+                    "HTTP {} ({} redirects)",
+                    value.status_code,
+                    value.redirect_chain.len()
+                ),
                 directly_observed: true,
             });
         }
@@ -1486,10 +1544,12 @@ impl AppState {
                         .count();
                 }
                 let http_status = match &r.http {
-                    Measurement::Measured { value } => format!("HTTP {}", value.status_code),
-                    Measurement::Failed { .. } => String::from("FAILED"),
-                    Measurement::Skipped { .. } => String::from("SKIPPED"),
-                    Measurement::Unavailable { .. } => String::from("UNAVAILABLE"),
+                    CollectorOutcome::Captured { data: value }
+                    | CollectorOutcome::Partial { data: value, .. } => {
+                        format!("HTTP {}", value.status_code)
+                    }
+                    CollectorOutcome::Failed { .. } => String::from("FAILED"),
+                    CollectorOutcome::Skipped { .. } => String::from("SKIPPED"),
                 };
                 HistoryEntryRow {
                     index,
@@ -1536,23 +1596,21 @@ impl AppState {
 
 fn outcome_status<T>(outcome: &CollectorOutcome<T>) -> OperationalStatus {
     match outcome {
-        CollectorOutcome::Collected(_) => OperationalStatus::Done,
+        CollectorOutcome::Captured { .. } => OperationalStatus::Done,
         CollectorOutcome::Partial { .. } => OperationalStatus::Partial,
         CollectorOutcome::Failed { .. } => OperationalStatus::Failed,
         CollectorOutcome::Skipped { .. } => OperationalStatus::Skipped,
-        CollectorOutcome::Unavailable { .. } => OperationalStatus::Unknown,
     }
 }
 
 fn outcome_summary<T>(outcome: &CollectorOutcome<T>) -> String {
     match outcome {
-        CollectorOutcome::Collected(_) => String::from("Captured"),
+        CollectorOutcome::Captured { .. } => String::from("Captured"),
         CollectorOutcome::Partial { warnings, .. } => {
             format!("Partial ({} warning(s))", warnings.len())
         }
         CollectorOutcome::Failed { error } => sanitize_line(error, 72),
         CollectorOutcome::Skipped { reason } => sanitize_line(reason, 72),
-        CollectorOutcome::Unavailable { reason } => sanitize_line(reason, 72),
     }
 }
 
@@ -1562,42 +1620,81 @@ fn finding_to_row(
     target_url: &str,
     finding: &Finding,
 ) -> FindingRow {
-    let primary_evidence_category = finding
-        .evidence
-        .first()
-        .map_or(EvidenceCategory::Http, |e| match e.source {
-            EvidenceSource::HttpResponse | EvidenceSource::HtmlDocument => EvidenceCategory::Http,
-            EvidenceSource::TlsHandshake => EvidenceCategory::Tls,
-            EvidenceSource::BrowserRuntime => {
-                if e.locator.starts_with("rendered-block") {
-                    EvidenceCategory::RenderedContent
-                } else if e.locator.starts_with("timeline-event") {
-                    EvidenceCategory::BrowserTimeline
-                } else if e.locator.contains("console") || e.locator.contains("runtime") {
-                    EvidenceCategory::RuntimeErrors
-                } else if e.locator.contains("ax") || e.locator.contains("focus") {
-                    EvidenceCategory::Accessibility
-                } else if e.locator.contains("lcp")
-                    || e.locator.contains("cls")
-                    || e.locator.contains("cpu")
-                {
-                    EvidenceCategory::Performance
-                } else {
-                    EvidenceCategory::NetworkResources
+    let primary_evidence_category =
+        finding
+            .evidence_refs
+            .first()
+            .map_or(EvidenceCategory::Http, |e| match e.source {
+                EvidenceSource::HttpStatus
+                | EvidenceSource::HttpFinalUrl
+                | EvidenceSource::HttpRedirectChain
+                | EvidenceSource::HttpHeaders
+                | EvidenceSource::HttpTiming
+                | EvidenceSource::HttpBody => EvidenceCategory::Http,
+                EvidenceSource::TlsCertificate => EvidenceCategory::Tls,
+                EvidenceSource::BrowserRuntime | EvidenceSource::VisualLayout => {
+                    if e.detail.starts_with("rendered-block") {
+                        EvidenceCategory::RenderedContent
+                    } else if e.detail.starts_with("source-vs-rendered") {
+                        EvidenceCategory::SourceRenderedDiff
+                    } else if e.detail.starts_with("timeline-event") {
+                        EvidenceCategory::BrowserTimeline
+                    } else if e.detail.starts_with("interactive-element")
+                        || e.detail.starts_with("application-state")
+                        || e.detail.starts_with("interaction-step")
+                    {
+                        EvidenceCategory::InteractiveAndState
+                    } else if e.detail.starts_with("geometry-element")
+                        || e.detail.starts_with("ax-node")
+                    {
+                        EvidenceCategory::VisualGeometryAndAx
+                    } else if e.detail.starts_with("cookie=")
+                        || e.detail.starts_with("third-party-origin=")
+                        || e.detail.starts_with("security-posture")
+                        || e.detail.starts_with("security-challenge")
+                    {
+                        EvidenceCategory::SecurityAndPrivacy
+                    } else if e.detail.starts_with("performance-attribution")
+                        || e.detail.starts_with("media-asset")
+                        || e.detail.starts_with("font-asset")
+                    {
+                        EvidenceCategory::PerformanceAndMedia
+                    } else if e.detail.starts_with("indexability-authority")
+                        || e.detail.starts_with("structured-entity")
+                    {
+                        EvidenceCategory::SeoAndStructuredData
+                    } else if e.detail.starts_with("responsive-anomaly")
+                        || e.detail.starts_with("link-graph")
+                    {
+                        EvidenceCategory::ResponsiveAndLinks
+                    } else if e.detail.starts_with("visual-artifacts")
+                        || e.detail.starts_with("service-worker")
+                        || e.detail.starts_with("tls-caa")
+                    {
+                        EvidenceCategory::VisualSwAndTlsCaa
+                    } else if e.detail.contains("console") || e.detail.contains("runtime") {
+                        EvidenceCategory::RuntimeErrors
+                    } else if e.detail.contains("ax") || e.detail.contains("focus") {
+                        EvidenceCategory::Accessibility
+                    } else if e.detail.contains("lcp")
+                        || e.detail.contains("cls")
+                        || e.detail.contains("cpu")
+                    {
+                        EvidenceCategory::Performance
+                    } else {
+                        EvidenceCategory::NetworkResources
+                    }
                 }
-            }
-            EvidenceSource::AxeEngine => EvidenceCategory::Axe,
-            EvidenceSource::LighthouseEngine => EvidenceCategory::Lighthouse,
-        });
+                EvidenceSource::AxeReport => EvidenceCategory::Axe,
+                EvidenceSource::LighthouseReport => EvidenceCategory::Lighthouse,
+            });
 
     let sanitized_refs = finding
-        .evidence
+        .evidence_refs
         .iter()
         .map(|ev| EvidenceRef {
             source: ev.source,
-            level: ev.level,
-            locator: sanitize_line(&ev.locator, 100),
-            excerpt: ev.excerpt.as_deref().map(|ex| sanitize_line(ex, 140)),
+            detail: sanitize_line(&ev.detail, 140),
         })
         .collect();
 
@@ -1607,11 +1704,17 @@ fn finding_to_row(
         rule_id: sanitize_line(&finding.rule_id.0, 80),
         severity: finding.severity,
         confidence: finding.confidence,
-        evidence_level: finding.evidence_level(),
+        evidence_level: finding.evidence_level,
         target_url: target_url.to_owned(),
         title: sanitize_line(&finding.title, 120),
-        description: sanitize_multiline(&finding.description, 6, 360),
-        recommendation: sanitize_multiline(&finding.recommendation, 6, 360),
+        description: sanitize_multiline(&finding.summary, 360),
+        recommendation: sanitize_multiline(
+            finding
+                .remediation
+                .as_deref()
+                .unwrap_or("No specific remediation guidance."),
+            360,
+        ),
         evidence_refs: sanitized_refs,
         primary_evidence_category,
     }

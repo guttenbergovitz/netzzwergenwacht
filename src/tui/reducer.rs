@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::brigade::DwarfId;
 use crate::domain::AuditTarget;
-use crate::events::{DiagnosticEvent, DiagnosticEventPayload, DiagnosticRunMode};
+use crate::events::{CollectorId, DiagnosticEvent, DiagnosticEventPayload, DiagnosticRunMode};
 use crate::investigation::HypothesisStatus;
 use crate::investigation::evidence_query::PAGE_SIZE;
 use crate::tui::action::{AppAction, AppEffect, RunLaunchSpec, UserAction};
@@ -365,7 +365,7 @@ fn toggle_launcher_bool(state: &mut AppState) {
 
 fn try_launch_from_launcher(state: &mut AppState) -> Vec<AppEffect> {
     let raw = state.launcher.target_input.trim();
-    match AuditTarget::parse(raw) {
+    match AuditTarget::parse(raw, state.launcher.policy) {
         Ok(target) => {
             state.launcher.open = false;
             state.launcher.error_message = None;

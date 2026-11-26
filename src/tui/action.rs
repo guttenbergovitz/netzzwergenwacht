@@ -7,7 +7,7 @@ use crate::events::{DiagnosticEvent, DiagnosticRunMode};
 use crate::tui::state::{EvidenceCategory, WorkbenchView};
 
 /// User-triggered actions translated from keyboard input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserAction {
     /// Switch to the next workbench view.
     NextView,

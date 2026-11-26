@@ -1,4 +1,4 @@
-//! Zwergenleitstand — Ratatui terminal investigation workbench for NetzZwergenWacht.
+//! Zwergenleitstand — Ratatui terminal investigation workbench for `NetzZwergenWacht`.
 //!
 //! This module implements a local-first interactive operator interface over the
 //! deterministic collection engine, Die Zwergenbrigade analysers, offline Evidence Query

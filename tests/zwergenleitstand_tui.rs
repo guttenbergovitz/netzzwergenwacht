@@ -2,14 +2,12 @@
 
 use std::time::{Duration, Instant};
 
-use netzzwergenwacht::analysis::{self, AnalyserResult, AuditReport, AuditSummary};
+use netzzwergenwacht::analysis::{AuditReport, AuditSummary};
 use netzzwergenwacht::brigade::DwarfId;
-use netzzwergenwacht::budget::ExecutionBudget;
-use netzzwergenwacht::collection;
 use netzzwergenwacht::domain::{
-    AuditTarget, BrowserEvidence, BrowserResourceMetric, CollectorOutcome, Confidence,
-    DiagnosticCategory, EvidenceRef, EvidenceSnapshot, EvidenceSource, Finding, Measurement,
-    RuleId, Severity, TargetPolicy, TargetUrl,
+    AnalyserResult, AuditTarget, BrowserEvidence, CollectorOutcome, Confidence, EvidenceLevel,
+    EvidenceRef, EvidenceSnapshot, EvidenceSource, ExecutionBudget, Finding, FindingCategory,
+    FindingFingerprint, FindingKind, ResourceTimingObs, RuleId, Severity, TargetPolicy,
 };
 use netzzwergenwacht::events::{
     CollectorId, DiagnosticEventPayload, DiagnosticRunMode, EventContext, RunId,
@@ -62,16 +60,11 @@ fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_report() {
     let target_str = spawn_fixture_http_server().await;
-    let policy = TargetPolicy {
-        allow_private_networks: true,
-        allow_http: true,
-        ..TargetPolicy::default()
-    };
-    let target_url =
-        TargetUrl::parse_with_policy(&target_str, &policy).expect("valid loopback url");
-    let audit_target = AuditTarget::from(target_url);
+    let policy = TargetPolicy::AllowPrivate;
+    let audit_target = AuditTarget::parse(&target_str, policy).expect("valid loopback url");
     let budget = ExecutionBudget::default();
 
     let mut state = AppState::new(ThemeMode::StandardDark, GlyphSet::Unicode);
@@ -91,7 +84,6 @@ async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_repor
         policy,
         budget,
         String::from("Verify vertical slice"),
-        None,
         sink,
     )
     .await
@@ -109,7 +101,7 @@ async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_repor
 
     let _ = reduce(&mut state, AppAction::RunFinished(Box::new(artefacts)));
 
-    assert_eq!(state.lifecycle, RunLifecycleState::Exploring);
+    assert_eq!(state.lifecycle, RunLifecycleState::Completed);
     assert!(
         !state.findings.is_empty(),
         "real deterministic analysers should emit findings for unhardened HTTP response"
@@ -162,7 +154,7 @@ async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_repor
     // Also verify history JSONL loading.
     let history_path = tmp_dir.join(format!("nzw-tui-history-{}.jsonl", std::process::id()));
     let saved_report = state.audit_report.as_ref().expect("saved report in state");
-    persistence::append_history(&history_path, saved_report).expect("append history jsonl");
+    persistence::append_report(&history_path, saved_report).expect("append history jsonl");
     let hist_artefacts = load_offline_history(&history_path).expect("load history jsonl");
     assert_eq!(hist_artefacts.history_reports.len(), 1);
     assert!(hist_artefacts.regression_report.is_none());
@@ -172,37 +164,36 @@ async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_repor
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn operational_performance_handles_thousand_findings_and_rapid_events_under_budget() {
-    let policy = TargetPolicy {
-        allow_private_networks: true,
-        allow_http: true,
-        ..TargetPolicy::default()
-    };
-    let target =
-        TargetUrl::parse_with_policy("http://127.0.0.1:8080/", &policy).expect("valid target");
+    let target = AuditTarget::parse("http://127.0.0.1:8080/", TargetPolicy::AllowPrivate)
+        .expect("valid target");
 
     let mut findings = Vec::with_capacity(1_000);
     for idx in 0..1_000_usize {
+        let severity = if idx % 20 == 0 {
+            Severity::Critical
+        } else if idx % 5 == 0 {
+            Severity::High
+        } else {
+            Severity::Medium
+        };
+        let rule_id = RuleId(format!("sec.header.rule_{idx:04}"));
         findings.push(Finding {
-            rule_id: RuleId::new(format!("sec.header.rule_{idx:04}"))
-                .expect("valid synthetic rule id"),
-            category: DiagnosticCategory::Security,
-            dwarf: DwarfId::SicherheitsZwerg,
-            severity: if idx % 20 == 0 {
-                Severity::Critical
-            } else if idx % 5 == 0 {
-                Severity::High
-            } else {
-                Severity::Medium
-            },
+            fingerprint: FindingFingerprint::compute(target.host(), &rule_id, "x-test"),
+            rule_id,
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity,
             confidence: Confidence::High,
             title: format!("Synthetic security finding #{idx}"),
-            description: format!("Detailed diagnostic description for finding #{idx}"),
-            remediation: "Apply strict security header policy.".to_owned(),
-            evidence: vec![EvidenceRef::new(
-                EvidenceSource::HttpHeader,
+            summary: format!("Detailed diagnostic description for finding #{idx}"),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpHeaders,
                 format!("x-test-{idx}: missing"),
             )],
+            remediation: Some("Apply strict security header policy.".to_owned()),
         });
     }
 
@@ -216,31 +207,28 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
         level2_collectors: Vec::new(),
         rendered_history: None,
         analysers: vec![AnalyserResult {
-            dwarf: DwarfId::SicherheitsZwerg,
-            category: DiagnosticCategory::Security,
-            checks_evaluated: 1_000,
-            checks_unavailable: 0,
+            dwarf_id: DwarfId::Sicherheits,
+            checks: Vec::new(),
             findings,
         }],
         summary: AuditSummary {
-            total_checks_evaluated: 1_000,
-            total_checks_unavailable: 0,
-            total_findings: 1_000,
-            critical: 50,
-            high: 150,
-            medium: 800,
-            low: 0,
-            info: 0,
+            critical_findings: 50,
+            high_findings: 150,
+            medium_findings: 800,
+            low_findings: 0,
+            info_findings: 0,
+            passed_checks: 0,
+            failed_checks: 1_000,
+            skipped_checks: 0,
+            unavailable_checks: 0,
         },
-        ai_synthesis: Measurement::Skipped {
-            reason: "not requested".to_owned(),
-        },
+        ai_synthesis: None,
     };
 
-    let resources = (0..120_u32)
-        .map(|idx| BrowserResourceMetric {
+    let resources = (0..120_u64)
+        .map(|idx| ResourceTimingObs {
             url: format!("https://example.org/assets/chunk-{idx}.js"),
-            resource_type: Some("Script".to_owned()),
+            resource_type: "script".to_owned(),
             mime_type: Some("application/javascript".to_owned()),
             status_code: Some(200),
             transfer_size: Some(16_384),
@@ -253,6 +241,9 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
             initiator_type: Some("parser".to_owned()),
             initiator_url: Some("https://example.org/".to_owned()),
             start_time_ms: Some(idx * 5),
+            endpoint_path: Some(format!("/assets/chunk-{idx}.js")),
+            cache_source: None,
+            timings: None,
         })
         .collect();
 
@@ -265,30 +256,50 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
         tls: CollectorOutcome::Skipped {
             reason: "not collected".to_owned(),
         },
-        browser: CollectorOutcome::Captured(BrowserEvidence {
-            final_url: "https://example.org/".to_owned(),
-            browser_version: Some("HeadlessChrome/131.0".to_owned()),
-            console_errors: Vec::new(),
-            failed_requests: Vec::new(),
-            timeline: None,
-            viewports: Vec::new(),
-            resources,
-            resources_truncated: false,
-            rendered_images: Vec::new(),
-            rendered_images_truncated: false,
-            rendered_dom_elements: Vec::new(),
-            hydration_errors: Vec::new(),
-            rendered_word_count: Some(500),
-            rendered_content: None,
-            ax_tree: None,
-            performance: None,
-            storage_summary: None,
-            coverage: None,
-            behavioural_a11y: None,
-            cpu_profile: None,
-            consent_banner: None,
-            provenance: None,
-        }),
+        browser: CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.org/".to_owned(),
+                browser_version: Some("HeadlessChrome/131.0".to_owned()),
+                console_errors: Vec::new(),
+                failed_requests: Vec::new(),
+                timeline: None,
+                viewports: Vec::new(),
+                resources,
+                resources_truncated: false,
+                rendered_images: Vec::new(),
+                rendered_images_truncated: false,
+                rendered_dom_elements: Some(42),
+                hydration_errors: Vec::new(),
+                rendered_word_count: Some(500),
+                rendered_content: None,
+                ax_tree: None,
+                performance: None,
+                storage_summary: None,
+                coverage: None,
+                behavioural_a11y: None,
+                cpu_profile: None,
+                consent_banner: None,
+                provenance: None,
+                interactive_inventory: None,
+                application_state: None,
+                user_journey_trace: None,
+                visual_geometry: None,
+                ax_node_inventory: None,
+                cookie_and_storage: None,
+                third_party_inventory: None,
+                security_posture: None,
+                security_challenge: None,
+                performance_attribution: None,
+                media_and_fonts: None,
+                indexability_authority: None,
+                structured_data: None,
+                responsive_comparison: None,
+                link_graph: None,
+                visual_artifacts: None,
+                service_worker: None,
+                tls_and_caa: None,
+            },
+        },
         lighthouse: CollectorOutcome::Skipped {
             reason: "not collected".to_owned(),
         },
@@ -302,18 +313,18 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
 
     // Emit 500 rapid progress events to verify bounded coalescing and non-blocking ingestion.
     for idx in 0..500_usize {
-        sink.emit_progress(
-            EventContext::for_target("https://example.org/"),
+        sink.emit(
+            EventContext::new().with_target("https://example.org/"),
             DiagnosticEventPayload::CollectionProgress {
                 collector: CollectorId::Browser,
-                completed: idx,
-                total: Some(500),
+                completed_units: idx,
+                total_units: Some(500),
                 detail: format!("Capturing resource {idx}"),
             },
         );
     }
     assert!(
-        sink.dropped_progress_events() > 0,
+        sink.dropped_progress_count() > 0,
         "rapid progress burst over 256-item channel should coalesce excess progress events"
     );
 
@@ -352,41 +363,41 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
             .draw(|frame| render(frame, &state))
             .expect("render view");
     }
+    for cat in EvidenceCategory::ALL {
+        state.active_view = WorkbenchView::Evidence;
+        state.evidence_category = cat;
+        terminal
+            .draw(|frame| render(frame, &state))
+            .expect("render evidence category");
+    }
     let elapsed = start.elapsed();
     assert!(
-        elapsed < Duration::from_millis(250),
-        "rendering all 9 views with 1,000 findings and 120 resources took {elapsed:?}"
+        elapsed < Duration::from_millis(500),
+        "rendering all 9 views and all 19 evidence categories took {elapsed:?}"
     );
 }
 
 #[test]
 fn terminal_security_strips_hostile_escape_sequences_and_redacts_secrets_in_buffer() {
-    let policy = TargetPolicy {
-        allow_private_networks: true,
-        allow_http: true,
-        ..TargetPolicy::default()
-    };
-    let target = TargetUrl::parse_with_policy(
-        "https://admin:topsecret@example.org/callback?access_token=super-secret-jwt&page=1",
-        &policy,
-    )
-    .expect("valid target");
+    let target = AuditTarget::parse("https://example.org/callback", TargetPolicy::AllowPrivate)
+        .expect("valid target");
 
+    let rule_id = RuleId("sec.test.hostile".to_owned());
     let hostile_finding = Finding {
-        rule_id: RuleId::new("sec.test.hostile").expect("valid rule id"),
-        category: DiagnosticCategory::Security,
-        dwarf: DwarfId::SicherheitsZwerg,
+        fingerprint: FindingFingerprint::compute(target.host(), &rule_id, "hostile"),
+        rule_id,
+        category: FindingCategory::Security,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
         severity: Severity::High,
         confidence: Confidence::High,
-        title:
-            "Hostile \x1b[31mANSI\x1b[0m \x1b]52;c;ZWNobyBoYWNrZWQ=\x07 \u{202e}BidirectionalTitle"
-                .to_owned(),
-        description: "Carriage\rOverwrite and Backspace\x08Attack".to_owned(),
-        remediation: "Sanitize untrusted strings.".to_owned(),
-        evidence: vec![EvidenceRef::new(
-            EvidenceSource::HttpHeader,
+        title: "Hostile \x1b[31mANSI\x1b[0m \x1b]52;c;ZWNobyBoYWNrZWQ=\x07 \u{202e}BidirectionalTitle".to_owned(),
+        summary: "Hostile \x1b[31mANSI\x1b[0m \x1b]52;c;ZWNobyBoYWNrZWQ=\x07 \u{202e}BidirectionalTitle \rOverwrite\x08".to_owned(),
+        evidence_refs: vec![EvidenceRef::new(
+            EvidenceSource::HttpHeaders,
             "Location: https://example.org/login?api_key=leak-me-not\x1b]0;PwnedTitle\x07",
         )],
+        remediation: Some("Sanitize untrusted strings.".to_owned()),
     };
 
     let report = AuditReport {
@@ -399,31 +410,29 @@ fn terminal_security_strips_hostile_escape_sequences_and_redacts_secrets_in_buff
         level2_collectors: Vec::new(),
         rendered_history: None,
         analysers: vec![AnalyserResult {
-            dwarf: DwarfId::SicherheitsZwerg,
-            category: DiagnosticCategory::Security,
-            checks_evaluated: 1,
-            checks_unavailable: 0,
+            dwarf_id: DwarfId::Sicherheits,
+            checks: Vec::new(),
             findings: vec![hostile_finding],
         }],
         summary: AuditSummary {
-            total_checks_evaluated: 1,
-            total_checks_unavailable: 0,
-            total_findings: 1,
-            critical: 0,
-            high: 1,
-            medium: 0,
-            low: 0,
-            info: 0,
+            critical_findings: 0,
+            high_findings: 1,
+            medium_findings: 0,
+            low_findings: 0,
+            info_findings: 0,
+            passed_checks: 0,
+            failed_checks: 1,
+            skipped_checks: 0,
+            unavailable_checks: 0,
         },
-        ai_synthesis: Measurement::Skipped {
-            reason: "not requested".to_owned(),
-        },
+        ai_synthesis: None,
     };
 
     let mut state = AppState::new(ThemeMode::StandardDark, GlyphSet::Unicode);
     state.launcher.open = false;
     state.ingest_artefacts(DiagnosticArtefacts {
-        target: report.target.as_str().to_owned(),
+        target: "https://admin:topsecret@example.org/callback?access_token=super-secret-jwt&page=1"
+            .to_owned(),
         mode: DiagnosticRunMode::DeterministicCheck,
         snapshot: None,
         audit_report: Some(report),

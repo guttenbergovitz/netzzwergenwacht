@@ -11,18 +11,30 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Ta
 
 use crate::brigade::MOTTO;
 use crate::domain::browser_timeline::BrowserEventDetail;
-use crate::domain::{CollectorOutcome, Measurement, Severity};
+use crate::domain::{CollectorOutcome, Severity};
 use crate::investigation::HypothesisStatus;
-use crate::investigation::browser_timeline::query_browser_timeline;
+use crate::investigation::browser_timeline::{
+    FailedDependencyFilter, RequestChainFilter, query_browser_timeline, query_failed_dependencies,
+    query_request_chains,
+};
 use crate::investigation::evidence_query::{
-    EvidenceQueryStatus, NetworkResourceFilter, RenderedBlockFilter, RuntimeErrorFilter,
-    query_network_resources, query_rendered_content, query_runtime_errors,
+    AccessibilityNodeFilter, ElementGeometryFilter, EvidenceQueryStatus, InteractionStepFilter,
+    InteractiveElementFilter, LinkGraphFilter, MediaFontFilter, NetworkResourceFilter,
+    RenderedBlockFilter, ResponsiveAnomalyFilter, RuntimeErrorFilter, SourceRenderedDiffFilter,
+    StorageCookieFilter, StructuredDataFilter, ThirdPartyOriginFilter, compare_source_and_rendered,
+    query_accessibility_nodes, query_application_state, query_element_geometry,
+    query_indexability_authority, query_interaction_trace, query_interactive_elements,
+    query_link_graph, query_media_and_fonts, query_network_resources,
+    query_performance_attribution, query_rendered_content, query_responsive_comparison,
+    query_runtime_errors, query_security_challenge, query_security_posture,
+    query_service_worker_lifecycle, query_storage_and_cookies, query_structured_data,
+    query_third_party_origins, query_tls_and_caa, query_visual_artifacts,
 };
 use crate::tui::sanitize::{sanitize_line, sanitize_url_for_display};
 use crate::tui::state::{
     AppState, EvidenceCategory, LauncherField, WorkbenchView, format_rendered_diff_summary,
 };
-use crate::tui::theme::{OperationalStatus, Theme};
+use crate::tui::theme::Theme;
 
 /// Minimum supported terminal width in columns.
 pub const MIN_TERMINAL_WIDTH: u16 = 80;
@@ -437,6 +449,7 @@ fn count_severity(state: &AppState, severity: Severity) -> usize {
         .count()
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_brigade(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -710,7 +723,7 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             Some(
                 Row::new(vec![
                     format!("{prefix}{}", Theme::severity_badge(f.severity)),
-                    f.dwarf_id.display_name().to_owned(),
+                    f.dwarf_id.profile().display_name.to_owned(),
                     f.rule_id.clone(),
                     f.title.clone(),
                 ])
@@ -759,7 +772,10 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                     state.theme.title_style(),
                 ),
             ]),
-            Line::from(format!(" Specialist: {}", finding.dwarf_id.display_name())),
+            Line::from(format!(
+                " Specialist: {}",
+                finding.dwarf_id.profile().display_name
+            )),
             Line::from(format!(" Title:      {}", finding.title)),
             Line::from(""),
             Line::from(Span::styled(
@@ -775,18 +791,11 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         ];
         for (i, ev) in finding.evidence_refs.iter().enumerate() {
             lines.push(Line::from(format!(
-                "  [{}] {:?} ({:?}): {}",
+                "  [{}] {:?}: {}",
                 i + 1,
                 ev.source,
-                ev.level,
-                ev.locator
+                sanitize_line(&ev.detail, 90)
             )));
-            if let Some(ref excerpt) = ev.excerpt {
-                lines.push(Line::from(Span::styled(
-                    format!("      {excerpt}"),
-                    state.theme.muted_style(),
-                )));
-            }
         }
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -870,11 +879,10 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 state.evidence_offset,
             );
             let mut out = vec![Line::from(format!(
-                " Status: {} | Total blocks: {} | Offset: {} | DOM truncated: {} | ID census complete: {:?}",
+                " Status: {} | Total blocks: {} | Offset: {} | ID census complete: {:?}",
                 format_query_status(&page.status),
                 page.total_matching,
-                page.offset,
-                page.dom_truncated,
+                state.evidence_offset,
                 page.id_census_complete
             ))];
             out.push(Line::from(
@@ -882,7 +890,9 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             ));
             out.push(Line::from(""));
             for block in &page.blocks {
-                let fp = block.text_fingerprint.as_deref().unwrap_or("unavailable");
+                let fp = block
+                    .text_fingerprint
+                    .map_or("unavailable", |f| f.digest.as_str());
                 out.push(Line::from(format!(
                     " Node #{:<4} [{:?}] vis={:?} words={} chars={} fp={}",
                     block.node,
@@ -895,6 +905,7 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             }
             out
         }
+        EvidenceCategory::SourceRenderedDiff => build_source_rendered_diff_lines(snapshot, state),
         EvidenceCategory::NetworkResources => {
             let page = query_network_resources(
                 snapshot,
@@ -905,7 +916,7 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 " Status: {} | Matching resources: {} | Offset: {} | Truncated: {}",
                 format_query_status(&page.status),
                 page.total_matching,
-                page.offset,
+                state.evidence_offset,
                 page.resources_truncated
             ))];
             out.push(Line::from(""));
@@ -946,76 +957,52 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         EvidenceCategory::BrowserTimeline => {
             if let Some(page) = query_browser_timeline(snapshot, state.evidence_offset) {
                 let mut out = vec![Line::from(format!(
-                    " Status: Captured | Retained events: {} | Offset: {} | Truncated: {} | End: {:?}",
-                    page.total_events, page.offset, page.truncated, page.end
+                    " Status: Captured | Page events: {} | Offset: {} | Truncated: {} | End: {:?}",
+                    page.events.len(),
+                    state.evidence_offset,
+                    page.truncated,
+                    page.end
                 ))];
                 out.push(Line::from(""));
                 for ev in page.events {
                     let detail = match &ev.detail {
-                        BrowserEventDetail::RequestStarted {
-                            method,
-                            origin,
-                            resource,
-                            ..
-                        } => {
+                        BrowserEventDetail::RequestStarted { method, origin, .. } => {
                             format!(
-                                "REQ {method} {} ({resource:?})",
+                                "REQ {} {}",
+                                method.as_deref().unwrap_or("GET"),
                                 origin.as_deref().unwrap_or("unavailable")
                             )
                         }
-                        BrowserEventDetail::Redirect {
-                            status, to_origin, ..
-                        } => {
+                        BrowserEventDetail::Redirect { status, origin, .. } => {
                             format!(
-                                "REDIRECT HTTP {status} -> {}",
-                                to_origin.as_deref().unwrap_or("unavailable")
-                            )
-                        }
-                        BrowserEventDetail::Response {
-                            status,
-                            origin,
-                            mime_type,
-                            ..
-                        } => {
-                            format!(
-                                "RESP HTTP {status} {} ({})",
-                                origin.as_deref().unwrap_or("unavailable"),
-                                mime_type.as_deref().unwrap_or("-")
-                            )
-                        }
-                        BrowserEventDetail::Completed {
-                            encoded_data_length,
-                        } => {
-                            format!("COMPLETED ({} B)", encoded_data_length.map_or(0, |b| b))
-                        }
-                        BrowserEventDetail::NetworkFailure { error_text } => {
-                            format!("NET FAIL: {}", sanitize_line(error_text, 48))
-                        }
-                        BrowserEventDetail::Cancelled { error_text } => {
-                            format!(
-                                "CANCELLED: {}",
-                                error_text.as_deref().unwrap_or("cancelled")
-                            )
-                        }
-                        BrowserEventDetail::BrowserBlocked { reason } => {
-                            format!("BROWSER BLOCKED: {reason:?}")
-                        }
-                        BrowserEventDetail::PolicyBlocked { reason, origin } => {
-                            format!(
-                                "POLICY BLOCKED ({reason}): {}",
+                                "REDIRECT HTTP {:?} -> {}",
+                                status,
                                 origin.as_deref().unwrap_or("unavailable")
                             )
                         }
-                        BrowserEventDetail::RuntimeError {
-                            kind,
-                            message,
-                            source_origin,
-                        } => {
+                        BrowserEventDetail::Response { status, origin, .. } => {
                             format!(
-                                "RUNTIME {kind:?} ({}): {}",
-                                source_origin.as_deref().unwrap_or("unavailable"),
-                                sanitize_line(message, 48)
+                                "RESP HTTP {:?} {}",
+                                status,
+                                origin.as_deref().unwrap_or("unavailable")
                             )
+                        }
+                        BrowserEventDetail::Completed { encoded_bytes, .. } => {
+                            format!("COMPLETED ({} B)", encoded_bytes.unwrap_or(0))
+                        }
+                        BrowserEventDetail::NetworkFailure => {
+                            String::from("NET FAIL: transport error")
+                        }
+                        BrowserEventDetail::Cancelled => String::from("CANCELLED"),
+                        BrowserEventDetail::BrowserBlocked => String::from("BROWSER BLOCKED"),
+                        BrowserEventDetail::PolicyBlocked { origin, .. } => {
+                            format!(
+                                "POLICY BLOCKED: {}",
+                                origin.as_deref().unwrap_or("unavailable")
+                            )
+                        }
+                        BrowserEventDetail::RuntimeError { category, .. } => {
+                            format!("RUNTIME {category:?}")
                         }
                     };
                     out.push(Line::from(format!(
@@ -1032,6 +1019,9 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 )]
             }
         }
+        EvidenceCategory::RequestChainsAndFailures => {
+            build_request_chains_and_failures_lines(snapshot, state)
+        }
         EvidenceCategory::RuntimeErrors => {
             let page = query_runtime_errors(
                 snapshot,
@@ -1042,13 +1032,13 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 " Status: {} | Matching runtime errors: {} | Offset: {}",
                 format_query_status(&page.status),
                 page.total_matching,
-                page.offset
+                state.evidence_offset
             ))];
             out.push(Line::from(""));
-            for err in &page.errors {
+            for err in &page.console_errors {
                 out.push(Line::from(format!(
                     " [{}] {} (source: {})",
-                    sanitize_line(&err.kind, 20),
+                    sanitize_line(err.error_kind.as_deref().unwrap_or(&err.level), 20),
                     sanitize_line(&err.text, 80),
                     err.source_url.as_deref().map_or_else(
                         || String::from("unavailable"),
@@ -1058,6 +1048,17 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             }
             out
         }
+        EvidenceCategory::InteractiveAndState => build_interactive_and_state_lines(snapshot, state),
+        EvidenceCategory::VisualGeometryAndAx => {
+            build_visual_geometry_and_ax_lines(snapshot, state)
+        }
+        EvidenceCategory::SecurityAndPrivacy => build_security_and_privacy_lines(snapshot, state),
+        EvidenceCategory::PerformanceAndMedia => build_performance_and_media_lines(snapshot, state),
+        EvidenceCategory::SeoAndStructuredData => {
+            build_seo_and_structured_data_lines(snapshot, state)
+        }
+        EvidenceCategory::ResponsiveAndLinks => build_responsive_and_links_lines(snapshot, state),
+        EvidenceCategory::VisualSwAndTlsCaa => build_visual_sw_and_tls_caa_lines(snapshot),
         EvidenceCategory::Performance => build_performance_evidence_lines(snapshot),
         EvidenceCategory::Accessibility => build_accessibility_evidence_lines(snapshot),
         EvidenceCategory::Lighthouse => build_lighthouse_evidence_lines(snapshot),
@@ -1126,21 +1127,22 @@ fn build_waterfall_bar(
 
 fn build_http_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<Line<'static>> {
     match &snapshot.http {
-        CollectorOutcome::Collected(http) | CollectorOutcome::Partial { evidence: http, .. } => {
+        CollectorOutcome::Captured { data: http }
+        | CollectorOutcome::Partial { data: http, .. } => {
             let mut lines = vec![
                 Line::from(format!(
-                    " Status: Captured | HTTP {} | Protocol: {} | TTFB: {} ms | Total: {} ms",
-                    http.status_code, http.http_version, http.ttfb_ms, http.total_duration_ms
+                    " Status: Captured | HTTP {} | Redirects: {} | Elapsed: {:?}",
+                    http.status_code,
+                    http.redirect_chain.len(),
+                    http.elapsed_ms
                 )),
                 Line::from(format!(
                     " Final URL: {}",
                     sanitize_url_for_display(&http.final_url, 100)
                 )),
                 Line::from(format!(
-                    " Remote IP: {} | Body bytes: {} (truncated: {})",
-                    http.remote_ip.as_deref().unwrap_or("unavailable"),
-                    http.body_bytes,
-                    http.body_truncated
+                    " Body bytes: {} (truncated: {})",
+                    http.body_bytes, http.body_truncated
                 )),
                 Line::from(""),
                 Line::from(format!(" Headers ({} captured):", http.headers.len())),
@@ -1166,19 +1168,13 @@ fn build_http_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<
                 sanitize_line(reason, 100)
             ))]
         }
-        CollectorOutcome::Unavailable { reason } => {
-            vec![Line::from(format!(
-                " Status: Unavailable — {}",
-                sanitize_line(reason, 100)
-            ))]
-        }
     }
 }
 
 fn build_tls_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<Line<'static>> {
     match &snapshot.tls {
-        CollectorOutcome::Collected(tls) | CollectorOutcome::Partial { evidence: tls, .. } => {
-            vec![
+        CollectorOutcome::Captured { data: tls } | CollectorOutcome::Partial { data: tls, .. } => {
+            let mut lines = vec![
                 Line::from(" Status: Captured"),
                 Line::from(format!(
                     " Subject:          {}",
@@ -1189,177 +1185,40 @@ fn build_tls_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<L
                     sanitize_line(&tls.issuer, 90)
                 )),
                 Line::from(format!(
-                    " Valid NotBefore:  {} (Unix secs)",
-                    tls.not_before_unix_secs
+                    " Valid NotBefore:  {:?} | Valid NotAfter: {} (Unix secs)",
+                    tls.not_before_unix_secs, tls.not_after_unix_secs
                 )),
                 Line::from(format!(
-                    " Valid NotAfter:   {} (Unix secs)",
-                    tls.not_after_unix_secs
+                    " Days remaining:   {} | Self-signed: {}",
+                    tls.days_until_expiry, tls.self_signed
                 )),
                 Line::from(format!(
-                    " Days remaining:   {} | Hostname matches SAN: {}",
-                    tls.days_remaining, tls.hostname_matches_san
+                    " Algorithms:       pub={} sig={}",
+                    sanitize_line(tls.public_key_algorithm.as_deref().unwrap_or("unknown"), 32),
+                    sanitize_line(tls.signature_algorithm.as_deref().unwrap_or("unknown"), 32)
                 )),
                 Line::from(format!(
-                    " SANs ({}):         {}",
-                    tls.san_dns_names.len(),
-                    sanitize_line(&tls.san_dns_names.join(", "), 90)
+                    " SAN entries ({}):  {}",
+                    tls.san_entries.len(),
+                    if tls.san_entries.is_empty() {
+                        String::from("none")
+                    } else {
+                        sanitize_line(&tls.san_entries.join(", "), 80)
+                    }
                 )),
-            ]
-        }
-        CollectorOutcome::Failed { error } => {
-            vec![Line::from(format!(
-                " Status: Failed — {}",
-                sanitize_line(error, 100)
-            ))]
-        }
-        CollectorOutcome::Skipped { reason } => {
-            vec![Line::from(format!(
-                " Status: Skipped — {}",
-                sanitize_line(reason, 100)
-            ))]
-        }
-        CollectorOutcome::Unavailable { reason } => {
-            vec![Line::from(format!(
-                " Status: Unavailable — {}",
-                sanitize_line(reason, 100)
-            ))]
-        }
-    }
-}
-
-fn build_performance_evidence_lines(
-    snapshot: &crate::domain::EvidenceSnapshot,
-) -> Vec<Line<'static>> {
-    let Some(browser) = snapshot.browser.evidence() else {
-        return vec![Line::from(
-            " Status: Skipped / Unavailable — Level 2 browser performance evidence was not collected.",
-        )];
-    };
-    let mut lines = vec![Line::from(format!(
-        " Browser: {} | Rendered DOM elements: {} | Word count: {:?}",
-        browser.browser_version.as_deref().unwrap_or("Chromium"),
-        browser.rendered_dom_elements,
-        browser.rendered_word_count
-    ))];
-    if let Some(ref perf) = browser.performance {
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!(
-            " LCP: {:?} ms | FCP: {:?} ms | CLS: {:?} | TTFB: {:?} ms",
-            perf.lcp_ms, perf.fcp_ms, perf.cls_score, perf.ttfb_ms
-        )));
-        lines.push(Line::from(format!(
-            " Long tasks: {:?} (total {:?} ms, max {:?} ms)",
-            perf.long_task_count, perf.long_task_total_ms, perf.max_long_task_ms
-        )));
-    }
-    if let Some(ref cpu) = browser.cpu_profile {
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!(
-            " CPU Profile: {} samples ({} ms total) — Top scripts:",
-            cpu.total_samples, cpu.total_duration_ms
-        )));
-        for script in cpu.top_scripts.iter().take(6) {
-            lines.push(Line::from(format!(
-                "  {:>6} ms ({:>5.1}%)  {}",
-                script.estimated_ms,
-                script.sample_share_pct,
-                sanitize_url_for_display(&script.url, 70)
-            )));
-        }
-    }
-    if let Some(ref cov) = browser.coverage {
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!(
-            " Code Coverage: JS unused {}/{} B | CSS unused {}/{} B",
-            cov.js_unused_bytes, cov.js_total_bytes, cov.css_unused_bytes, cov.css_total_bytes
-        )));
-    }
-    lines
-}
-
-fn build_accessibility_evidence_lines(
-    snapshot: &crate::domain::EvidenceSnapshot,
-) -> Vec<Line<'static>> {
-    let Some(browser) = snapshot.browser.evidence() else {
-        return vec![Line::from(
-            " Status: Skipped / Unavailable — Level 2 browser accessibility tree was not collected.",
-        )];
-    };
-    let mut lines = Vec::new();
-    if let Some(ref ax) = browser.ax_tree {
-        lines.push(Line::from(format!(
-            " AX Tree: {} total nodes | {} landmarks | {} headings | {} unnamed interactive controls",
-            ax.total_nodes, ax.landmarks.len(), ax.headings.len(), ax.unnamed_interactive.len()
-        )));
-        lines.push(Line::from(format!(
-            " Landmarks: {}",
-            sanitize_line(&ax.landmarks.join(", "), 80)
-        )));
-    } else {
-        lines.push(Line::from(" AX Tree: Unavailable"));
-    }
-    if let Some(ref beh) = browser.behavioural_a11y {
-        lines.push(Line::from(""));
-        lines.push(Line::from(format!(
-            " Behavioural Focus Probe: {} tab stops | Trap detected: {} | Invisible focus count: {}",
-            beh.tab_stops_probed, beh.focus_trap_detected, beh.invisible_focus_count
-        )));
-    }
-    lines
-}
-
-fn build_lighthouse_evidence_lines(
-    snapshot: &crate::domain::EvidenceSnapshot,
-) -> Vec<Line<'static>> {
-    match &snapshot.lighthouse {
-        CollectorOutcome::Collected(lh) | CollectorOutcome::Partial { evidence: lh, .. } => vec![
-            Line::from(" Status: Captured (Laboratory Lighthouse)"),
-            Line::from(format!(" Performance Score: {:?}", lh.performance_score)),
-            Line::from(format!(
-                " LCP: {:?} ms | CLS: {:?} | TBT: {:?} ms",
-                lh.lcp_ms, lh.cls, lh.tbt_ms
-            )),
-        ],
-        CollectorOutcome::Failed { error } => {
-            vec![Line::from(format!(
-                " Status: Failed — {}",
-                sanitize_line(error, 100)
-            ))]
-        }
-        CollectorOutcome::Skipped { reason } => {
-            vec![Line::from(format!(
-                " Status: Skipped — {}",
-                sanitize_line(reason, 100)
-            ))]
-        }
-        CollectorOutcome::Unavailable { reason } => {
-            vec![Line::from(format!(
-                " Status: Unavailable — {}",
-                sanitize_line(reason, 100)
-            ))]
-        }
-    }
-}
-
-fn build_axe_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<Line<'static>> {
-    match &snapshot.axe {
-        CollectorOutcome::Collected(axe) | CollectorOutcome::Partial { evidence: axe, .. } => {
-            let mut lines = vec![Line::from(format!(
-                " Status: Captured | Violations: {} | Passes: {} | Incomplete: {}",
-                axe.violations.len(),
-                axe.passes_count,
-                axe.incomplete_count
-            ))];
-            lines.push(Line::from(""));
-            for v in axe.violations.iter().take(12) {
-                lines.push(Line::from(format!(
-                    " [{}] {} ({} node(s)): {}",
-                    sanitize_line(&v.impact, 12),
-                    sanitize_line(&v.id, 32),
-                    v.nodes,
-                    sanitize_line(&v.help, 64)
-                )));
+                Line::from(format!(
+                    " DNS CAA query:    succeeded={} | records ({}): {}",
+                    tls.caa_query_succeeded,
+                    tls.caa_records.len(),
+                    if tls.caa_records.is_empty() {
+                        String::from("none")
+                    } else {
+                        sanitize_line(&tls.caa_records.join("; "), 80)
+                    }
+                )),
+            ];
+            if lines.is_empty() {
+                lines.push(Line::from(" Status: Captured"));
             }
             lines
         }
@@ -1375,9 +1234,665 @@ fn build_axe_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<L
                 sanitize_line(reason, 100)
             ))]
         }
-        CollectorOutcome::Unavailable { reason } => {
+    }
+}
+
+fn build_source_rendered_diff_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let page = compare_source_and_rendered(
+        snapshot,
+        &SourceRenderedDiffFilter::default(),
+        state.evidence_offset,
+    );
+    let mut out = vec![
+        Line::from(format!(
+            " Status: {} | Classification: {:?} | Roles: {} | Offset: {}",
+            format_query_status(&page.status),
+            page.classification,
+            page.total_matching,
+            state.evidence_offset
+        )),
+        Line::from(format!(
+            " Source blocks/words: {}/{} | Rendered blocks/words: {}/{} (visible: {}) | Delta ratio: {}%%",
+            page.source_total_blocks,
+            page.source_total_words,
+            page.rendered_total_blocks,
+            page.rendered_total_words,
+            page.rendered_visible_blocks,
+            page.word_delta_milli
+        )),
+        Line::from(format!(
+            " Client-only roles: {:?} | SSR-only roles: {:?}",
+            page.client_only_roles, page.ssr_only_roles
+        )),
+        Line::from(""),
+    ];
+    for role in &page.roles {
+        out.push(Line::from(format!(
+            " [{:?}] src_blocks={} src_words={} | dom_blocks={} (vis={}, hid={}) dom_words={} | client_only={} ssr_only={}",
+            role.role,
+            role.source_blocks,
+            role.source_words,
+            role.rendered_blocks,
+            role.rendered_visible_blocks,
+            role.rendered_hidden_blocks,
+            role.rendered_visible_words,
+            role.client_only,
+            role.ssr_only
+        )));
+    }
+    out
+}
+
+fn build_request_chains_and_failures_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let chains = query_request_chains(
+        snapshot,
+        &RequestChainFilter::default(),
+        state.evidence_offset,
+    );
+    let failures = query_failed_dependencies(
+        snapshot,
+        &FailedDependencyFilter::default(),
+        state.evidence_offset,
+    );
+    let mut out = vec![
+        Line::from(format!(
+            " Status: {} | Chains: {} | Failed dependencies: {} | Offset: {}",
+            format_query_status(&chains.status),
+            chains.total_matching,
+            failures.total_matching,
+            state.evidence_offset
+        )),
+        Line::from(""),
+        Line::from(" MULTI-HOP REQUEST CHAINS:"),
+    ];
+    for chain in chains.chains.iter().take(8) {
+        out.push(Line::from(format!(
+            "  Req #{:<3} hops={} [{:?}] {} -> {} ({})",
+            chain.request_id,
+            chain.total_hops,
+            chain.outcome,
+            sanitize_line(chain.initial_origin.unwrap_or("?"), 28),
+            sanitize_line(chain.final_origin.unwrap_or("?"), 28),
+            sanitize_line(chain.endpoint_path.unwrap_or("/"), 36)
+        )));
+    }
+    out.push(Line::from(""));
+    out.push(Line::from(" FAILED DEPENDENCIES:"));
+    for dep in failures.dependencies.iter().take(8) {
+        out.push(Line::from(format!(
+            "  Seq {:<4} [{:?}] status={:?} type={} origin={} path={}",
+            dep.sequence,
+            dep.category,
+            dep.status_code,
+            sanitize_line(dep.resource_type.unwrap_or("?"), 12),
+            sanitize_line(dep.origin.unwrap_or("?"), 28),
+            sanitize_line(dep.endpoint_path.unwrap_or("/"), 36)
+        )));
+    }
+    out
+}
+
+fn build_interactive_and_state_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let elems = query_interactive_elements(
+        snapshot,
+        &InteractiveElementFilter::default(),
+        state.evidence_offset,
+    );
+    let app_state = query_application_state(snapshot);
+    let trace = query_interaction_trace(
+        snapshot,
+        &InteractionStepFilter::default(),
+        state.evidence_offset,
+    );
+    let mut out = vec![Line::from(format!(
+        " Status: {} | Interactive controls: {} | Trace steps: {} | Offset: {}",
+        format_query_status(&elems.status),
+        elems.total_matching,
+        trace.total_matching,
+        state.evidence_offset
+    ))];
+    if let Some(st) = app_state.state {
+        out.push(Line::from(format!(
+            " App State: ready={} modal_open={} dialogs={} expanded={} disabled={} invalid_inputs={} idle={}",
+            sanitize_line(&st.document_ready_state, 16),
+            st.modal_open,
+            st.active_dialog_count,
+            st.expanded_control_count,
+            st.disabled_control_count,
+            st.invalid_input_count,
+            st.network_idle_reached
+        )));
+    }
+    out.push(Line::from(""));
+    for el in elems.elements.iter().take(8) {
+        out.push(Line::from(format!(
+            "  Node #{:<4} <{}> role={} [{:?} / {:?}] vis={} focus={} named={}",
+            el.node,
+            sanitize_line(&el.tag, 12),
+            sanitize_line(el.role.as_deref().unwrap_or("-"), 14),
+            el.functional_kind,
+            el.safety_class,
+            el.visible,
+            el.keyboard_focusable,
+            el.name_present
+        )));
+    }
+    if !trace.steps.is_empty() {
+        out.push(Line::from(""));
+        out.push(Line::from(format!(
+            " INTERACTION TRACE (Candidate scenarios: {:?}):",
+            trace.candidate_scenarios
+        )));
+        for step in trace.steps.iter().take(6) {
+            out.push(Line::from(format!(
+                "  Step #{:<2} [{:?}] target={:?} changed={} focus_chg={} exp_chg={} dlg_chg={} dom_chg={}",
+                step.step_index,
+                step.action,
+                step.target_node,
+                step.state_changed,
+                step.focus_changed,
+                step.expanded_changed,
+                step.dialog_changed,
+                step.dom_fingerprint_changed
+            )));
+        }
+    }
+    out
+}
+
+fn build_visual_geometry_and_ax_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let geom = query_element_geometry(
+        snapshot,
+        &ElementGeometryFilter::default(),
+        state.evidence_offset,
+    );
+    let ax = query_accessibility_nodes(
+        snapshot,
+        &AccessibilityNodeFilter::default(),
+        state.evidence_offset,
+    );
+    let mut out = vec![
+        Line::from(format!(
+            " Geometry Status: {} ({} elements) | AX Nodes Status: {} ({} nodes) | Offset: {}",
+            format_query_status(&geom.status),
+            geom.total_matching,
+            format_query_status(&ax.status),
+            ax.total_matching,
+            state.evidence_offset
+        )),
+        Line::from(""),
+        Line::from(" ELEMENT GEOMETRY & OVERFLOW / OCCLUSION:"),
+    ];
+    for el in geom.elements.iter().take(7) {
+        out.push(Line::from(format!(
+            "  Node #{:<4} <{}> {}x{} @ ({},{}) ovf_x={}px ovf_y={}px clipped={} occluded={}",
+            el.node,
+            sanitize_line(&el.tag, 12),
+            el.bbox.width,
+            el.bbox.height,
+            el.bbox.x,
+            el.bbox.y,
+            el.horizontal_overflow_px,
+            el.vertical_overflow_px,
+            el.clipped_by_overflow,
+            el.occluded_at_center
+        )));
+    }
+    out.push(Line::from(""));
+    out.push(Line::from(" ACCESSIBILITY TREE NODES:"));
+    for node in ax.nodes.iter().take(7) {
+        out.push(Line::from(format!(
+            "  AX #{:<4} role={:<16} interactive={} focusable={} named={} ignored={}",
+            node.node_index,
+            sanitize_line(&node.role, 16),
+            node.interactive,
+            node.focusable,
+            node.name_present,
+            node.ignored
+        )));
+    }
+    out
+}
+
+fn build_security_and_privacy_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let posture = query_security_posture(snapshot);
+    let challenge = query_security_challenge(snapshot);
+    let storage = query_storage_and_cookies(
+        snapshot,
+        &StorageCookieFilter::default(),
+        state.evidence_offset,
+    );
+    let third_party = query_third_party_origins(
+        snapshot,
+        &ThirdPartyOriginFilter::default(),
+        state.evidence_offset,
+    );
+    let mut out = vec![Line::from(format!(
+        " Status: {} | Cookies: {} | Storage keys: {} | 3P origins: {} | Offset: {}",
+        format_query_status(&posture.status),
+        storage.total_matching_cookies,
+        storage.total_matching_storage_keys,
+        third_party.total_matching,
+        state.evidence_offset
+    ))];
+    if let Some(p) = posture.posture {
+        out.push(Line::from(format!(
+            " Headers: CSP={} (unsafe-inline={}, unsafe-eval={}) HSTS={} XCTO={} XFO={} COOP={}",
+            p.csp_present,
+            p.csp_unsafe_inline_script,
+            p.csp_unsafe_eval_script,
+            p.hsts_present,
+            p.x_content_type_options_nosniff,
+            p.x_frame_options_present,
+            p.coop_present
+        )));
+    }
+    if let Some(ch) = challenge.challenge {
+        out.push(Line::from(format!(
+            " Challenge / Bot Wall: detected={} provider={:?} blocking={} captcha_frames={}",
+            ch.challenge_detected, ch.provider, ch.blocking_page_content, ch.captcha_frame_count
+        )));
+    }
+    out.push(Line::from(""));
+    for c in storage.cookies.iter().take(5) {
+        out.push(Line::from(format!(
+            "  Cookie {:<24} secure={} http_only={} same_site={:?} third_party={} pre_consent={}",
+            sanitize_line(&c.name, 24),
+            c.secure,
+            c.http_only,
+            c.same_site,
+            c.third_party,
+            c.observed_before_consent
+        )));
+    }
+    for tp in third_party.origins.iter().take(5) {
+        out.push(Line::from(format!(
+            "  3P Origin {:<32} reqs={} scripts={} exec_in_main={} sri_missing={}",
+            sanitize_line(&tp.origin, 32),
+            tp.total_requests,
+            tp.script_requests,
+            tp.capability.executes_script_in_main_frame,
+            tp.capability.script_without_sri_count
+        )));
+    }
+    out
+}
+
+fn build_performance_and_media_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let perf = query_performance_attribution(snapshot);
+    let media = query_media_and_fonts(snapshot, &MediaFontFilter::default(), state.evidence_offset);
+    let mut out = vec![Line::from(format!(
+        " Perf Attribution Status: {} | Media assets: {} | Fonts: {} | Offset: {}",
+        format_query_status(&perf.status),
+        media.total_matching_media,
+        media.total_matching_fonts,
+        state.evidence_offset
+    ))];
+    if let Some(attr) = perf.attribution {
+        if let Some(ref lcp) = attr.lcp_candidate {
+            out.push(Line::from(format!(
+                " LCP Candidate: <{}> render={:?}ms size={}px² origin={}",
+                sanitize_line(&lcp.tag, 14),
+                lcp.render_time_ms,
+                lcp.size_px_sq,
+                sanitize_line(lcp.resource_origin.as_deref().unwrap_or("inline/dom"), 32)
+            )));
+        }
+        out.push(Line::from(format!(
+            " CLSTotal={}‰ ({} shift regions) | Render-blocking head: {} scripts, {} stylesheets",
+            attr.total_cls_milli,
+            attr.cls_shift_regions.len(),
+            attr.render_blocking_chain.blocking_head_scripts,
+            attr.render_blocking_chain.blocking_head_stylesheets
+        )));
+    }
+    out.push(Line::from(""));
+    for m in media.media_assets.iter().take(6) {
+        out.push(Line::from(format!(
+            "  Media #{:<3} <{}> {:?} natural={}x{} rendered={}x{} oversize={}‰ lazy={:?}",
+            m.node,
+            sanitize_line(&m.tag, 10),
+            m.format_class,
+            m.natural_width,
+            m.natural_height,
+            m.rendered_width,
+            m.rendered_height,
+            m.oversize_ratio_milli,
+            m.loading
+        )));
+    }
+    for f in media.font_assets.iter().take(5) {
+        out.push(Line::from(format!(
+            "  Font #{:<3} family={:<20} weight={:<6} display={:?} status={}",
+            f.index,
+            sanitize_line(&f.font_family, 20),
+            sanitize_line(&f.font_weight, 6),
+            f.font_display,
+            sanitize_line(&f.status, 12)
+        )));
+    }
+    out
+}
+
+fn build_seo_and_structured_data_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let idx = query_indexability_authority(snapshot);
+    let sd = query_structured_data(
+        snapshot,
+        &StructuredDataFilter::default(),
+        state.evidence_offset,
+    );
+    let mut out = vec![Line::from(format!(
+        " Indexability Status: {} | Structured entities: {} | Issues: {} | Offset: {}",
+        format_query_status(&idx.status),
+        sd.total_matching_entities,
+        sd.issues.len(),
+        state.evidence_offset
+    ))];
+    if let Some(auth) = idx.authority {
+        out.push(Line::from(format!(
+            " Indexable: {} | Canonical: {:?} | Conflicts: {:?}",
+            auth.effectively_indexable, auth.rendered_canonical_path, auth.conflicts
+        )));
+    }
+    if let Some(card) = sd.social_card {
+        out.push(Line::from(format!(
+            " Social Preview: OG complete={} (title={}, desc={}, img={}) | Twitter complete={}",
+            card.og_complete,
+            card.og_title_present,
+            card.og_description_present,
+            card.og_image_present,
+            card.twitter_complete
+        )));
+    }
+    out.push(Line::from(""));
+    for ent in sd.entities.iter().take(7) {
+        out.push(Line::from(format!(
+            "  Entity #{:<2} [{:?}] @type={:<20} valid={} missing_required={:?}",
+            ent.entity_index,
+            ent.syntax,
+            sanitize_line(&ent.schema_type, 20),
+            ent.valid,
+            ent.missing_required_fields
+        )));
+    }
+    out
+}
+
+fn build_responsive_and_links_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+    state: &AppState,
+) -> Vec<Line<'static>> {
+    let resp = query_responsive_comparison(
+        snapshot,
+        &ResponsiveAnomalyFilter::default(),
+        state.evidence_offset,
+    );
+    let links = query_link_graph(snapshot, &LinkGraphFilter::default(), state.evidence_offset);
+    let mut out = vec![Line::from(format!(
+        " Responsive Status: {} ({} anomalies) | Link Graph: {} links | Offset: {}",
+        format_query_status(&resp.status),
+        resp.total_matching_anomalies,
+        links.total_matching,
+        state.evidence_offset
+    ))];
+    if let Some(summary) = links.cluster_summary {
+        out.push(Line::from(format!(
+            " Links Summary: internal={} external={} header/nav={} main={} footer={} empty_anchor={}",
+            summary.internal_links,
+            summary.external_links,
+            summary.header_nav_links,
+            summary.main_content_links,
+            summary.footer_links,
+            summary.empty_anchor_links
+        )));
+    }
+    out.push(Line::from(""));
+    for anom in resp.anomalies.iter().take(5) {
+        out.push(Line::from(format!(
+            "  Anomaly #{:<2} [{:?}] <{}> mobile_val={} desktop_val={}",
+            anom.anomaly_index,
+            anom.kind,
+            sanitize_line(&anom.tag, 12),
+            anom.mobile_metric_px,
+            anom.desktop_metric_px
+        )));
+    }
+    for link in links.links.iter().take(7) {
+        out.push(Line::from(format!(
+            "  Link #{:<3} [{:?}] same_origin={} words={} target={}{}",
+            link.link_index,
+            link.placement_region,
+            link.same_origin,
+            link.anchor_word_count,
+            sanitize_line(link.target_origin.as_deref().unwrap_or(""), 24),
+            sanitize_line(link.target_path.as_deref().unwrap_or("/"), 36)
+        )));
+    }
+    out
+}
+
+fn build_visual_sw_and_tls_caa_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+) -> Vec<Line<'static>> {
+    let vis = query_visual_artifacts(snapshot);
+    let sw = query_service_worker_lifecycle(snapshot);
+    let tls_caa = query_tls_and_caa(snapshot);
+    let mut out = vec![Line::from(format!(
+        " Visual Status: {} | Service Worker Status: {} | TLS/CAA Status: {}",
+        format_query_status(&vis.status),
+        format_query_status(&sw.status),
+        format_query_status(&tls_caa.status)
+    ))];
+    if let Some(v) = vis.artifacts {
+        out.push(Line::from(format!(
+            " Screenshot SHA-256: {} ({} B) | Above-fold coverage: {}‰ | Landmarks: {}",
+            sanitize_line(
+                v.viewport_screenshot_sha256
+                    .as_deref()
+                    .unwrap_or("unavailable"),
+                24
+            ),
+            v.screenshot_byte_len,
+            v.above_fold_coverage_milli,
+            v.landmarks.len()
+        )));
+    }
+    if let Some(s) = sw.lifecycle {
+        out.push(Line::from(format!(
+            " Service Worker: state={:?} controlled={} caches={} sw_requests={} manifest={}",
+            s.registration_state,
+            s.page_controlled,
+            s.cache_storage_bucket_count,
+            s.sw_served_request_count,
+            s.manifest_link_present
+        )));
+    }
+    if let Some(t) = tls_caa.diagnostics {
+        out.push(Line::from(format!(
+            " TLS/CAA: security_state={} SANs={} CT={:?} (SCTs={}) CAA_ok={} records={}",
+            sanitize_line(t.browser_security_state.as_deref().unwrap_or("unknown"), 16),
+            t.leaf_certificate.as_ref().map_or(0, |c| c.san_count),
+            t.leaf_certificate
+                .as_ref()
+                .map(|c| c.certificate_transparency_status),
+            t.leaf_certificate
+                .as_ref()
+                .map_or(0, |c| c.signed_certificate_timestamp_count),
+            t.caa_query_succeeded,
+            t.caa_records.len()
+        )));
+    }
+    out
+}
+
+fn build_performance_evidence_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+) -> Vec<Line<'static>> {
+    let browser = match &snapshot.browser {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
+        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => {
+            return vec![Line::from(
+                " Status: Skipped / Unavailable — Level 2 browser performance evidence was not collected.",
+            )];
+        }
+    };
+    let mut lines = vec![Line::from(format!(
+        " Browser: {} | Rendered DOM elements: {:?} | Word count: {:?}",
+        browser.browser_version.as_deref().unwrap_or("Chromium"),
+        browser.rendered_dom_elements,
+        browser.rendered_word_count
+    ))];
+    if let Some(ref perf) = browser.performance {
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            " LCP: {:?} ms | CLS (milli): {:?} | TTFB: {:?} ms",
+            perf.lcp_ms, perf.cls_thousandths, perf.ttfb_ms
+        )));
+        lines.push(Line::from(format!(
+            " Long tasks: {} (total {} ms, max {} ms)",
+            perf.long_task_count, perf.long_task_total_ms, perf.max_long_task_ms
+        )));
+    }
+    if let Some(ref cpu) = browser.cpu_profile {
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            " CPU Profile: {} ms eval ({} ms sampled) — Top scripts:",
+            cpu.script_eval_ms, cpu.total_sampled_ms
+        )));
+        for script in cpu.top_cpu_scripts.iter().take(6) {
+            lines.push(Line::from(format!(
+                "  {:>6} ms ({} hits)  {}",
+                script.self_ms,
+                script.hit_count,
+                sanitize_url_for_display(&script.url, 70)
+            )));
+        }
+    }
+    if let Some(ref cov) = browser.coverage {
+        let js_unused = cov.js_total_bytes.saturating_sub(cov.js_used_bytes);
+        let css_unused = cov.css_total_bytes.saturating_sub(cov.css_used_bytes);
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            " Code Coverage: JS unused {}/{} B | CSS unused {}/{} B",
+            js_unused, cov.js_total_bytes, css_unused, cov.css_total_bytes
+        )));
+    }
+    lines
+}
+
+fn build_accessibility_evidence_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+) -> Vec<Line<'static>> {
+    let browser = match &snapshot.browser {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => data,
+        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => {
+            return vec![Line::from(
+                " Status: Skipped / Unavailable — Level 2 browser accessibility tree was not collected.",
+            )];
+        }
+    };
+    let mut lines = Vec::new();
+    if let Some(ref ax) = browser.ax_tree {
+        lines.push(Line::from(format!(
+            " AX Tree: {} total nodes | {} ignored | {} hidden focusable | {} unnamed interactive controls",
+            ax.total_nodes,
+            ax.ignored_nodes,
+            ax.hidden_focusable_count,
+            ax.interactive_without_name
+        )));
+    } else {
+        lines.push(Line::from(" AX Tree: Unavailable"));
+    }
+    if let Some(ref beh) = browser.behavioural_a11y {
+        lines.push(Line::from(""));
+        lines.push(Line::from(format!(
+            " Behavioural Focus Probe: {} tab stops | Trap detected: {} | Missing focus indicator: {}",
+            beh.tab_stops_observed, beh.focus_trap_detected, beh.missing_focus_indicator_count
+        )));
+    }
+    lines
+}
+
+fn build_lighthouse_evidence_lines(
+    snapshot: &crate::domain::EvidenceSnapshot,
+) -> Vec<Line<'static>> {
+    match &snapshot.lighthouse {
+        CollectorOutcome::Captured { data: lh } | CollectorOutcome::Partial { data: lh, .. } => {
+            vec![
+                Line::from(" Status: Captured (Laboratory Lighthouse)"),
+                Line::from(format!(" Performance Score: {:?}", lh.performance_score)),
+                Line::from(format!(
+                    " LCP: {:?} ms | CLS (milli): {:?} | TBT: {:?} ms",
+                    lh.lcp_ms, lh.cls_milli, lh.tbt_ms
+                )),
+            ]
+        }
+        CollectorOutcome::Failed { error } => {
             vec![Line::from(format!(
-                " Status: Unavailable — {}",
+                " Status: Failed — {}",
+                sanitize_line(error, 100)
+            ))]
+        }
+        CollectorOutcome::Skipped { reason } => {
+            vec![Line::from(format!(
+                " Status: Skipped — {}",
+                sanitize_line(reason, 100)
+            ))]
+        }
+    }
+}
+
+fn build_axe_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<Line<'static>> {
+    match &snapshot.axe {
+        CollectorOutcome::Captured { data: axe } | CollectorOutcome::Partial { data: axe, .. } => {
+            let mut lines = vec![Line::from(format!(
+                " Status: Captured | Violations: {} | Passes: {} | Incomplete: {}",
+                axe.violations.len(),
+                axe.passes_count,
+                axe.incomplete_count
+            ))];
+            lines.push(Line::from(""));
+            for v in axe.violations.iter().take(12) {
+                lines.push(Line::from(format!(
+                    " [{}] {} ({} node(s)): {}",
+                    sanitize_line(v.impact.as_deref().unwrap_or("unknown"), 12),
+                    sanitize_line(&v.id, 32),
+                    v.nodes_count,
+                    sanitize_line(&v.description, 64)
+                )));
+            }
+            lines
+        }
+        CollectorOutcome::Failed { error } => {
+            vec![Line::from(format!(
+                " Status: Failed — {}",
+                sanitize_line(error, 100)
+            ))]
+        }
+        CollectorOutcome::Skipped { reason } => {
+            vec![Line::from(format!(
+                " Status: Skipped — {}",
                 sanitize_line(reason, 100)
             ))]
         }
@@ -1397,34 +1912,29 @@ fn render_offline_report_evidence_fallback(state: &AppState) -> Vec<Line<'static
         Line::from(""),
     ];
     match &report.http {
-        Measurement::Measured { value } => {
+        CollectorOutcome::Captured { data: value }
+        | CollectorOutcome::Partial { data: value, .. } => {
             lines.push(Line::from(format!(
-                " HTTP Summary: status={} final_url={} redirects={} ttfb={}ms total={}ms",
+                " HTTP Summary: status={} final_url={} redirects={} elapsed={:?}",
                 value.status_code,
                 sanitize_url_for_display(&value.final_url, 80),
-                value.redirects,
-                value.ttfb_ms,
-                value.total_duration_ms
+                value.redirect_chain.len(),
+                value.elapsed_ms
             )));
         }
         other => {
             lines.push(Line::from(format!(" HTTP Summary: {other:?}")));
         }
     }
-    if let Some(ref rh) = report.rendered_history {
-        lines.push(Line::from(format!(
-            " Saved Rendered Content History: {} blocks ({}x{} viewport, load_timed_out={})",
-            rh.blocks.len(),
-            rh.viewport_width,
-            rh.viewport_height,
-            rh.load_timed_out
-        )));
+    if report.rendered_history.is_some() {
+        lines.push(Line::from(" Saved Rendered Content History: Present"));
     } else {
         lines.push(Line::from(" Saved Rendered Content History: Not present"));
     }
     lines
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_investigation(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
@@ -1655,6 +2165,7 @@ fn render_topology(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(table, area);
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_history(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -1774,6 +2285,7 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(Paragraph::new(reg_lines).block(reg_block), chunks[1]);
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_system(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
