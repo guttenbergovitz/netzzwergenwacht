@@ -487,6 +487,13 @@ pub struct DiagnosticEvent {
     pub elapsed_ms: u64,
     /// Cumulative number of coalescable progress events dropped due to channel backpressure.
     pub dropped_progress_events: u64,
+    /// Cumulative number of non-progress events lost because the channel was full or closed.
+    ///
+    /// The value is sampled before the event is offered to the channel, so the envelope
+    /// states how much of the stream is missing up to this point. Consumers use it to
+    /// distinguish a complete stream from a truncated one.
+    #[serde(default)]
+    pub dropped_events: u64,
     /// Event coordinates.
     pub context: EventContext,
     /// Event payload.
@@ -499,6 +506,7 @@ struct SinkInner {
     started_at: Instant,
     next_sequence: AtomicU64,
     dropped_progress: AtomicU64,
+    dropped_events: AtomicU64,
     tx: Option<mpsc::Sender<DiagnosticEvent>>,
 }
 
@@ -519,6 +527,10 @@ impl std::fmt::Debug for DiagnosticEventSink {
                 "dropped_progress",
                 &self.inner.dropped_progress.load(Ordering::Relaxed),
             )
+            .field(
+                "dropped_events",
+                &self.inner.dropped_events.load(Ordering::Relaxed),
+            )
             .finish_non_exhaustive()
     }
 }
@@ -538,6 +550,7 @@ impl DiagnosticEventSink {
                 started_at: Instant::now(),
                 next_sequence: AtomicU64::new(1),
                 dropped_progress: AtomicU64::new(0),
+                dropped_events: AtomicU64::new(0),
                 tx: Some(tx),
             }),
         };
@@ -553,6 +566,7 @@ impl DiagnosticEventSink {
                 started_at: Instant::now(),
                 next_sequence: AtomicU64::new(1),
                 dropped_progress: AtomicU64::new(0),
+                dropped_events: AtomicU64::new(0),
                 tx: None,
             }),
         }
@@ -568,6 +582,16 @@ impl DiagnosticEventSink {
     #[must_use]
     pub fn dropped_progress_count(&self) -> u64 {
         self.inner.dropped_progress.load(Ordering::Relaxed)
+    }
+
+    /// Returns the total number of non-progress events lost to backpressure or closure.
+    ///
+    /// A non-zero value means the delivered stream is incomplete. Critical outcomes are
+    /// still carried by the authoritative run artefacts, so loss degrades presentation
+    /// detail rather than the final state.
+    #[must_use]
+    pub fn dropped_event_count(&self) -> u64 {
+        self.inner.dropped_events.load(Ordering::Relaxed)
     }
 
     /// Emits an event immediately without awaiting.
@@ -587,10 +611,17 @@ impl DiagnosticEventSink {
             Err(mpsc::error::TrySendError::Full(_)) => {
                 if is_progress {
                     self.inner.dropped_progress.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    self.inner.dropped_events.fetch_add(1, Ordering::Relaxed);
                 }
                 false
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                if !is_progress {
+                    self.inner.dropped_events.fetch_add(1, Ordering::Relaxed);
+                }
+                false
+            }
         }
     }
 
@@ -611,11 +642,19 @@ impl DiagnosticEventSink {
         match tx.try_send(event) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(event)) => {
-                tokio::time::timeout(std::time::Duration::from_millis(50), tx.send(event))
-                    .await
-                    .is_ok_and(|res| res.is_ok())
+                let delivered =
+                    tokio::time::timeout(std::time::Duration::from_millis(50), tx.send(event))
+                        .await
+                        .is_ok_and(|res| res.is_ok());
+                if !delivered {
+                    self.inner.dropped_events.fetch_add(1, Ordering::Relaxed);
+                }
+                delivered
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.inner.dropped_events.fetch_add(1, Ordering::Relaxed);
+                false
+            }
         }
     }
 
@@ -743,11 +782,13 @@ impl DiagnosticEventSink {
         let elapsed_ms =
             u64::try_from(self.inner.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
         let dropped_progress_events = self.inner.dropped_progress.load(Ordering::Relaxed);
+        let dropped_events = self.inner.dropped_events.load(Ordering::Relaxed);
         DiagnosticEvent {
             run_id: self.inner.run_id.clone(),
             sequence,
             elapsed_ms,
             dropped_progress_events,
+            dropped_events,
             context,
             payload,
         }
@@ -822,5 +863,44 @@ mod tests {
         let third = rx.try_recv().expect("third event");
         assert_eq!(third.sequence, 4);
         assert_eq!(third.dropped_progress_events, 1);
+        assert_eq!(third.dropped_events, 0);
+    }
+
+    #[test]
+    fn critical_event_loss_is_counted_separately_from_progress_loss() {
+        let (sink, mut rx) = DiagnosticEventSink::bounded("run-7", 1);
+
+        assert!(sink.emit(
+            EventContext::new(),
+            DiagnosticEventPayload::CollectionStarted {
+                collector: CollectorId::Http,
+            }
+        ));
+
+        // The channel is full: a non-progress event must be counted as lost, not ignored.
+        assert!(!sink.emit(
+            EventContext::new(),
+            DiagnosticEventPayload::AnalysisStarted {
+                dwarf: crate::brigade::DwarfId::Netz,
+            }
+        ));
+        assert_eq!(sink.dropped_event_count(), 1);
+        assert_eq!(sink.dropped_progress_count(), 0);
+
+        let first = rx.try_recv().expect("first event");
+        assert_eq!(first.dropped_events, 0);
+
+        // A later delivered event reports the cumulative loss so consumers can detect gaps.
+        assert!(sink.emit(
+            EventContext::new(),
+            DiagnosticEventPayload::CollectionCompleted {
+                collector: CollectorId::Http,
+                partial: false,
+                warnings: Vec::new(),
+            }
+        ));
+        let second = rx.try_recv().expect("second event");
+        assert_eq!(second.sequence, 3);
+        assert_eq!(second.dropped_events, 1);
     }
 }

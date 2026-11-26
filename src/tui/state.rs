@@ -835,6 +835,12 @@ pub struct SystemMetricsState {
     pub max_tool_calls: usize,
     /// Number of coalesced/dropped progress events on the bounded event channel.
     pub dropped_progress_events: u64,
+    /// Number of non-progress events lost to channel backpressure or closure.
+    pub dropped_events: u64,
+    /// Highest event sequence number observed for the active run.
+    pub last_event_sequence: u64,
+    /// Number of sequence numbers missing from the active run's event stream.
+    pub sequence_gap_events: u64,
     /// Total structured diagnostic events received.
     pub total_events_received: u64,
     /// Active collectors status summary.

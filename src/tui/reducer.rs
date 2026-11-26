@@ -384,6 +384,9 @@ fn try_launch_from_launcher(state: &mut AppState) -> Vec<AppEffect> {
             state.system_metrics.elapsed_ms = 0;
             state.system_metrics.total_events_received = 0;
             state.system_metrics.dropped_progress_events = 0;
+            state.system_metrics.dropped_events = 0;
+            state.system_metrics.last_event_sequence = 0;
+            state.system_metrics.sequence_gap_events = 0;
             state.status_message = format!(
                 "Starting {} against {}...",
                 state.run_mode.label(),
@@ -569,6 +572,13 @@ fn step_index(current: usize, len: usize, delta: isize) -> usize {
 #[allow(clippy::too_many_lines)]
 fn reduce_diagnostic_event(state: &mut AppState, event: DiagnosticEvent) {
     state.system_metrics.total_events_received += 1;
+    state.system_metrics.dropped_progress_events = event.dropped_progress_events;
+    state.system_metrics.dropped_events = event.dropped_events;
+    let expected_sequence = state.system_metrics.last_event_sequence.saturating_add(1);
+    if event.sequence > expected_sequence {
+        state.system_metrics.sequence_gap_events += event.sequence - expected_sequence;
+    }
+    state.system_metrics.last_event_sequence = event.sequence;
     state.active_run_id = Some(event.run_id.0);
 
     match event.payload {
@@ -886,5 +896,37 @@ fn set_collector_status(
             .system_metrics
             .collector_statuses
             .push((collector, status, clean));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::events::{DiagnosticEvent, DiagnosticEventPayload, EventContext, RunId};
+
+    fn event(sequence: u64, dropped_events: u64) -> DiagnosticEvent {
+        DiagnosticEvent {
+            run_id: RunId::new("run-gap"),
+            sequence,
+            elapsed_ms: 5,
+            dropped_progress_events: 0,
+            dropped_events,
+            context: EventContext::new(),
+            payload: DiagnosticEventPayload::Warning {
+                message: format!("event {sequence}"),
+            },
+        }
+    }
+
+    #[test]
+    fn event_sequence_gaps_are_visible_in_system_metrics() {
+        let mut state = AppState::default();
+        reduce_diagnostic_event(&mut state, event(1, 0));
+        reduce_diagnostic_event(&mut state, event(4, 2));
+
+        assert_eq!(state.system_metrics.total_events_received, 2);
+        assert_eq!(state.system_metrics.last_event_sequence, 4);
+        assert_eq!(state.system_metrics.sequence_gap_events, 2);
+        assert_eq!(state.system_metrics.dropped_events, 2);
     }
 }

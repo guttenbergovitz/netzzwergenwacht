@@ -2362,9 +2362,11 @@ fn render_system(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             state.system_metrics.browser_sessions
         )),
         Line::from(format!(
-            " Structured Events:    {} received ({} progress coalesced)",
+            " Structured Events:    {} received ({} progress coalesced, {} dropped, {} sequence gaps)",
             state.system_metrics.total_events_received,
-            state.system_metrics.dropped_progress_events
+            state.system_metrics.dropped_progress_events,
+            state.system_metrics.dropped_events,
+            state.system_metrics.sequence_gap_events
         )),
         Line::from(""),
         Line::from(Span::styled(
