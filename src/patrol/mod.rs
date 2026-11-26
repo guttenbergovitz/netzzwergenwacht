@@ -30,8 +30,12 @@ use crate::intelligence::{LlmBudget, LlmProvider, ProviderRouter};
 use crate::investigation::{DiagnosticBackend, InvestigationBudget, InvestigationReport, prompts};
 use crate::persistence::{self, RegressionReport};
 
-use self::memory::{
-    ApplicationMemory, EvidenceFreshness, RememberedPage, hash_body, load_memory, save_memory,
+pub use self::memory::{
+    ApplicationId, ApplicationMemory, CATALOG_SCHEMA_VERSION, CatalogAnomalyFilter,
+    CatalogAnomalyRow, CatalogPageRow, CatalogRunRow, CatalogTargetRow, EvidenceFreshness,
+    PatrolIndexCatalog, RememberedPage, hash_body, load_memory, load_or_rebuild_catalog,
+    query_catalog_anomalies, query_catalog_runs, query_catalog_stale_pages, query_catalog_targets,
+    record_patrol_run, save_memory,
 };
 use self::sampling::{SampleSelection, SamplingPlan, build_sampling_plan};
 
@@ -901,7 +905,7 @@ pub async fn run_patrol_with_router(
         duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     };
 
-    PatrolReport {
+    let mut report = PatrolReport {
         patrol_id: format!("patrol-{patrol_number}-{now}"),
         patrol_number,
         target: seed,
@@ -922,7 +926,14 @@ pub async fn run_patrol_with_router(
         is_quiet_patrol,
         memory_load_error,
         memory_save_error,
+    };
+    if let Some(dir) = memory_dir
+        && report.memory_save_error.is_none()
+        && let Err(err) = record_patrol_run(dir, &mem.app_id, &report)
+    {
+        report.memory_save_error = Some(format!("failed to record patrol run in catalog: {err}"));
     }
+    report
 }
 
 /// Renders a change-oriented Markdown situation report for the requested stakeholder perspective.
