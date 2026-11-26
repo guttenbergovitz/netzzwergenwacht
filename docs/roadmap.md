@@ -1,6 +1,6 @@
 # NetzZwergenWacht Roadmap
 
-Current state on `develop`: **235 registered diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **214+ passing tests** and the **Zwergenleitstand** Ratatui investigation workbench (`nzw tui`).
+Current state on `develop`: **235 registered diagnostic rules** across **Die Zwergenbrigade** and `ApplicationGraph`, with **250+ passing tests**, the **Zwergenleitstand** Ratatui investigation workbench (`nzw tui`) with 19 Evidence categories, and full **Operation Aufrüstung IV** sensory inventories and **21 offline Evidence Query Engine** tools.
 
 ## Completed under Operation Zwergenleitstand (Waves ZL-0 – ZL-8)
 
@@ -22,9 +22,18 @@ Current state on `develop`: **235 registered diagnostic rules** across **Die Zwe
 3. **Visual Regression & Differential Benchmarks**: Screenshot perceptual-hashing baselines and automated differential comparison runs against SquirrelScan, Lighthouse, and axe-core.
 4. **Language-Aware Linguistic & Similarity Layer**: Locale-specific readability models and SimHash/MinHash near-duplicate content clustering.
 
-## Operation Aufrüstung IV
+## Completed under Operation Aufrüstung IV (Waves IV-A – IV-I)
 
-Rule-count expansion is frozen at **235 rules** while sensory depth, element-level evidence, and the **Evidence Query Engine** are built out across eight waves.
+Rule-count expansion remains frozen at **235 rules** while sensory depth, element-level evidence, and the **Evidence Query Engine** have been completed across Waves IV-A through IV-I:
+
+- **Wave IV-A & IV-A2 (Content, Timeline Sensory & Evidence Query Core — Completed)**: Source and rendered DOM segmentation with conservative cross-capture block matching and SHA-256 text fingerprints (`nzw diff`); redacted `endpoint_path`, `TimelineCacheSource`, and `TimelinePhaseTimings` on `BrowserTimeline`; offline `query_browser_timeline_filtered`, `query_request_chains`, `query_failed_dependencies`, `query_rendered_content`, `query_network_resources`, `query_runtime_errors`, and snapshot reuse in `query_browser_evidence_from_snapshot`.
+- **Wave IV-B (Functional Intelligence — Completed)**: `InteractiveElementInventory`, `ApplicationStateSnapshot`, and `UserJourneyTrace` with offline `query_interactive_elements`, `query_application_state`, and `query_interaction_trace`.
+- **Wave IV-C (Presentation & Accessibility Intelligence — Completed)**: `VisualGeometryInventory`, `AccessibilityNodeInventory`, modal Escape/focus restoration probes, and `axe-core` `target_selectors` with offline `query_element_geometry` and `query_accessibility_nodes`.
+- **Wave IV-D (Security, Privacy & Third-Party Surfaces — Completed)**: `CookieAndStorageInventory` (value-free cookie attributes and storage key metadata), `ThirdPartyInventory`, `SecurityPostureSummary`, and `SecurityChallengeEvidence` with offline `query_storage_and_cookies`, `query_third_party_origins`, `query_security_posture`, and `query_security_challenge`.
+- **Wave IV-E (Performance Attribution, Media & Fonts — Completed)**: `PerformanceAttributionEvidence` and `MediaAndFontInventory` with offline `query_performance_attribution` and `query_media_and_fonts`.
+- **Wave IV-F (Search, Indexability & Structured Data — Completed)**: `IndexabilityAuthorityEvidence` and `StructuredDataInventory` with offline `query_indexability_authority` and `query_structured_data`.
+- **Wave IV-G (Cross-Context Parity, Responsive Layout & Link Graph — Completed)**: Source-vs-rendered landmark drift (`compare_source_and_rendered`), `ResponsiveComparisonEvidence` (`query_responsive_comparison`), and `LinkGraphInventory` (`query_link_graph`).
+- **Wave IV-H & IV-I (Visual Artefacts, Service Workers, TLS/CAA, Patrol Catalog, TUI & Zwergenprüfstand v2 — Completed)**: `VisualArtifactEvidence` (`query_visual_artifacts`), `ServiceWorkerLifecycleEvidence` (`query_service_worker_lifecycle`), `TlsAndCaaDiagnostics` (`query_tls_and_caa`), indexed `PatrolIndexCatalog` queries (`src/patrol/memory.rs`), 19-category `Zwergenleitstand` Evidence Workbench, and `Zwergenprüfstand` v2 comparative evaluation scenarios (`F-05`–`F-07`).
 
 ### Wave IV-A — Content & Initial Timeline Foundations (Completed)
 
