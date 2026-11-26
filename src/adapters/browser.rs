@@ -18,6 +18,7 @@ const CDP_HARNESS_JS: &str = concat!(
     r"
 const { spawn } = require('node:child_process');
 const { createHash } = require('node:crypto');
+const sha256Hex = (str) => createHash('sha256').update(String(str ?? '').normalize('NFC'), 'utf8').digest('hex');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -161,6 +162,9 @@ function findBrowser() {
         if (navStartTs === null && typeof msg.params.timestamp === 'number') {
           navStartTs = msg.params.timestamp;
         }
+        if (msg.params?.requestId) {
+          inFlightRequestIds.add(msg.params.requestId);
+        }
         reqUrls.set(msg.params.requestId, msg.params.request?.url || '');
         reqMeta.set(msg.params.requestId, {
           initiator_type: msg.params.initiator?.type ? String(msg.params.initiator.type).toLowerCase() : null,
@@ -177,6 +181,9 @@ function findBrowser() {
           stylesheetUrls.set(hdr.styleSheetId, hdr.sourceURL || 'inline');
         }
       } else if (msg.method === 'Network.loadingFailed') {
+        if (msg.params?.requestId) {
+          inFlightRequestIds.delete(msg.params.requestId);
+        }
         failedRequests.push({
           url: reqUrls.get(msg.params.requestId) || '',
           error_text: msg.params.errorText || 'loading failed',
@@ -221,6 +228,9 @@ function findBrowser() {
           timing: extractPhaseTimings(resp?.timing),
         });
       } else if (msg.method === 'Network.loadingFinished') {
+        if (msg.params?.requestId) {
+          inFlightRequestIds.delete(msg.params.requestId);
+        }
         const rec = resourcesByReqId.get(msg.params.requestId);
         const meta = reqMeta.get(msg.params.requestId);
         if (rec) {
@@ -250,8 +260,18 @@ function findBrowser() {
           }));
         }
       } else if (msg.method === 'Page.loadEventFired' && loadResolve) {
-        loadResolve();
-        loadResolve = null;
+        if (inFlightRequestIds.size === 0) {
+          loadResolve();
+          loadResolve = null;
+        } else {
+          const settle = setTimeout(() => {
+            if (loadResolve) {
+              loadResolve();
+              loadResolve = null;
+            }
+          }, 350);
+          if (typeof settle.unref === 'function') settle.unref();
+        }
       }
     });
 
@@ -327,12 +347,14 @@ function findBrowser() {
 
     let loadTimedOut = false;
     let loadTimer;
+    const inFlightRequestIds = new Set();
+    const loadTimeoutMs = Math.max(1000, Math.min(15000, Number(process.env.NZW_LOAD_TIMEOUT_MS || 15000)));
     const loaded = new Promise((resolve) => {
       loadResolve = resolve;
       loadTimer = setTimeout(() => {
         loadTimedOut = true;
         resolve();
-      }, 15000);
+      }, loadTimeoutMs);
     });
     try {
       await call('Page.navigate', { url: targetUrl });
@@ -341,6 +363,7 @@ function findBrowser() {
       clearTimeout(loadTimer);
       loadResolve = null;
     }
+    const pendingRequestsAtLoadEnd = inFlightRequestIds.size;
 
     const finalRes = await call('Runtime.evaluate', { expression: 'window.location.href', returnByValue: true });
     const finalUrl = finalRes?.result?.value || targetUrl;
@@ -368,15 +391,18 @@ function findBrowser() {
           }
           let smallTap = 0;
           let offscreenControls = 0;
+          let visibleControls = 0;
           for (const el of Array.from(document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea')).slice(0, 200)) {
             const r = el.getBoundingClientRect();
-            if (r.width > 0 && r.height > 0) {
+            const cs = getComputedStyle(el);
+            if (cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) !== 0 && r.width > 0 && r.height > 0) {
+              visibleControls++;
               if (r.width < 44 || r.height < 44) smallTap++;
               if (r.right < 0 || r.left > window.innerWidth) offscreenControls++;
             }
           }
           let fixedTopHeight = 0;
-          for (const el of Array.from(document.querySelectorAll('header, nav, [role=\'banner\'], div')).slice(0, 120)) {
+          for (const el of Array.from(document.querySelectorAll('header, nav, [role=banner], div')).slice(0, 120)) {
             const cs = getComputedStyle(el);
             if (cs.position === 'fixed' || cs.position === 'sticky') {
               const r = el.getBoundingClientRect();
@@ -386,8 +412,13 @@ function findBrowser() {
             }
           }
           const fixedPct = window.innerHeight > 0 ? Math.min(100, Math.round((fixedTopHeight / window.innerHeight) * 100)) : 0;
+          const docScrollW = Math.max(window.innerWidth || 0, Math.round(document.documentElement?.scrollWidth || 0));
+          const hOverflowPx = Math.max(0, docScrollW - (window.innerWidth || 0));
           return {
-            has_horizontal_overflow: document.documentElement.scrollWidth > window.innerWidth,
+            has_horizontal_overflow: hOverflowPx > 0,
+            scroll_width: docScrollW,
+            horizontal_overflow_px: hOverflowPx,
+            visible_controls: visibleControls,
             broken_images: Array.from(document.images)
               .filter((img) => img.complete && img.naturalWidth === 0)
               .map((img) => ({ src: img.currentSrc || img.getAttribute('src') || '', natural_width: 0 })),
@@ -399,11 +430,16 @@ function findBrowser() {
         })()`,
         returnByValue: true,
       });
-      const val = evalRes?.result?.value || { has_horizontal_overflow: false, broken_images: [], small_text_nodes: 0, small_tap_targets: 0, offscreen_controls: 0, fixed_header_height_pct: 0 };
+      const val = evalRes?.result?.value || { has_horizontal_overflow: false, scroll_width: vp.width, horizontal_overflow_px: 0, visible_controls: 0, broken_images: [], small_text_nodes: 0, small_tap_targets: 0, offscreen_controls: 0, fixed_header_height_pct: 0 };
       viewports.push({
+        name: vp.name,
         viewport_name: vp.name,
         width: vp.width,
         height: vp.height,
+        scroll_width: Number(val.scroll_width || vp.width),
+        horizontal_overflow_px: Number(val.horizontal_overflow_px || 0),
+        small_touch_targets_count: Number(val.small_tap_targets || 0),
+        visible_controls: Number(val.visible_controls || 0),
         has_horizontal_overflow: Boolean(val.has_horizontal_overflow),
         broken_images: Array.isArray(val.broken_images) ? val.broken_images : [],
         small_text_nodes: Number(val.small_text_nodes || 0),
@@ -523,7 +559,7 @@ function findBrowser() {
       await call('Accessibility.enable');
       const axRes = await call('Accessibility.getFullAXTree');
       const nodes = Array.isArray(axRes?.nodes) ? axRes.nodes : [];
-      axNodeInventory = buildAxNodeInventoryFromCdp(nodes);
+      axNodeInventory = buildAxNodeInventoryFromCdp(nodes, sha256Hex);
       const capped = nodes.slice(0, 5000);
       const interactiveRoles = new Set(['button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'menuitem', 'tab', 'switch', 'slider']);
       let ignoredNodes = 0;
@@ -850,11 +886,36 @@ function findBrowser() {
         contentHeight: Math.max(0, Math.round(cs.height || 720)),
       };
     } catch {}
+    let screenshotByteLen = 0;
     try {
       const shotRes = await call('Page.captureScreenshot', { format: 'png' });
       if (typeof shotRes?.data === 'string' && shotRes.data.length > 0) {
-        screenshotSha256 = createHash('sha256').update(Buffer.from(shotRes.data, 'base64')).digest('hex');
+        const buf = Buffer.from(shotRes.data, 'base64');
+        screenshotByteLen = buf.length;
+        screenshotSha256 = createHash('sha256').update(buf).digest('hex');
       }
+    } catch {}
+    let indexedDbInfo = { databases: [], enumerated: false };
+    try {
+      const idbRes = await call('Runtime.evaluate', {
+        expression: `(async () => {
+          if (typeof window.indexedDB?.databases !== 'function') {
+            return { databases: [], enumerated: false };
+          }
+          try {
+            const dbs = await window.indexedDB.databases();
+            const names = Array.isArray(dbs)
+              ? dbs.map((d) => String(d?.name || '').trim()).filter(Boolean).slice(0, 32)
+              : [];
+            return { databases: names, enumerated: true };
+          } catch {
+            return { databases: [], enumerated: false };
+          }
+        })()`,
+        awaitPromise: true,
+        returnByValue: true,
+      });
+      if (idbRes?.result?.value) indexedDbInfo = idbRes.result.value;
     } catch {}
     try {
       const swRes = await call('Runtime.evaluate', {
@@ -913,9 +974,13 @@ function findBrowser() {
       viewports,
       perfObs: domAndImages.performance || null,
       screenshotSha256,
+      screenshotByteLen,
       layoutMetrics,
       swInfo,
-    });
+      indexedDbInfo,
+      loadTimedOut,
+      pendingRequestsCount: pendingRequestsAtLoadEnd,
+    }, sha256Hex);
     if (hasBeh) {
       behObs.escape_dismissed_modal = behObs.dialog_escape_closed;
       behObs.focus_restored_after_modal = typeof behObs.focus_lost_after_dialog_close === 'boolean'
@@ -951,7 +1016,7 @@ function findBrowser() {
       consent_banner: domAndImages.consent_banner || null,
       interactive_inventory: sensory.interactive_inventory,
       application_state: sensory.application_state,
-      interaction_trace: sensory.interaction_trace,
+      user_journey_trace: sensory.user_journey_trace,
       visual_geometry: sensory.visual_geometry,
       ax_node_inventory: axNodeInventory,
       cookie_and_storage: sensory.cookie_and_storage,
@@ -965,7 +1030,7 @@ function findBrowser() {
       responsive_comparison: sensory.responsive_comparison,
       link_graph: sensory.link_graph,
       visual_artifacts: sensory.visual_artifacts,
-      service_worker_lifecycle: sensory.service_worker_lifecycle,
+      service_worker: sensory.service_worker,
       provenance: {
         viewport: 'mobile (390x844), desktop (1280x720)',
         throttling_profile: 'unthrottled',
@@ -1008,11 +1073,13 @@ pub async fn run_browser_with_policy(
         crate::domain::TargetPolicy::PublicOnly => "public_only",
         crate::domain::TargetPolicy::AllowPrivate => "allow_private",
     };
+    let load_timeout_ms = (timeout.as_millis() / 2).clamp(1000, 12000);
     let mut cmd = Command::new("node");
     cmd.arg("-e")
         .arg(CDP_HARNESS_JS)
         .arg(target.as_str())
-        .env("NZW_BROWSER_POLICY", policy_env);
+        .env("NZW_BROWSER_POLICY", policy_env)
+        .env("NZW_LOAD_TIMEOUT_MS", load_timeout_ms.to_string());
 
     let stdout = match run_bounded_command("browser", &mut cmd, timeout).await {
         Ok(out) => out,

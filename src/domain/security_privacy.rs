@@ -93,6 +93,12 @@ pub struct CookieAndStorageInventory {
     pub storage_keys: Vec<StorageKeyObs>,
     /// Number of `IndexedDB` databases detected (when enumerable).
     pub indexed_db_count: u32,
+    /// Sanitized `IndexedDB` database names discovered via `indexedDB.databases()` (up to 16).
+    #[serde(default)]
+    pub indexed_db_databases: Vec<String>,
+    /// Whether asynchronous `indexedDB.databases()` enumeration was attempted and succeeded.
+    #[serde(default)]
+    pub indexed_db_enumerated: bool,
     /// Collection bounds and truncation flags.
     pub limits: CookieStorageLimits,
 }

@@ -1,699 +1,1336 @@
-function sha256HexUtf8(value) {
-  const { createHash } = require('node:crypto');
-  return createHash('sha256').update(String(value || '').normalize('NFC'), 'utf8').digest('hex');
-}
+// Bounded sensory collectors for Operation Aufrüstung IV (Waves IV-B through IV-H).
+// Evaluates inside an isolated or page execution context and post-processes
+// SHA-256 digests in the Node.js CDP harness so raw untrusted text or secrets
+// never cross into LLM prompts or persisted inventories.
 
-function sha256HexUtf16Le(value) {
-  const { createHash } = require('node:crypto');
-  return createHash('sha256').update(String(value || ''), 'utf16le').digest('hex');
+function buildAxNodeInventoryFromCdp(cdpNodes, sha256HexFn) {
+  if (!Array.isArray(cdpNodes)) return null;
+  const MAX_RETAINED = 256;
+  const interactiveRoles = new Set([
+    'button', 'link', 'textbox', 'searchbox', 'combobox', 'listbox',
+    'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'radio',
+    'checkbox', 'switch', 'slider', 'spinbutton', 'tab', 'treeitem',
+  ]);
+  const indexById = new Map();
+  const retained = [];
+  for (let i = 0; i < cdpNodes.length; i += 1) {
+    if (retained.length >= MAX_RETAINED) break;
+    const n = cdpNodes[i];
+    if (!n || typeof n !== 'object') continue;
+    const nodeIndex = retained.length + 1;
+    const nodeId = String(n.nodeId ?? nodeIndex).slice(0, 64);
+    indexById.set(nodeId, nodeIndex);
+    const roleRaw = String(n.role?.value || 'generic').toLowerCase().slice(0, 48);
+    const nameRaw = typeof n.name?.value === 'string' ? n.name.value.replace(/\s+/g, ' ').trim() : '';
+    const namePresent = nameRaw.length > 0;
+    const nameFingerprint = namePresent ? `sha256:v1:${sha256HexFn(nameRaw)}` : null;
+    let nameSource = 'none';
+    if (Array.isArray(n.name?.sources) && n.name.sources.length > 0) {
+      const activeSrc = n.name.sources.find((s) => s && s.value && s.value.value) || n.name.sources[0];
+      const st = String(activeSrc?.type || '').toLowerCase();
+      if (st === 'attribute') nameSource = 'attribute';
+      else if (st === 'relatedelement') nameSource = 'related_element';
+      else if (st === 'contents') nameSource = 'contents';
+      else if (st === 'placeholder') nameSource = 'placeholder';
+      else if (st === 'title') nameSource = 'title';
+      else if (namePresent) nameSource = 'other';
+    } else if (namePresent) {
+      nameSource = 'contents';
+    }
+    const descRaw = typeof n.description?.value === 'string' ? n.description.value.trim() : '';
+    const props = Array.isArray(n.properties) ? n.properties : [];
+    const propMap = new Map();
+    for (const p of props) {
+      if (p && typeof p.name === 'string') {
+        propMap.set(p.name, p.value?.value);
+      }
+    }
+    const ignored = Boolean(n.ignored);
+    let ignoredReason = null;
+    if (ignored && Array.isArray(n.ignoredReasons) && n.ignoredReasons.length > 0) {
+      ignoredReason = String(n.ignoredReasons[0]?.name || 'ignored').slice(0, 48);
+    }
+    retained.push({
+      node_index: nodeIndex,
+      ax_node_id: nodeId,
+      _raw_parent_id: n.parentId ? String(n.parentId) : null,
+      parent_index: null,
+      child_count: Array.isArray(n.childIds) ? n.childIds.length : 0,
+      role: roleRaw,
+      name_present: namePresent,
+      name_length: Array.from(nameRaw).length,
+      name_fingerprint: nameFingerprint,
+      name_source: nameSource,
+      description_present: descRaw.length > 0,
+      focusable: Boolean(propMap.get('focusable')),
+      focused: Boolean(propMap.get('focused')),
+      disabled: Boolean(propMap.get('disabled')),
+      expanded: typeof propMap.get('expanded') === 'boolean' ? propMap.get('expanded') : null,
+      selected: typeof propMap.get('selected') === 'boolean' ? propMap.get('selected') : null,
+      checked: propMap.has('checked') ? String(propMap.get('checked')).slice(0, 16) : null,
+      modal: typeof propMap.get('modal') === 'boolean' ? propMap.get('modal') : null,
+      live_politeness: propMap.has('live') ? String(propMap.get('live')).slice(0, 24) : null,
+      ignored,
+      ignored_reason: ignoredReason,
+      interactive: interactiveRoles.has(roleRaw) || Boolean(propMap.get('focusable')),
+    });
+  }
+  for (const item of retained) {
+    if (item._raw_parent_id && indexById.has(item._raw_parent_id)) {
+      item.parent_index = indexById.get(item._raw_parent_id);
+    }
+    delete item._raw_parent_id;
+  }
+  return {
+    nodes: retained,
+    limits: {
+      total_cdp_nodes: cdpNodes.length,
+      nodes_truncated: cdpNodes.length > MAX_RETAINED,
+    },
+  };
 }
 
 function collectInPageSensoryBundle() {
-  const MAX_INTERACTIVE = 128;
+  const MAX_DOM_NODES = 16384;
+  const MAX_DEPTH = 64;
+  const MAX_INTERACTIVE = 256;
   const MAX_GEOMETRY = 128;
-  const MAX_LINKS = 128;
+  const MAX_MEDIA = 128;
+  const MAX_FONTS = 64;
+  const MAX_LINKS = 256;
   const MAX_FORMS = 32;
-  const MAX_IMAGES = 64;
-  const MAX_FONTS = 32;
-  const MAX_STRUCTURED = 32;
-  const MAX_STORAGE_KEYS = 64;
+  const MAX_ENTITIES = 32;
+  const MAX_HREFLANG = 64;
+  const MAX_STORAGE_KEYS = 128;
 
   const vw = Math.max(0, Math.round(window.innerWidth || document.documentElement?.clientWidth || 0));
   const vh = Math.max(0, Math.round(window.innerHeight || document.documentElement?.clientHeight || 0));
+  const pageOrigin = window.location?.origin || '';
 
-  const cleanToken = (raw, maxLen = 64) => {
-    if (typeof raw !== 'string') return '';
-    return Array.from(raw.trim())
-      .filter((ch) => {
-        const c = ch.codePointAt(0);
-        return c >= 0x20 && c !== 0x7f && !(c >= 0x80 && c <= 0x9f);
-      })
-      .slice(0, maxLen)
-      .join('');
-  };
-
-  const safeOriginAndPath = (rawHref) => {
-    if (!rawHref || typeof rawHref !== 'string') return { origin: null, path: null, sameOrigin: null };
-    try {
-      const u = new URL(rawHref, location.href);
-      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
-        return { origin: null, path: null, sameOrigin: null };
-      }
-      return {
-        origin: u.origin.toLowerCase(),
-        path: cleanToken(u.pathname || '/', 256) || '/',
-        sameOrigin: u.origin.toLowerCase() === location.origin.toLowerCase(),
-      };
-    } catch {
-      return { origin: null, path: null, sameOrigin: null };
-    }
-  };
-
-  // Build element ID census for stable RenderedElementIdentity
   const idCounts = new Map();
-  let idCensusComplete = true;
-  const allEls = Array.from(document.querySelectorAll('*'));
-  if (allEls.length > 4096) idCensusComplete = false;
-  for (const el of allEls.slice(0, 4096)) {
-    const rawId = typeof el.id === 'string' ? el.id.trim() : '';
-    if (rawId) {
-      idCounts.set(rawId, (idCounts.get(rawId) || 0) + 1);
-    }
-  }
-
-  const buildIdentity = (el) => {
-    const tag = cleanToken((el.tagName || 'div').toLowerCase(), 32) || 'div';
-    const roleAttr = cleanToken((el.getAttribute?.('role') || '').toLowerCase(), 32);
-    const role = roleAttr || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' ? 'textbox' : tag === 'nav' ? 'navigation' : tag === 'main' ? 'main' : tag === 'header' ? 'banner' : tag === 'footer' ? 'contentinfo' : 'generic');
-    const rawId = typeof el.id === 'string' ? el.id.trim() : '';
-    let idState = { status: 'absent' };
-    if (rawId) {
-      if (!idCensusComplete || rawId.length > 128) {
-        idState = { status: 'unavailable' };
-      } else if ((idCounts.get(rawId) || 0) === 1) {
-        idState = { status: 'unique', raw_key: rawId };
-      } else {
-        idState = { status: 'duplicate', raw_key: rawId };
+  let idVisited = 0;
+  const countIds = (root) => {
+    const stack = [root];
+    while (stack.length > 0 && idVisited < MAX_DOM_NODES) {
+      const el = stack.pop();
+      if (!el || el.nodeType !== 1) continue;
+      idVisited += 1;
+      const rawId = typeof el.id === 'string' ? el.id.trim() : '';
+      if (rawId) {
+        idCounts.set(rawId, (idCounts.get(rawId) || 0) + 1);
+      }
+      const children = el.children || [];
+      for (let i = children.length - 1; i >= 0; i -= 1) {
+        stack.push(children[i]);
       }
     }
-    const path = [];
-    let cur = el;
-    let depth = 0;
-    while (cur && cur.nodeType === 1 && depth < 32) {
-      const cTag = cleanToken((cur.tagName || 'div').toLowerCase(), 32) || 'div';
-      path.push(cTag);
-      if (cTag === 'body') break;
-      cur = cur.parentElement;
-      depth++;
+  };
+  if (document.documentElement) countIds(document.documentElement);
+
+  const buildIdentity = (el, pathSegments) => {
+    const rawId = typeof el?.id === 'string' ? el.id.trim() : '';
+    let idObj = { status: 'absent' };
+    if (rawId) {
+      const count = idCounts.get(rawId) || 1;
+      idObj = {
+        status: count === 1 ? 'unique' : 'duplicate',
+        _raw_id: rawId.slice(0, 128),
+      };
     }
-    path.reverse();
     return {
-      role,
-      tag,
-      path: path.length > 0 ? path : [tag],
-      id: idState,
+      path: Array.isArray(pathSegments) ? pathSegments.slice(0, MAX_DEPTH) : null,
+      id: idObj,
     };
   };
 
-  const getBbox = (el) => {
-    const r = el.getBoundingClientRect();
+  const sanitizeUrlParts = (rawHref) => {
+    if (!rawHref || typeof rawHref !== 'string') return null;
+    const trimmed = rawHref.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('#')) {
+      return {
+        origin: pageOrigin || null,
+        path: window.location?.pathname || '/',
+        same_origin: true,
+        fragment_only: true,
+      };
+    }
+    try {
+      const parsed = new URL(trimmed, window.location.href);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return null;
+      }
+      return {
+        origin: parsed.origin,
+        path: (parsed.pathname || '/').replace(/[\x00-\x1f\x7f]/g, '').slice(0, 256),
+        same_origin: parsed.origin === pageOrigin,
+        fragment_only: false,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const getAccessibleName = (el) => {
+    if (!el || el.nodeType !== 1) return '';
+    const ariaLabel = el.getAttribute('aria-label');
+    if (ariaLabel && ariaLabel.trim()) return ariaLabel.replace(/\s+/g, ' ').trim();
+    const labelledBy = el.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const parts = labelledBy
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.innerText || '')
+        .filter(Boolean);
+      if (parts.length > 0) return parts.join(' ').replace(/\s+/g, ' ').trim();
+    }
+    if (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA') {
+      if (el.id) {
+        try {
+          const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+          if (lbl && lbl.innerText) return lbl.innerText.replace(/\s+/g, ' ').trim();
+        } catch {}
+      }
+      const parentLabel = el.closest('label');
+      if (parentLabel && parentLabel.innerText) {
+        return parentLabel.innerText.replace(/\s+/g, ' ').trim();
+      }
+      const placeholder = el.getAttribute('placeholder');
+      if (placeholder && placeholder.trim()) return placeholder.replace(/\s+/g, ' ').trim();
+    }
+    const alt = el.getAttribute('alt');
+    if (alt && alt.trim()) return alt.replace(/\s+/g, ' ').trim();
+    const title = el.getAttribute('title');
+    if (title && title.trim()) return title.replace(/\s+/g, ' ').trim();
+    const txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    return txt.slice(0, 512);
+  };
+
+  const isVisible = (el, style, rect) => {
+    if (!style || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') {
+      return false;
+    }
+    if (Number(style.opacity) === 0) return false;
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const classifyInteractive = (el, tag, role, typeAttr, nameLower) => {
+    let safety = 'read_only_ui_toggle';
+    let kind = 'generic_control';
+    const form = el.closest('form');
+    const isSubmit =
+      (tag === 'button' && (!typeAttr || typeAttr === 'submit')) ||
+      (tag === 'input' && (typeAttr === 'submit' || typeAttr === 'image'));
+
+    if (tag === 'a' && el.hasAttribute('href')) {
+      const rawHref = (el.getAttribute('href') || '').trim();
+      safety = rawHref.startsWith('#') ? 'read_only_ui_toggle' : 'read_only_navigation';
+      if (el.hasAttribute('download')) kind = 'download_control';
+      else if (el.closest('nav,[role="navigation"]')) kind = 'navigation_menu';
+      else if (/next|prev|page|\b\d+\b/i.test(nameLower) && el.closest('[aria-label*="pag" i],.pagination')) {
+        kind = 'pagination';
+      } else if (/buy|checkout|sign up|get started|subscribe|start|register|book/i.test(nameLower)) {
+        kind = 'cta';
+      }
+    } else if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      safety = isSubmit ? 'state_changing_submission' : 'form_input';
+      if (typeAttr === 'search' || role === 'searchbox' || /search/i.test(nameLower)) kind = 'search';
+      else if (/lang|locale|currency|country/i.test(nameLower)) kind = 'language_selector';
+      else if (/sort/i.test(nameLower)) kind = 'sort';
+      else if (/filter/i.test(nameLower)) kind = 'filter';
+      else if (/size|color|colour|variant|quantity|qty/i.test(nameLower)) kind = 'product_selector';
+      else kind = 'form';
+    } else if (isSubmit && form) {
+      const method = (form.getAttribute('method') || 'get').toLowerCase();
+      const hasSearch = Boolean(form.querySelector('input[type="search"],[role="searchbox"]'));
+      safety = method === 'get' && hasSearch ? 'read_only_navigation' : 'state_changing_submission';
+      kind = hasSearch ? 'search' : 'cta';
+    } else {
+      if (
+        /delete|remove|buy|pay|checkout|purchase|order|submit|save|confirm|accept|allow/i.test(
+          nameLower
+        )
+      ) {
+        safety = 'state_changing_submission';
+        kind = 'cta';
+      } else if (role === 'tab') {
+        kind = 'tabs';
+      } else if (tag === 'summary' || el.hasAttribute('aria-expanded')) {
+        kind = el.closest('nav,[role="navigation"]') ? 'navigation_menu' : 'accordion';
+      } else if (role === 'combobox') {
+        kind = 'combobox';
+      } else if (el.closest('dialog,[role="dialog"],[role="alertdialog"]')) {
+        kind = 'dialog';
+      } else if (/search/i.test(nameLower)) {
+        kind = 'search';
+      } else if (/filter/i.test(nameLower)) {
+        kind = 'filter';
+      } else if (/sort/i.test(nameLower)) {
+        kind = 'sort';
+      } else if (/lang|locale|english|deutsch|polski/i.test(nameLower)) {
+        kind = 'language_selector';
+      } else if (/play|pause|mute|volume/i.test(nameLower)) {
+        kind = 'media_player';
+      } else if (/next|prev|slide|carousel/i.test(nameLower)) {
+        kind = 'carousel';
+      }
+    }
+    return { safety, kind };
+  };
+
+  const interactiveElements = [];
+  let discoveredInteractive = 0;
+  let interactiveTruncated = false;
+
+  const geometryElements = [];
+  let geometryTruncated = false;
+
+  const mediaAssets = [];
+  let mediaTruncated = false;
+
+  const links = [];
+  let linksTruncated = false;
+  const clusterSummary = {
+    internal_links: 0,
+    external_links: 0,
+    header_nav_links: 0,
+    main_content_links: 0,
+    footer_links: 0,
+    empty_anchor_links: 0,
+  };
+
+  const forms = [];
+  let formsTruncated = false;
+
+  const landmarks = [];
+  const aboveFoldRects = [];
+
+  let externalScriptsWithoutSri = 0;
+  let unsafeTargetBlankLinks = 0;
+  const thirdPartyCapabilities = new Map();
+  let liveRegionCount = 0;
+  let ariaInvalidCount = 0;
+
+  // Toggle candidate DOM elements for real bounded read-only interaction probing
+  const readOnlyToggleCandidates = [];
+
+  let visitedNodes = 0;
+  let domTruncated = false;
+  let depthTruncated = false;
+
+  const interactiveSelector =
+    'a[href],button,input:not([type="hidden"]),select,textarea,summary,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[role="checkbox"],[role="switch"],[role="combobox"],[tabindex]';
+
+  const normalizeOverflow = (val) => {
+    const v = String(val || 'visible').toLowerCase();
+    if (v === 'visible') return 'visible';
+    if (v === 'hidden') return 'hidden';
+    if (v === 'clip') return 'clip';
+    if (v === 'scroll') return 'scroll';
+    if (v === 'auto') return 'auto';
+    return 'other';
+  };
+
+  const normalizePosition = (val) => {
+    const v = String(val || 'static').toLowerCase();
+    if (v === 'relative') return 'relative';
+    if (v === 'absolute') return 'absolute';
+    if (v === 'fixed') return 'fixed';
+    if (v === 'sticky') return 'sticky';
+    return 'static';
+  };
+
+  const walk = (el, depth, pathSegments) => {
+    if (!el || el.nodeType !== 1) return;
+    if (visitedNodes >= MAX_DOM_NODES) {
+      domTruncated = true;
+      return;
+    }
+    if (depth > MAX_DEPTH) {
+      depthTruncated = true;
+      return;
+    }
+    visitedNodes += 1;
+
+    const tag = el.tagName.toLowerCase();
+    const roleAttr = el.getAttribute('role');
+    const role = roleAttr ? roleAttr.trim().toLowerCase().slice(0, 48) : null;
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const bbox = {
+      x: Math.round(rect.left || 0),
+      y: Math.round(rect.top || 0),
+      width: Math.max(0, Math.round(rect.width || 0)),
+      height: Math.max(0, Math.round(rect.height || 0)),
+    };
+    const visible = isVisible(el, style, rect);
+
+    if (
+      visible &&
+      bbox.width > 0 &&
+      bbox.height > 0 &&
+      bbox.y < vh &&
+      bbox.x < vw &&
+      bbox.y + bbox.height > 0 &&
+      bbox.x + bbox.width > 0 &&
+      (tag === 'header' ||
+        tag === 'nav' ||
+        tag === 'main' ||
+        tag === 'article' ||
+        tag === 'section' ||
+        tag === 'footer' ||
+        tag === 'h1' ||
+        tag === 'p' ||
+        tag === 'img' ||
+        tag === 'button')
+    ) {
+      if (aboveFoldRects.length < 64) {
+        aboveFoldRects.push({
+          x1: Math.max(0, bbox.x),
+          y1: Math.max(0, bbox.y),
+          x2: Math.min(vw, bbox.x + bbox.width),
+          y2: Math.min(vh, bbox.y + bbox.height),
+        });
+      }
+    }
+
+    if (
+      el.hasAttribute('aria-live') ||
+      role === 'alert' ||
+      role === 'status' ||
+      role === 'log'
+    ) {
+      liveRegionCount += 1;
+    }
+    if (el.getAttribute('aria-invalid') === 'true') {
+      ariaInvalidCount += 1;
+    }
+
+    // Track external scripts and iframes for third-party capabilities
+    if (tag === 'script' && el.src) {
+      const parts = sanitizeUrlParts(el.src);
+      if (parts && !parts.same_origin && parts.origin) {
+        const hasSri = Boolean(el.getAttribute('integrity')?.trim());
+        if (!hasSri) externalScriptsWithoutSri += 1;
+        const cap = thirdPartyCapabilities.get(parts.origin) || {
+          executes_script_in_main_frame: false,
+          script_without_sri_count: 0,
+          script_with_sri_count: 0,
+          iframe_count: 0,
+          unsandboxed_iframe_count: 0,
+          sets_or_sends_cookies: false,
+        };
+        cap.executes_script_in_main_frame = true;
+        if (hasSri) cap.script_with_sri_count += 1;
+        else cap.script_without_sri_count += 1;
+        thirdPartyCapabilities.set(parts.origin, cap);
+      }
+    } else if (tag === 'iframe' && el.src) {
+      const parts = sanitizeUrlParts(el.src);
+      if (parts && !parts.same_origin && parts.origin) {
+        const cap = thirdPartyCapabilities.get(parts.origin) || {
+          executes_script_in_main_frame: false,
+          script_without_sri_count: 0,
+          script_with_sri_count: 0,
+          iframe_count: 0,
+          unsandboxed_iframe_count: 0,
+          sets_or_sends_cookies: false,
+        };
+        cap.iframe_count += 1;
+        if (!el.hasAttribute('sandbox')) cap.unsandboxed_iframe_count += 1;
+        thirdPartyCapabilities.set(parts.origin, cap);
+      }
+    }
+
+    // Landmarks for VisualArtifactEvidence
+    if (
+      landmarks.length < 16 &&
+      visible &&
+      (tag === 'header' ||
+        tag === 'nav' ||
+        tag === 'main' ||
+        tag === 'footer' ||
+        tag === 'dialog' ||
+        role === 'banner' ||
+        role === 'navigation' ||
+        role === 'main' ||
+        role === 'contentinfo' ||
+        role === 'dialog')
+    ) {
+      const vpArea = Math.max(1, vw * vh);
+      const ix = Math.max(0, Math.min(vw, bbox.x + bbox.width) - Math.max(0, bbox.x));
+      const iy = Math.max(0, Math.min(vh, bbox.y + bbox.height) - Math.max(0, bbox.y));
+      const coverageMilli = Math.min(1000, Math.round(((ix * iy) / vpArea) * 1000));
+      landmarks.push({
+        landmark_role: role || tag,
+        bbox,
+        viewport_coverage_milli: coverageMilli,
+        above_the_fold: ix > 0 && iy > 0,
+      });
+    }
+
+    // Interactive inventory
+    let isInteractiveCandidate = false;
+    try {
+      isInteractiveCandidate = el.matches(interactiveSelector);
+    } catch {}
+    if (isInteractiveCandidate) {
+      discoveredInteractive += 1;
+      if (interactiveElements.length < MAX_INTERACTIVE) {
+        const typeAttr = (el.getAttribute('type') || '').trim().toLowerCase() || null;
+        const accName = getAccessibleName(el);
+        const nameLower = accName.toLowerCase();
+        const disabled =
+          Boolean(el.disabled) ||
+          el.getAttribute('aria-disabled') === 'true' ||
+          Boolean(el.closest('fieldset[disabled]'));
+        const tabIndexAttr = el.getAttribute('tabindex');
+        const tabIndex =
+          tabIndexAttr !== null && !Number.isNaN(Number(tabIndexAttr))
+            ? Number(tabIndexAttr)
+            : el.tabIndex >= 0
+              ? el.tabIndex
+              : null;
+        const keyboardFocusable = visible && !disabled && (el.tabIndex >= 0 || (tabIndex !== null && tabIndex >= 0));
+        const expanded =
+          el.hasAttribute('aria-expanded')
+            ? el.getAttribute('aria-expanded') === 'true'
+            : tag === 'details'
+              ? Boolean(el.open)
+              : tag === 'summary' && el.parentElement?.tagName === 'DETAILS'
+                ? Boolean(el.parentElement.open)
+                : null;
+        const selected = el.hasAttribute('aria-selected')
+          ? el.getAttribute('aria-selected') === 'true'
+          : null;
+        const checked =
+          typeof el.checked === 'boolean' && (typeAttr === 'checkbox' || typeAttr === 'radio')
+            ? el.checked
+            : el.hasAttribute('aria-checked')
+              ? el.getAttribute('aria-checked') === 'true'
+              : null;
+        const required = Boolean(el.required) || el.getAttribute('aria-required') === 'true';
+        let invalid = el.getAttribute('aria-invalid') === 'true';
+        if (!invalid && typeof el.matches === 'function') {
+          try {
+            invalid = el.matches(':invalid');
+          } catch {}
+        }
+        const rawHref = el.getAttribute('href') || el.getAttribute('action') || null;
+        const urlParts = rawHref ? sanitizeUrlParts(rawHref) : null;
+        const targetLink = urlParts
+          ? {
+              href_origin: urlParts.origin,
+              href_path: urlParts.path,
+              same_origin: urlParts.same_origin,
+              fragment_only: urlParts.fragment_only,
+            }
+          : null;
+        const { safety, kind } = classifyInteractive(el, tag, role, typeAttr, nameLower);
+        const nodeIdx = interactiveElements.length + 1;
+        const identity = buildIdentity(el, pathSegments);
+        interactiveElements.push({
+          node: nodeIdx,
+          identity,
+          tag,
+          role,
+          control_type: typeAttr,
+          name_present: accName.length > 0,
+          _raw_accessible_name: accName.length > 0 ? accName : null,
+          accessible_name_fingerprint: null,
+          accessible_name_char_count: Array.from(accName).length,
+          visible,
+          enabled: !disabled,
+          disabled,
+          expanded,
+          selected,
+          checked,
+          required,
+          invalid,
+          keyboard_focusable: keyboardFocusable,
+          tab_index: tabIndex,
+          bbox,
+          target_link: targetLink,
+          safety_class: safety,
+          functional_kind: kind,
+        });
+        if (
+          visible &&
+          !disabled &&
+          safety === 'read_only_ui_toggle' &&
+          (kind === 'accordion' || kind === 'tabs' || kind === 'navigation_menu' || tag === 'summary' || role === 'tab' || el.hasAttribute('aria-expanded')) &&
+          readOnlyToggleCandidates.length < 4
+        ) {
+          readOnlyToggleCandidates.push({
+            el,
+            node: nodeIdx,
+            identity,
+            tag,
+            role,
+            kind,
+          });
+        }
+      } else {
+        interactiveTruncated = true;
+      }
+    }
+
+    // Visual geometry (landmarks, headings, interactive controls, or overflowing containers)
+    const scrollW = Math.max(0, Math.round(el.scrollWidth || 0));
+    const scrollH = Math.max(0, Math.round(el.scrollHeight || 0));
+    const clientW = Math.max(0, Math.round(el.clientWidth || 0));
+    const clientH = Math.max(0, Math.round(el.clientHeight || 0));
+    const hOverflow = clientW > 0 && scrollW > clientW ? scrollW - clientW : 0;
+    const vOverflow = clientH > 0 && scrollH > clientH ? scrollH - clientH : 0;
+    const overflowX = normalizeOverflow(style?.overflowX);
+    const overflowY = normalizeOverflow(style?.overflowY);
+    const clippedByOverflow =
+      (hOverflow > 2 && (overflowX === 'hidden' || overflowX === 'clip')) ||
+      (vOverflow > 2 && (overflowY === 'hidden' || overflowY === 'clip'));
+    const isGeometryTarget =
+      visible &&
+      (isInteractiveCandidate ||
+        clippedByOverflow ||
+        hOverflow > 4 ||
+        tag === 'header' ||
+        tag === 'nav' ||
+        tag === 'main' ||
+        tag === 'footer' ||
+        tag === 'h1' ||
+        tag === 'h2' ||
+        tag === 'dialog');
+
+    if (isGeometryTarget) {
+      if (geometryElements.length < MAX_GEOMETRY) {
+        let occludedAtCenter = false;
+        let occludingTag = null;
+        if (
+          bbox.width >= 4 &&
+          bbox.height >= 4 &&
+          bbox.x >= 0 &&
+          bbox.y >= 0 &&
+          bbox.x + bbox.width <= vw &&
+          bbox.y + bbox.height <= vh
+        ) {
+          const cx = bbox.x + Math.floor(bbox.width / 2);
+          const cy = bbox.y + Math.floor(bbox.height / 2);
+          const hit = document.elementFromPoint(cx, cy);
+          if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) {
+            occludedAtCenter = true;
+            occludingTag = hit.tagName ? hit.tagName.toLowerCase() : null;
+          }
+        }
+        const pos = normalizePosition(style?.position);
+        const zRaw = style?.zIndex;
+        const zIndex = zRaw && zRaw !== 'auto' && !Number.isNaN(Number(zRaw)) ? Number(zRaw) : null;
+        const establishesStacking =
+          (pos !== 'static' && zIndex !== null) ||
+          pos === 'fixed' ||
+          pos === 'sticky' ||
+          Number(style?.opacity ?? 1) < 1 ||
+          (style?.transform && style.transform !== 'none');
+
+        geometryElements.push({
+          node: geometryElements.length + 1,
+          identity: buildIdentity(el, pathSegments),
+          tag,
+          role,
+          bbox,
+          scroll_width: scrollW,
+          scroll_height: scrollH,
+          client_width: clientW,
+          client_height: clientH,
+          overflow_x: overflowX,
+          overflow_y: overflowY,
+          horizontal_overflow_px: hOverflow,
+          vertical_overflow_px: vOverflow,
+          clipped_by_overflow: clippedByOverflow,
+          occluded_at_center: occludedAtCenter,
+          occluding_tag: occludingTag,
+          stacking: {
+            position: pos,
+            z_index: zIndex,
+            establishes_stacking_context: Boolean(establishesStacking),
+          },
+        });
+      } else {
+        geometryTruncated = true;
+      }
+    }
+
+    // Media assets
+    if (tag === 'img' || tag === 'video' || tag === 'svg') {
+      if (mediaAssets.length < MAX_MEDIA) {
+        const src = el.currentSrc || el.getAttribute('src') || '';
+        const urlParts = sanitizeUrlParts(src);
+        let formatClass = 'unknown';
+        if (tag === 'svg') formatClass = 'svg';
+        else if (tag === 'video') formatClass = 'video';
+        else if (src.startsWith('data:')) formatClass = 'inline_data';
+        else if (/\.avif(\?|$)/i.test(src)) formatClass = 'avif';
+        else if (/\.webp(\?|$)/i.test(src)) formatClass = 'webp';
+        else if (/\.jpe?g(\?|$)/i.test(src)) formatClass = 'jpeg';
+        else if (/\.png(\?|$)/i.test(src)) formatClass = 'png';
+        else if (/\.gif(\?|$)/i.test(src)) formatClass = 'gif';
+        else if (/\.svg(\?|$)/i.test(src)) formatClass = 'svg';
+
+        const natW = Math.max(0, Math.round(el.naturalWidth || el.videoWidth || bbox.width));
+        const natH = Math.max(0, Math.round(el.naturalHeight || el.videoHeight || bbox.height));
+        const renderedArea = Math.max(1, bbox.width * bbox.height);
+        const naturalArea = natW * natH;
+        const oversizeRatioMilli =
+          bbox.width > 0 && bbox.height > 0 && naturalArea > 0
+            ? Math.round((naturalArea / renderedArea) * 1000)
+            : 1000;
+        const hasWidthHeightAttrs = el.hasAttribute('width') && el.hasAttribute('height');
+        const hasAspectRatio = Boolean(style?.aspectRatio && style.aspectRatio !== 'auto');
+        const hasResponsiveSources =
+          Boolean(el.getAttribute('srcset')?.trim()) ||
+          el.parentElement?.tagName === 'PICTURE';
+        const loadingRaw = (el.getAttribute('loading') || '').trim().toLowerCase();
+        const loading =
+          loadingRaw === 'lazy' ? 'lazy' : loadingRaw === 'eager' ? 'eager' : 'default';
+        const fetchPriority = el.getAttribute('fetchpriority')?.trim().toLowerCase() || null;
+        const aboveTheFold = bbox.y < vh && bbox.y + bbox.height > 0 && bbox.x < vw && bbox.x + bbox.width > 0;
+        const hasAlt = el.hasAttribute('alt');
+        const altVal = el.getAttribute('alt') || '';
+        const isDecorative =
+          (hasAlt && altVal === '') || role === 'presentation' || role === 'none';
+
+        mediaAssets.push({
+          node: mediaAssets.length,
+          identity: buildIdentity(el, pathSegments),
+          tag,
+          resource_origin: urlParts?.origin || null,
+          resource_path: urlParts?.path || null,
+          format_class: formatClass,
+          rendered_width: bbox.width,
+          rendered_height: bbox.height,
+          natural_width: natW,
+          natural_height: natH,
+          oversize_ratio_milli: oversizeRatioMilli,
+          has_intrinsic_sizing: hasWidthHeightAttrs || hasAspectRatio,
+          has_responsive_sources: hasResponsiveSources,
+          loading,
+          fetch_priority: fetchPriority,
+          above_the_fold: aboveTheFold,
+          has_alt_attribute: hasAlt,
+          is_decorative: isDecorative,
+        });
+      } else {
+        mediaTruncated = true;
+      }
+    }
+
+    // Links
+    if (tag === 'a' && el.hasAttribute('href')) {
+      const rawHref = el.getAttribute('href') || '';
+      const parts = sanitizeUrlParts(rawHref);
+      const sameOrigin = parts ? parts.same_origin : true;
+      if (sameOrigin) clusterSummary.internal_links += 1;
+      else clusterSummary.external_links += 1;
+
+      let placement = 'unscoped_body';
+      if (el.closest('header,nav,[role="navigation"],[role="banner"]')) {
+        placement = 'header_or_nav';
+        clusterSummary.header_nav_links += 1;
+      } else if (el.closest('main,article,[role="main"]')) {
+        placement = 'main_content';
+        clusterSummary.main_content_links += 1;
+      } else if (el.closest('aside,[role="complementary"]')) {
+        placement = 'complementary';
+      } else if (el.closest('footer,[role="contentinfo"]')) {
+        placement = 'footer';
+        clusterSummary.footer_links += 1;
+      }
+
+      const anchorText = getAccessibleName(el);
+      const words = anchorText ? anchorText.split(/\s+/).filter(Boolean).length : 0;
+      if (words === 0) clusterSummary.empty_anchor_links += 1;
+
+      const relTokens = (el.getAttribute('rel') || '')
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean);
+      const relNofollow = relTokens.includes('nofollow');
+      const relNoopener = relTokens.includes('noopener') || relTokens.includes('noreferrer');
+      const opensNewTab = (el.getAttribute('target') || '').toLowerCase() === '_blank';
+      if (opensNewTab && !sameOrigin && !relNoopener) {
+        unsafeTargetBlankLinks += 1;
+      }
+
+      if (links.length < MAX_LINKS) {
+        links.push({
+          link_index: links.length,
+          identity: buildIdentity(el, pathSegments),
+          placement_region: placement,
+          target_origin: parts?.origin || null,
+          target_path: parts?.path || null,
+          same_origin: sameOrigin,
+          fragment_only: Boolean(parts?.fragment_only),
+          visible,
+          anchor_word_count: words,
+          _raw_anchor_text: anchorText || null,
+          anchor_text_fingerprint: null,
+          rel_nofollow: relNofollow,
+          rel_noopener: relNoopener,
+          opens_new_tab: opensNewTab,
+        });
+      } else {
+        linksTruncated = true;
+      }
+    }
+
+    // Forms
+    if (tag === 'form') {
+      if (forms.length < MAX_FORMS) {
+        const method = (el.getAttribute('method') || 'GET').trim().toUpperCase().slice(0, 16);
+        const actionRaw = el.getAttribute('action') || window.location.href;
+        const parts = sanitizeUrlParts(actionRaw);
+        const inputs = Array.from(el.querySelectorAll('input,select,textarea'));
+        const reqCount = inputs.filter(
+          (inp) => inp.required || inp.getAttribute('aria-required') === 'true'
+        ).length;
+        const hasSensitive = inputs.some((inp) => {
+          const t = (inp.getAttribute('type') || '').toLowerCase();
+          const ac = (inp.getAttribute('autocomplete') || '').toLowerCase();
+          return t === 'password' || ac.includes('cc-') || ac.includes('password');
+        });
+        forms.push({
+          form_index: forms.length,
+          identity: buildIdentity(el, pathSegments),
+          method,
+          action_origin: parts?.origin || null,
+          action_path: parts?.path || null,
+          secure_same_origin_action: Boolean(
+            parts && parts.same_origin && String(parts.origin || '').startsWith('https:')
+          ),
+          field_count: inputs.length,
+          required_field_count: reqCount,
+          has_sensitive_input: hasSensitive,
+        });
+      } else {
+        formsTruncated = true;
+      }
+    }
+
+    const children = el.children || [];
+    const tagCounts = new Map();
+    for (let i = 0; i < children.length; i += 1) {
+      const child = children[i];
+      if (!child || child.nodeType !== 1) continue;
+      const cTag = child.tagName.toLowerCase();
+      const idx = (tagCounts.get(cTag) || 0) + 1;
+      tagCounts.set(cTag, idx);
+      walk(child, depth + 1, pathSegments.concat([`${cTag}[${idx}]`]));
+    }
+  };
+
+  if (document.body) {
+    walk(document.body, 1, ['body[1]']);
+  }
+
+  // Compute real above-the-fold coverage in thousandths (0..1000) from union of visible rects on a 40x25 grid
+  let aboveFoldCoverageMilli = 0;
+  if (vw > 0 && vh > 0 && aboveFoldRects.length > 0) {
+    const GRID_X = 40;
+    const GRID_Y = 25;
+    let coveredCells = 0;
+    for (let gx = 0; gx < GRID_X; gx += 1) {
+      const cx = ((gx + 0.5) * vw) / GRID_X;
+      for (let gy = 0; gy < GRID_Y; gy += 1) {
+        const cy = ((gy + 0.5) * vh) / GRID_Y;
+        const hit = aboveFoldRects.some(
+          (r) => cx >= r.x1 && cx <= r.x2 && cy >= r.y1 && cy <= r.y2
+        );
+        if (hit) coveredCells += 1;
+      }
+    }
+    aboveFoldCoverageMilli = Math.min(1000, Math.round((coveredCells / (GRID_X * GRID_Y)) * 1000));
+  }
+
+  const readStateMetrics = () => {
+    const activeEl = document.activeElement;
+    const activeTag = activeEl && activeEl.tagName ? activeEl.tagName.toLowerCase() : null;
+    const activeRole = activeEl?.getAttribute?.('role')?.toLowerCase() || null;
+    const openDialogs = document.querySelectorAll('dialog[open],[role="dialog"]:not([aria-hidden="true"]),[role="alertdialog"]:not([aria-hidden="true"])').length;
+    const activeTabs = document.querySelectorAll('[role="tab"][aria-selected="true"]').length;
+    const expandedControls = document.querySelectorAll('[aria-expanded="true"],details[open]').length;
+    const disabledControls = document.querySelectorAll(':disabled,[aria-disabled="true"]').length;
+    const requiredInputs = document.querySelectorAll('input[required],select[required],textarea[required],[aria-required="true"]').length;
+    let invalidInputs = document.querySelectorAll('[aria-invalid="true"]').length;
+    try {
+      invalidInputs = Math.max(invalidInputs, document.querySelectorAll('input:invalid,select:invalid,textarea:invalid').length);
+    } catch {}
+    const loadingIndicators = document.querySelectorAll('[aria-busy="true"],[role="progressbar"]').length;
+    const alertRegions = document.querySelectorAll('[role="alert"]').length;
+    const sig = `d=${openDialogs}:t=${activeTabs}:e=${expandedControls}:dis=${disabledControls}:req=${requiredInputs}:inv=${invalidInputs}:i=${interactiveElements.length}`;
     return {
+      activeTag,
+      activeRole,
+      openDialogs,
+      activeTabs,
+      expandedControls,
+      disabledControls,
+      requiredInputs,
+      invalidInputs,
+      loadingIndicators,
+      alertRegions,
+      sig,
+    };
+  };
+
+  const initialMetrics = readStateMetrics();
+  const applicationState = {
+    document_ready_state: String(document.readyState || 'complete'),
+    location_path: (window.location?.pathname || '/').slice(0, 256),
+    has_location_hash: Boolean(window.location?.hash && window.location.hash.length > 1),
+    history_length: Math.max(0, Number(window.history?.length || 1)),
+    active_element_tag: initialMetrics.activeTag,
+    active_element_role: initialMetrics.activeRole,
+    active_dialog_count: initialMetrics.openDialogs,
+    modal_open: initialMetrics.openDialogs > 0,
+    active_tab_count: initialMetrics.activeTabs,
+    expanded_control_count: initialMetrics.expandedControls,
+    disabled_control_count: initialMetrics.disabledControls,
+    required_input_count: initialMetrics.requiredInputs,
+    invalid_input_count: initialMetrics.invalidInputs,
+    loading_indicator_count: initialMetrics.loadingIndicators,
+    alert_region_count: initialMetrics.alertRegions,
+    scroll_x: Math.round(window.scrollX || 0),
+    scroll_y: Math.round(window.scrollY || 0),
+    document_scroll_height: Math.max(
+      0,
+      Math.round(document.documentElement?.scrollHeight || document.body?.scrollHeight || 0)
+    ),
+    network_idle_reached: false,
+    _raw_structural_sig: initialMetrics.sig,
+    structural_fingerprint: null,
+  };
+
+  // Discover candidate user journey scenarios from interactive controls
+  const scenarioSet = new Set();
+  for (const item of interactiveElements) {
+    if (item.functional_kind === 'search') scenarioSet.add('site_search');
+    else if (item.functional_kind === 'navigation_menu') scenarioSet.add('navigation_disclosure');
+    else if (item.functional_kind === 'tabs') scenarioSet.add('tabbed_interface');
+    else if (item.functional_kind === 'accordion') scenarioSet.add('accordion_expansion');
+    else if (item.functional_kind === 'dialog') scenarioSet.add('modal_dismissal');
+    else if (item.functional_kind === 'filter' || item.functional_kind === 'sort') scenarioSet.add('filter_or_sort');
+    else if (item.functional_kind === 'pagination') scenarioSet.add('pagination_traversal');
+    else if (item.functional_kind === 'language_selector') scenarioSet.add('language_selection');
+    else if (item.functional_kind === 'form') scenarioSet.add('form_entry');
+  }
+
+  // Execute real bounded read-only UI toggle probes (accordions/details/tabs) and restore state
+  const interactionSteps = [];
+  for (let i = 0; i < readOnlyToggleCandidates.length; i += 1) {
+    const cand = readOnlyToggleCandidates[i];
+    const before = readStateMetrics();
+    const actionKind = cand.role === 'tab' || cand.kind === 'tabs' ? 'tab_select' : 'disclosure_toggle';
+    try {
+      cand.el.focus();
+      cand.el.click();
+    } catch {}
+    const after = readStateMetrics();
+    const focusChanged = after.activeTag !== before.activeTag || after.activeRole !== before.activeRole;
+    const expandedChanged = after.expandedControls !== before.expandedControls;
+    const dialogChanged = after.openDialogs !== before.openDialogs;
+    const sigChanged = after.sig !== before.sig;
+    interactionSteps.push({
+      step_index: interactionSteps.length,
+      action: actionKind,
+      target_node: cand.node,
+      target_identity: cand.identity,
+      active_tag: after.activeTag || cand.tag,
+      active_role: after.activeRole || cand.role,
+      state_changed: focusChanged || expandedChanged || dialogChanged || sigChanged,
+      focus_changed: focusChanged,
+      expanded_changed: expandedChanged,
+      dialog_changed: dialogChanged,
+      dom_fingerprint_changed: sigChanged,
+      new_runtime_errors: 0,
+      triggered_requests: 0,
+    });
+    // Restore original toggle state if we changed expansion
+    if (expandedChanged && actionKind === 'disclosure_toggle') {
+      try {
+        cand.el.click();
+      } catch {}
+    }
+  }
+
+  // Web Storage enumeration using storage.key(i)
+  const storageKeys = [];
+  let storageKeysTruncated = false;
+  const collectStorageArea = (storageObj, areaName) => {
+    if (!storageObj) return;
+    try {
+      const len = Number(storageObj.length || 0);
+      for (let i = 0; i < len; i += 1) {
+        if (storageKeys.length >= MAX_STORAGE_KEYS) {
+          storageKeysTruncated = true;
+          return;
+        }
+        const k = storageObj.key(i);
+        if (typeof k !== 'string') continue;
+        const val = storageObj.getItem(k);
+        storageKeys.push({
+          area: areaName,
+          key: k.slice(0, 128),
+          value_byte_len: typeof val === 'string' ? val.length : 0,
+        });
+      }
+    } catch {}
+  };
+  collectStorageArea(window.localStorage, 'local_storage');
+  collectStorageArea(window.sessionStorage, 'session_storage');
+
+  // Fonts
+  const fontAssets = [];
+  let fontsTruncated = false;
+  const preloadedFonts = document.querySelectorAll('link[rel="preload"][as="font"]').length > 0;
+  try {
+    if (document.fonts && typeof document.fonts.forEach === 'function') {
+      document.fonts.forEach((face) => {
+        if (fontAssets.length >= MAX_FONTS) {
+          fontsTruncated = true;
+          return;
+        }
+        const dispRaw = String(face.display || 'auto').toLowerCase();
+        const disp = ['swap', 'optional', 'fallback', 'block'].includes(dispRaw) ? dispRaw : 'auto';
+        fontAssets.push({
+          index: fontAssets.length,
+          font_family: String(face.family || '').replace(/^["']|["']$/g, '').slice(0, 64),
+          font_style: String(face.style || 'normal').slice(0, 24),
+          font_weight: String(face.weight || '400').slice(0, 24),
+          status: String(face.status || 'unloaded').slice(0, 24),
+          font_display: disp,
+          preloaded: preloadedFonts,
+        });
+      });
+    }
+  } catch {}
+
+  // Render-blocking head elements
+  const blockingHeadScripts = document.querySelectorAll(
+    'head script[src]:not([async]):not([defer]):not([type="module"])'
+  ).length;
+  const blockingHeadStylesheets = document.querySelectorAll(
+    'head link[rel="stylesheet"]:not([media="print"])'
+  ).length;
+  const preloadHintCount = document.querySelectorAll('head link[rel="preload"]').length;
+  const preconnectHintCount = document.querySelectorAll('head link[rel="preconnect"]').length;
+
+  // LCP candidate approximation from largest above-the-fold heading/image/main element
+  let lcpCandidate = null;
+  let bestArea = 0;
+  const lcpSelectors = 'img,video,h1,h2,main p,[role="main"] p';
+  const lcpEls = document.querySelectorAll(lcpSelectors);
+  for (let i = 0; i < Math.min(lcpEls.length, 64); i += 1) {
+    const el = lcpEls[i];
+    const r = el.getBoundingClientRect();
+    const st = window.getComputedStyle(el);
+    if (!isVisible(el, st, r)) continue;
+    const b = {
       x: Math.round(r.left || 0),
       y: Math.round(r.top || 0),
       width: Math.max(0, Math.round(r.width || 0)),
       height: Math.max(0, Math.round(r.height || 0)),
     };
-  };
-
-  const isVisible = (el, bbox) => {
-    const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity || '1') === 0) {
-      return false;
-    }
-    return bbox.width > 0 && bbox.height > 0;
-  };
-
-  const getAccessibleNameInfo = (el) => {
-    const ariaLabel = (el.getAttribute?.('aria-label') || '').trim();
-    if (ariaLabel) return { name: ariaLabel, source: 'aria_label' };
-    const labelledBy = (el.getAttribute?.('aria-labelledby') || '').trim();
-    if (labelledBy) {
-      const parts = labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.textContent?.trim() || '').filter(Boolean);
-      if (parts.length > 0) return { name: parts.join(' '), source: 'aria_labelledby' };
-    }
-    const alt = (el.getAttribute?.('alt') || '').trim();
-    if (alt) return { name: alt, source: 'alt' };
-    if (el.id) {
-      const lbl = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-      const lblText = (lbl?.textContent || '').trim();
-      if (lblText) return { name: lblText, source: 'associated_label' };
-    }
-    const parentLabel = el.closest?.('label');
-    if (parentLabel) {
-      const pText = (parentLabel.textContent || '').trim();
-      if (pText) return { name: pText, source: 'associated_label' };
-    }
-    const val = typeof el.value === 'string' && (el.tagName === 'INPUT' || el.tagName === 'BUTTON') ? el.value.trim() : '';
-    if (val && ['button', 'submit', 'reset'].includes((el.getAttribute?.('type') || '').toLowerCase())) {
-      return { name: val, source: 'value' };
-    }
-    const txt = (el.innerText || el.textContent || '').trim();
-    if (txt) return { name: txt, source: 'inner_text' };
-    const placeholder = (el.getAttribute?.('placeholder') || '').trim();
-    if (placeholder) return { name: placeholder, source: 'placeholder' };
-    const title = (el.getAttribute?.('title') || '').trim();
-    if (title) return { name: title, source: 'title' };
-    return { name: '', source: 'none' };
-  };
-
-  // 1. Interactive Element Inventory
-  const interactiveSelector = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, details, [role="button"], [role="link"], [role="tab"], [role="menuitem"], [role="combobox"], [role="checkbox"], [role="radio"], [role="switch"], [tabindex]';
-  const rawInteractive = Array.from(document.querySelectorAll(interactiveSelector));
-  const interactiveTruncated = rawInteractive.length > MAX_INTERACTIVE;
-  const interactiveElements = [];
-
-  for (let idx = 0; idx < Math.min(rawInteractive.length, MAX_INTERACTIVE); idx++) {
-    const el = rawInteractive[idx];
-    const bbox = getBbox(el);
-    const vis = isVisible(el, bbox);
-    const inViewport = vis && bbox.x < vw && (bbox.x + bbox.width) > 0 && bbox.y < vh && (bbox.y + bbox.height) > 0;
-    const identity = buildIdentity(el);
-    const tag = identity.tag;
-    const role = identity.role;
-    const nameInfo = getAccessibleNameInfo(el);
-    const disabled = Boolean(el.disabled || el.getAttribute('aria-disabled') === 'true');
-    const expandedAttr = el.getAttribute('aria-expanded');
-    const expanded = expandedAttr === 'true' ? true : expandedAttr === 'false' ? false : (tag === 'details' ? Boolean(el.open) : null);
-    const selectedAttr = el.getAttribute('aria-selected');
-    const selected = selectedAttr === 'true' ? true : selectedAttr === 'false' ? false : null;
-    const checkedAttr = el.getAttribute('aria-checked');
-    const checked = typeof el.checked === 'boolean' && (tag === 'input') ? el.checked : (checkedAttr === 'true' ? true : checkedAttr === 'false' ? false : null);
-    const required = Boolean(el.required || el.getAttribute('aria-required') === 'true');
-    const invalid = Boolean(el.getAttribute('aria-invalid') === 'true' || (typeof el.checkValidity === 'function' && !el.checkValidity()));
-    const readonly = Boolean(el.readOnly || el.getAttribute('aria-readonly') === 'true');
-    const tiAttr = el.getAttribute('tabindex');
-    const tabIndex = tiAttr !== null && !Number.isNaN(Number(tiAttr)) ? Number(tiAttr) : null;
-    const focusable = !disabled && (tabIndex === null || tabIndex >= 0);
-
-    const inputType = tag === 'input' ? cleanToken((el.getAttribute('type') || 'text').toLowerCase(), 32) : null;
-    const hrefInfo = tag === 'a' ? safeOriginAndPath(el.getAttribute('href')) : { origin: null, path: null, sameOrigin: null };
-    const formEl = el.form || el.closest('form');
-    const formMethod = formEl ? cleanToken((formEl.getAttribute('method') || 'get').toUpperCase(), 16) : null;
-
-    let safety = 'read_only_ui_toggle';
-    if (tag === 'a' && hrefInfo.path) {
-      safety = 'read_only_navigation';
-    } else if (tag === 'input' || tag === 'select' || tag === 'textarea') {
-      if (inputType === 'submit' || inputType === 'image') {
-        safety = (!formMethod || formMethod === 'GET') ? 'form_input' : 'state_changing_submission';
-      } else {
-        safety = 'form_input';
-      }
-    } else if (tag === 'button') {
-      const btnType = (el.getAttribute('type') || (formEl ? 'submit' : 'button')).toLowerCase();
-      if (btnType === 'submit' && formEl) {
-        safety = (!formMethod || formMethod === 'GET') ? 'form_input' : 'state_changing_submission';
-      }
-    }
-
-    const hintText = `${nameInfo.name} ${el.id || ''} ${el.className || ''} ${el.getAttribute('name') || ''} ${hrefInfo.path || ''}`.toLowerCase();
-    let functionalKind = 'generic_control';
-    if (inputType === 'search' || role === 'searchbox' || el.closest('[role="search"]') || /search|suche|szukaj/.test(hintText)) {
-      functionalKind = 'search';
-    } else if (role === 'tab' || el.closest('[role="tablist"]')) {
-      functionalKind = 'tabs';
-    } else if (tag === 'summary' || expanded !== null) {
-      functionalKind = 'accordion';
-    } else if (role === 'combobox' || tag === 'select') {
-      functionalKind = 'combobox';
-    } else if (/lang|locale|sprache|jezyk/.test(hintText)) {
-      functionalKind = 'language_selector';
-    } else if (/filter|facet/.test(hintText)) {
-      functionalKind = 'filter';
-    } else if (/sort/.test(hintText)) {
-      functionalKind = 'sort';
-    } else if (/next|prev|page|pagination|weiter|zurück/.test(hintText)) {
-      functionalKind = 'pagination';
-    } else if (el.hasAttribute('download') || /\.(pdf|zip|csv|xlsx)$/i.test(hrefInfo.path || '')) {
-      functionalKind = 'download_control';
-    } else if (el.closest('nav, [role="navigation"], header')) {
-      functionalKind = 'navigation_menu';
-    } else if (formEl) {
-      functionalKind = 'form';
-    } else if (tag === 'a' || tag === 'button') {
-      functionalKind = 'cta';
-    }
-
-    interactiveElements.push({
-      node: idx + 1,
-      identity,
-      tag,
-      role,
-      control_type: inputType,
-      name_present: nameInfo.name.length > 0,
-      accessible_name_char_count: nameInfo.name.length,
-      raw_name_for_hash: nameInfo.name,
-      enabled: !disabled,
-      disabled,
-      expanded,
-      selected,
-      checked,
-      required,
-      invalid,
-      keyboard_focusable: focusable,
-      tab_index: tabIndex,
-      visible: vis,
-      bbox,
-      target_link: hrefInfo.path ? {
-        href_origin: hrefInfo.origin,
-        href_path: hrefInfo.path,
-        same_origin: Boolean(hrefInfo.sameOrigin),
-        fragment_only: false,
-      } : null,
-      safety_class: safety,
-      functional_kind: functionalKind,
-    });
-  }
-
-  // 2. Application State
-  const navEntry = performance.getEntriesByType('navigation')[0];
-  const activeEl = document.activeElement;
-  const structSeed = Array.from(document.querySelectorAll('main, nav, header, footer, section, article, form, dialog, h1, h2, h3'))
-    .slice(0, 128)
-    .map((e) => `${e.tagName.toLowerCase()}:${e.children.length}`)
-    .join('|');
-  const visibleTextSeed = (document.body?.innerText || '').trim().slice(0, 16384);
-  const openDialogs = Array.from(document.querySelectorAll('dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"]'))
-    .filter((el) => isVisible(el, getBbox(el)));
-
-  const applicationState = {
-    document_ready_state: cleanToken(document.readyState || 'complete', 32),
-    location_path: cleanToken(location.pathname || '/', 256) || '/',
-    has_location_hash: Boolean(location.hash && location.hash.length > 1),
-    history_length: Math.max(0, Number(history.length || 1)),
-    raw_structural_seed: structSeed,
-    raw_visible_text_seed: visibleTextSeed,
-    active_dialog_count: openDialogs.length,
-    modal_open: openDialogs.length > 0,
-    active_element_role: activeEl && activeEl !== document.body ? cleanToken(buildIdentity(activeEl).role, 32) : null,
-    active_element_tag: activeEl && activeEl !== document.body ? cleanToken(activeEl.tagName.toLowerCase(), 32) : null,
-    active_tab_count: document.querySelectorAll('[role="tab"][aria-selected="true"]').length,
-    expanded_control_count: document.querySelectorAll('[aria-expanded="true"], details[open]').length,
-    disabled_control_count: interactiveElements.filter((e) => e.disabled).length,
-    required_input_count: interactiveElements.filter((e) => e.required).length,
-    invalid_input_count: interactiveElements.filter((e) => e.invalid).length,
-    loading_indicator_count: document.querySelectorAll('[aria-busy="true"], [role="progressbar"], .loading, .spinner, .skeleton').length,
-    alert_region_count: document.querySelectorAll('[role="alert"], .error, .alert-danger, .alert-error').length,
-    scroll_x: Math.round(window.scrollX || 0),
-    scroll_y: Math.round(window.scrollY || 0),
-    document_scroll_height: Math.max(0, Math.round(document.documentElement?.scrollHeight || vh)),
-    network_idle_reached: true,
-  };
-
-  // 3. Candidate scenarios & bounded read-only interaction trace
-  const mapScenario = (fk) => {
-    if (fk === 'search') return 'site_search';
-    if (fk === 'navigation_menu') return 'navigation_disclosure';
-    if (fk === 'tabs') return 'tabbed_interface';
-    if (fk === 'accordion') return 'accordion_expansion';
-    if (fk === 'dialog') return 'modal_dismissal';
-    if (fk === 'filter' || fk === 'sort') return 'filter_or_sort';
-    if (fk === 'pagination') return 'pagination_traversal';
-    if (fk === 'language_selector') return 'language_selection';
-    if (fk === 'form') return 'form_entry';
-    return null;
-  };
-  const candidateScenarios = Array.from(new Set(interactiveElements.map((e) => mapScenario(e.functional_kind)).filter(Boolean))).slice(0, 16);
-  const interactionSteps = [];
-  const safeToggles = interactiveElements.filter((e) => e.visible && e.enabled && e.safety_class === 'read_only_ui_toggle' && (e.functional_kind === 'tabs' || e.functional_kind === 'accordion')).slice(0, 4);
-  for (let i = 0; i < safeToggles.length; i++) {
-    const item = safeToggles[i];
-    interactionSteps.push({
-      step_index: i,
-      action: item.functional_kind === 'tabs' ? 'tab_select' : 'disclosure_toggle',
-      target_node: item.node,
-      target_identity: item.identity,
-      active_tag: item.tag,
-      active_role: item.role,
-      state_changed: false,
-      focus_changed: item.keyboard_focusable,
-      expanded_changed: item.expanded !== null,
-      dialog_changed: false,
-      dom_fingerprint_changed: false,
-      new_runtime_errors: 0,
-      triggered_requests: 0,
-    });
-  }
-
-  // 4. Visual Geometry Collector
-  const geomSelector = 'main, nav, header, footer, section, article, aside, form, dialog, h1, h2, h3, p, ul, ol, table, img, button, a[href], input:not([type="hidden"]), select, textarea';
-  const rawGeom = Array.from(document.querySelectorAll(geomSelector));
-  const geomTruncated = rawGeom.length > MAX_GEOMETRY;
-  const geomElements = [];
-  for (let idx = 0; idx < Math.min(rawGeom.length, MAX_GEOMETRY); idx++) {
-    const el = rawGeom[idx];
-    const bbox = getBbox(el);
-    if (!isVisible(el, bbox)) continue;
-    const st = getComputedStyle(el);
-    const identity = buildIdentity(el);
-    const sw = Math.max(0, Math.round(el.scrollWidth || 0));
-    const sh = Math.max(0, Math.round(el.scrollHeight || 0));
-    const cw = Math.max(0, Math.round(el.clientWidth || 0));
-    const ch = Math.max(0, Math.round(el.clientHeight || 0));
-    const hOverflow = sw > cw + 1 ? (sw - cw) : 0;
-    const vOverflow = sh > ch + 1 ? (sh - ch) : 0;
-    const normalizeOverflow = (v) => (['visible', 'hidden', 'clip', 'scroll', 'auto'].includes(v) ? v : 'other');
-    const normalizePosition = (v) => (['static', 'relative', 'absolute', 'fixed', 'sticky'].includes(v) ? v : 'static');
-    const ox = normalizeOverflow(cleanToken(st.overflowX || 'visible', 24));
-    const oy = normalizeOverflow(cleanToken(st.overflowY || 'visible', 24));
-    const clipped = (hOverflow > 0 && (ox === 'hidden' || ox === 'clip')) || (vOverflow > 0 && (oy === 'hidden' || oy === 'clip'));
-
-    let occluded = false;
-    let occludingTag = null;
-    const cx = bbox.x + Math.floor(bbox.width / 2);
-    const cy = bbox.y + Math.floor(bbox.height / 2);
-    if (cx >= 0 && cx < vw && cy >= 0 && cy < vh && bbox.width >= 4 && bbox.height >= 4) {
-      const topEl = document.elementFromPoint(cx, cy);
-      if (topEl && topEl !== el && !el.contains(topEl) && !topEl.contains(el)) {
-        occluded = true;
-        occludingTag = cleanToken(topEl.tagName.toLowerCase(), 32);
-      }
-    }
-
-    const pos = normalizePosition(cleanToken(st.position || 'static', 24));
-    const zParsed = Number.parseInt(st.zIndex, 10);
-    const zIndex = Number.isNaN(zParsed) ? null : zParsed;
-    const createsStacking = (pos !== 'static' && zIndex !== null)
-      || pos === 'fixed'
-      || pos === 'sticky'
-      || parseFloat(st.opacity || '1') < 1
-      || (st.transform && st.transform !== 'none');
-
-    geomElements.push({
-      node: idx + 1,
-      identity,
-      tag: identity.tag,
-      role: identity.role,
-      bbox,
-      scroll_width: sw,
-      scroll_height: sh,
-      client_width: cw,
-      client_height: ch,
-      overflow_x: ox,
-      overflow_y: oy,
-      horizontal_overflow_px: hOverflow,
-      vertical_overflow_px: vOverflow,
-      clipped_by_overflow: clipped,
-      occluded_at_center: occluded,
-      occluding_tag: occludingTag,
-      stacking: {
-        position: pos,
-        z_index: zIndex,
-        establishes_stacking_context: Boolean(createsStacking),
-      },
-    });
-  }
-
-  // 5. Storage inventory (key names only, never values)
-  const extractStorageKeys = (store) => {
-    try {
-      const keys = [];
-      const len = store.length;
-      for (let i = 0; i < Math.min(len, MAX_STORAGE_KEYS); i++) {
-        const k = store.key(i);
-        if (k) keys.push({ key_name: cleanToken(k, 128), approx_value_bytes: (store.getItem(k) || '').length });
-      }
-      return { keys, truncated: len > MAX_STORAGE_KEYS };
-    } catch {
-      return { keys: [], truncated: false };
-    }
-  };
-  const lsInfo = extractStorageKeys(window.localStorage);
-  const ssInfo = extractStorageKeys(window.sessionStorage);
-
-  // 6. Security challenge / bot wall detection
-  const pageTitle = (document.title || '').toLowerCase();
-  const hasCfTurnstile = Boolean(document.querySelector('.cf-turnstile, [data-sitekey], iframe[src*="challenges.cloudflare.com"]'));
-  const hasHcaptcha = Boolean(document.querySelector('.h-captcha, iframe[src*="hcaptcha.com"]'));
-  const hasRecaptcha = Boolean(document.querySelector('.g-recaptcha, iframe[src*="google.com/recaptcha"]'));
-  const isCfInterstitial = /just a moment|attention required|checking your browser/i.test(pageTitle);
-  const challengeDetected = hasCfTurnstile || hasHcaptcha || hasRecaptcha || isCfInterstitial;
-  let challengeKind = 'none';
-  let challengeProvider = null;
-  if (hasCfTurnstile || isCfInterstitial) {
-    challengeKind = isCfInterstitial ? 'interstitial_challenge' : 'captcha';
-    challengeProvider = 'cloudflare';
-  } else if (hasHcaptcha) {
-    challengeKind = 'captcha';
-    challengeProvider = 'hcaptcha';
-  } else if (hasRecaptcha) {
-    challengeKind = 'captcha';
-    challengeProvider = 'recaptcha';
-  }
-
-  // 7. Performance attribution & Hydration framework
-  let hydrationFramework = 'none';
-  if (window.__NEXT_DATA__ || document.getElementById('__next')) hydrationFramework = 'nextjs';
-  else if (window.__NUXT__ || document.getElementById('__nuxt')) hydrationFramework = 'nuxt';
-  else if (window.__remixContext) hydrationFramework = 'remix';
-  else if (document.querySelector('[ng-version]')) hydrationFramework = 'angular';
-  else if (document.querySelector('astro-island')) hydrationFramework = 'astro';
-  else if (document.querySelector('[data-svelte-h]')) hydrationFramework = 'sveltekit';
-
-  const renderBlockingResources = (performance.getEntriesByType('resource') || [])
-    .filter((r) => r.renderBlockingStatus === 'blocking').length;
-
-  // 8. Media & Fonts
-  const allImgs = Array.from(document.images);
-  const imagesTruncated = allImgs.length > MAX_IMAGES;
-  const mediaImages = allImgs.slice(0, MAX_IMAGES).map((img, i) => {
-    const r = img.getBoundingClientRect();
-    const srcInfo = safeOriginAndPath(img.currentSrc || img.getAttribute('src'));
-    const alt = img.getAttribute('alt');
-    const role = (img.getAttribute('role') || '').toLowerCase();
-    return {
-      index: i,
-      origin: srcInfo.origin,
-      endpoint_path: srcInfo.path,
-      mime_format: null,
-      intrinsic_width: Math.max(0, Math.round(img.naturalWidth || 0)),
-      intrinsic_height: Math.max(0, Math.round(img.naturalHeight || 0)),
-      rendered_width: Math.max(0, Math.round(r.width || 0)),
-      rendered_height: Math.max(0, Math.round(r.height || 0)),
-      has_width_attr: img.hasAttribute('width'),
-      has_height_attr: img.hasAttribute('height'),
-      loading_attr: cleanToken(img.getAttribute('loading') || '', 24) || null,
-      decoding_attr: cleanToken(img.getAttribute('decoding') || '', 24) || null,
-      fetchpriority_attr: cleanToken(img.getAttribute('fetchpriority') || '', 24) || null,
-      has_srcset: Boolean(img.getAttribute('srcset')),
-      has_sizes: Boolean(img.getAttribute('sizes')),
-      in_picture: Boolean(img.closest('picture')),
-      in_initial_viewport: r.width > 0 && r.height > 0 && r.top < vh && r.bottom > 0 && r.left < vw && r.right > 0,
-      alt_present: alt !== null && alt.trim().length > 0,
-      decorative: alt === '' || role === 'presentation' || role === 'none',
-    };
-  });
-
-  const mediaEls = Array.from(document.querySelectorAll('video, audio')).slice(0, 16).map((m) => ({
-    tag: m.tagName.toLowerCase(),
-    autoplay: Boolean(m.autoplay),
-    muted: Boolean(m.muted),
-    controls: Boolean(m.controls),
-    preload: cleanToken(m.getAttribute('preload') || '', 24) || null,
-    track_count: m.querySelectorAll('track').length,
-    has_captions_track: Boolean(m.querySelector('track[kind="captions"], track[kind="subtitles"]')),
-  }));
-
-  const rawFonts = document.fonts ? Array.from(document.fonts) : [];
-  const fontsTruncated = rawFonts.length > MAX_FONTS;
-  const fontFaces = rawFonts.slice(0, MAX_FONTS).map((f) => ({
-    family: cleanToken(f.family || 'unknown', 64).replace(/^["']|["']$/g, ''),
-    display: cleanToken(f.display || 'auto', 24) || null,
-    status: cleanToken(f.status || 'unloaded', 24),
-    unicode_range_present: Boolean(f.unicodeRange && f.unicodeRange !== 'U+0-10FFFF'),
-    preload_linked: Boolean(document.querySelector('link[rel="preload"][as="font"]')),
-  }));
-
-  // 9. Indexability & Authority
-  const metaRobots = Array.from(document.querySelectorAll('meta[name="robots" i], meta[name="googlebot" i]'))
-    .map((m) => cleanToken(m.getAttribute('content') || '', 128))
-    .filter(Boolean);
-  const canonicalHref = document.querySelector('link[rel="canonical" i]')?.getAttribute('href') || null;
-  const canonicalInfo = safeOriginAndPath(canonicalHref);
-  let canonicalSelf = null;
-  if (canonicalHref) {
-    try {
-      const cu = new URL(canonicalHref, location.href);
-      canonicalSelf = cu.origin === location.origin && cu.pathname === location.pathname;
-    } catch {}
-  }
-  const hreflangLinks = Array.from(document.querySelectorAll('link[rel="alternate" i][hreflang]'))
-    .slice(0, 32)
-    .map((l) => {
-      const hi = safeOriginAndPath(l.getAttribute('href'));
-      return {
-        lang: cleanToken(l.getAttribute('hreflang') || '', 24),
-        target_origin: hi.origin,
-        target_path: hi.path,
-        same_origin: Boolean(hi.sameOrigin),
+    if (b.y >= vh || b.x >= vw) continue;
+    const area = b.width * b.height;
+    if (area > bestArea) {
+      bestArea = area;
+      const src = el.currentSrc || el.getAttribute('src') || null;
+      const parts = src ? sanitizeUrlParts(src) : null;
+      lcpCandidate = {
+        identity: buildIdentity(el, [el.tagName.toLowerCase()]),
+        tag: el.tagName.toLowerCase(),
+        render_time_ms: null,
+        size_px_sq: area,
+        bbox: b,
+        resource_origin: parts?.origin || null,
+        resource_path: parts?.path || null,
+        above_the_fold: true,
       };
-    });
-  const refreshContent = document.querySelector('meta[http-equiv="refresh" i]')?.getAttribute('content') || '';
-  const refreshMatch = refreshContent.match(/^\s*(\d+)/);
-  const metaRefreshSeconds = refreshMatch ? Number(refreshMatch[1]) : null;
-  const combinedRobots = metaRobots.join(',').toLowerCase();
-
-  // 10. Structured Data & Social Meta
-  const jsonLdScripts = Array.from(document.querySelectorAll('script[type="application/ld+json" i]'));
-  const structuredEntities = [];
-  let jsonLdErrors = 0;
-  for (const s of jsonLdScripts.slice(0, MAX_STRUCTURED)) {
-    try {
-      const parsed = JSON.parse(s.textContent || '{}');
-      const items = Array.isArray(parsed) ? parsed : (Array.isArray(parsed['@graph']) ? parsed['@graph'] : [parsed]);
-      for (const item of items) {
-        if (!item || typeof item !== 'object') continue;
-        if (structuredEntities.length >= MAX_STRUCTURED) break;
-        const t = Array.isArray(item['@type']) ? item['@type'][0] : item['@type'];
-        const props = Object.keys(item).filter((k) => !k.startsWith('@')).slice(0, 24).map((k) => cleanToken(k, 48));
-        structuredEntities.push({
-          syntax: 'json_ld',
-          schema_type: cleanToken(String(t || 'Thing'), 64),
-          property_names: props,
-          missing_recommended_fields: [],
-          valid: Boolean(t),
-        });
-      }
-    } catch {
-      jsonLdErrors++;
     }
   }
-  for (const el of Array.from(document.querySelectorAll('[itemscope][itemtype]')).slice(0, MAX_STRUCTURED - structuredEntities.length)) {
-    const it = el.getAttribute('itemtype') || '';
-    const schemaType = cleanToken(it.split('/').pop() || 'Thing', 64);
-    const props = Array.from(el.querySelectorAll('[itemprop]')).slice(0, 24).map((p) => cleanToken(p.getAttribute('itemprop') || '', 48)).filter(Boolean);
-    structuredEntities.push({
-      syntax: 'microdata',
+
+  // Indexability & canonicals
+  const metaRobots = Array.from(
+    document.querySelectorAll('meta[name="robots" i],meta[name="googlebot" i]')
+  )
+    .map((m) => (m.getAttribute('content') || '').toLowerCase())
+    .join(',');
+  const renderedMetaNoindex = metaRobots.includes('noindex');
+  const renderedMetaNofollow = metaRobots.includes('nofollow');
+  const canonicalLinks = Array.from(document.querySelectorAll('link[rel="canonical" i]'));
+  const canonicalHrefs = canonicalLinks
+    .map((l) => (l.getAttribute('href') || '').trim())
+    .filter(Boolean);
+  const firstCanonicalParts = canonicalHrefs.length > 0 ? sanitizeUrlParts(canonicalHrefs[0]) : null;
+  const currentParts = sanitizeUrlParts(window.location.href);
+  const canonicalIsSelf = Boolean(
+    firstCanonicalParts &&
+      currentParts &&
+      firstCanonicalParts.origin === currentParts.origin &&
+      firstCanonicalParts.path === currentParts.path
+  );
+  const hasPaginationRel =
+    document.querySelectorAll('link[rel="next" i],link[rel="prev" i]').length > 0;
+  const hreflangEls = Array.from(
+    document.querySelectorAll('link[rel="alternate" i][hreflang]')
+  );
+  const hreflangAlternates = [];
+  const seenHreflangCodes = new Set();
+  let duplicateHreflang = false;
+  for (let i = 0; i < Math.min(hreflangEls.length, MAX_HREFLANG); i += 1) {
+    const el = hreflangEls[i];
+    const code = (el.getAttribute('hreflang') || '').trim().toLowerCase().slice(0, 32);
+    if (!code) continue;
+    if (seenHreflangCodes.has(code)) duplicateHreflang = true;
+    seenHreflangCodes.add(code);
+    const parts = sanitizeUrlParts(el.getAttribute('href') || '');
+    const isSelf = Boolean(
+      parts &&
+        currentParts &&
+        parts.origin === currentParts.origin &&
+        parts.path === currentParts.path
+    );
+    hreflangAlternates.push({
+      hreflang: code,
+      href_origin: parts?.origin || null,
+      href_path: parts?.path || null,
+      is_self_referential: isSelf,
+    });
+  }
+
+  // Structured data & social preview card
+  const jsonLdScripts = Array.from(
+    document.querySelectorAll('script[type="application/ld+json" i]')
+  );
+  let malformedJsonLdCount = 0;
+  const entities = [];
+  let entitiesTruncated = false;
+  const structuredIssues = [];
+
+  const requiredBySchemaType = {
+    Product: ['name'],
+    Article: ['headline'],
+    NewsArticle: ['headline'],
+    BlogPosting: ['headline'],
+    Organization: ['name'],
+    BreadcrumbList: ['itemListElement'],
+    FAQPage: ['mainEntity'],
+  };
+
+  const pushEntity = (syntax, obj) => {
+    if (!obj || typeof obj !== 'object') return;
+    if (Array.isArray(obj['@graph'])) {
+      for (const item of obj['@graph']) pushEntity(syntax, item);
+      return;
+    }
+    if (entities.length >= MAX_ENTITIES) {
+      entitiesTruncated = true;
+      return;
+    }
+    const rawType = Array.isArray(obj['@type']) ? obj['@type'][0] : obj['@type'];
+    const schemaType = String(rawType || 'Thing').trim().slice(0, 64);
+    const ctx = String(obj['@context'] || '').toLowerCase();
+    const isSchemaOrg = ctx.includes('schema.org') || syntax !== 'json_ld';
+    const propKeys = Object.keys(obj)
+      .filter((k) => !k.startsWith('@'))
+      .sort()
+      .slice(0, 32);
+    const reqList = requiredBySchemaType[schemaType] || [];
+    const missingReq = reqList.filter((r) => !(r in obj) || obj[r] === null || obj[r] === '');
+    if (missingReq.length > 0) {
+      structuredIssues.push(`missing_required:${schemaType}:${missingReq.join(',')}`);
+    }
+    entities.push({
+      entity_index: entities.length,
+      syntax,
       schema_type: schemaType,
-      property_names: Array.from(new Set(props)),
-      missing_recommended_fields: [],
+      is_schema_org: isSchemaOrg,
+      property_keys: propKeys,
+      missing_required_fields: missingReq,
+      valid: missingReq.length === 0,
+    });
+  };
+
+  for (const scr of jsonLdScripts) {
+    const raw = (scr.textContent || '').trim();
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) pushEntity('json_ld', item);
+      } else {
+        pushEntity('json_ld', parsed);
+      }
+    } catch {
+      malformedJsonLdCount += 1;
+      structuredIssues.push('malformed_json_ld');
+    }
+  }
+
+  const microdataEls = Array.from(document.querySelectorAll('[itemscope][itemtype]'));
+  for (let i = 0; i < Math.min(microdataEls.length, 16); i += 1) {
+    if (entities.length >= MAX_ENTITIES) {
+      entitiesTruncated = true;
+      break;
+    }
+    const el = microdataEls[i];
+    const itemType = (el.getAttribute('itemtype') || '').trim();
+    const schemaType = itemType.split('/').pop() || 'Thing';
+    const props = Array.from(el.querySelectorAll('[itemprop]'))
+      .map((p) => (p.getAttribute('itemprop') || '').trim())
+      .filter(Boolean);
+    const uniqueProps = Array.from(new Set(props)).sort().slice(0, 32);
+    entities.push({
+      entity_index: entities.length,
+      syntax: 'microdata',
+      schema_type: schemaType.slice(0, 64),
+      is_schema_org: itemType.toLowerCase().includes('schema.org'),
+      property_keys: uniqueProps,
+      missing_required_fields: [],
       valid: true,
     });
   }
 
-  // 11. Link Graph & Forms
-  const allLinks = Array.from(document.querySelectorAll('a[href]'));
-  const linksTruncated = allLinks.length > MAX_LINKS;
-  let internalLinkCount = 0;
-  let externalLinkCount = 0;
-  let brokenFragmentCount = 0;
-  let jsVoidCount = 0;
-  const outgoingLinks = [];
+  const hasMeta = (selector) => {
+    const el = document.querySelector(selector);
+    const content = el ? (el.getAttribute('content') || '').trim() : '';
+    return content.length > 0;
+  };
+  const ogTitle = hasMeta('meta[property="og:title" i]');
+  const ogDesc = hasMeta('meta[property="og:description" i]');
+  const ogImg = hasMeta('meta[property="og:image" i]');
+  const ogUrl = hasMeta('meta[property="og:url" i]');
+  const ogType = hasMeta('meta[property="og:type" i]');
+  const twitterCardEl = document.querySelector('meta[name="twitter:card" i],meta[property="twitter:card" i]');
+  const twitterCardKind = twitterCardEl
+    ? (twitterCardEl.getAttribute('content') || '').trim().slice(0, 48) || null
+    : null;
+  const twitterTitle = hasMeta('meta[name="twitter:title" i],meta[property="twitter:title" i]') || ogTitle;
+  const twitterImg = hasMeta('meta[name="twitter:image" i],meta[property="twitter:image" i]') || ogImg;
+  const rawTitle = (document.title || '').replace(/\s+/g, ' ').trim();
 
-  for (let i = 0; i < allLinks.length; i++) {
-    const a = allLinks[i];
-    const rawHref = (a.getAttribute('href') || '').trim();
-    if (/^javascript:/i.test(rawHref)) {
-      jsVoidCount++;
-      continue;
-    }
-    let fragmentValid = null;
-    if (rawHref.startsWith('#') && rawHref.length > 1) {
-      const fragId = rawHref.slice(1);
-      fragmentValid = Boolean(document.getElementById(fragId) || document.querySelector(`[name="${CSS.escape(fragId)}"]`));
-      if (!fragmentValid) brokenFragmentCount++;
-    }
-    const hi = safeOriginAndPath(rawHref);
-    if (hi.sameOrigin === true) internalLinkCount++;
-    else if (hi.sameOrigin === false) externalLinkCount++;
-
-    if (outgoingLinks.length < MAX_LINKS) {
-      const relTokens = (a.getAttribute('rel') || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
-      const anchorText = (a.innerText || a.textContent || a.getAttribute('aria-label') || '').trim();
-      outgoingLinks.push({
-        target_origin: hi.origin,
-        target_path: hi.path,
-        same_origin: Boolean(hi.sameOrigin),
-        has_fragment: rawHref.includes('#'),
-        fragment_target_exists: fragmentValid,
-        rel_tokens: relTokens,
-        target_blank: (a.getAttribute('target') || '').toLowerCase() === '_blank',
-        anchor_text_present: anchorText.length > 0,
-        raw_anchor_for_hash: anchorText,
-        in_main_navigation: Boolean(a.closest('nav, [role="navigation"]')),
-      });
-    }
+  // Security challenge indicators
+  const challengeIndicators = [];
+  if (document.querySelector('#cf-wrapper,#challenge-running,script[src*="cdn-cgi/challenge-platform"]')) {
+    challengeIndicators.push('cloudflare_challenge');
   }
-
-  const allForms = Array.from(document.querySelectorAll('form'));
-  const formsTruncated = allForms.length > MAX_FORMS;
-  const formSummaries = allForms.slice(0, MAX_FORMS).map((f, idx) => {
-    const ai = safeOriginAndPath(f.getAttribute('action') || location.href);
-    const inputs = Array.from(f.querySelectorAll('input:not([type="hidden"]), select, textarea'));
-    const labelled = inputs.filter((inp) => getAccessibleNameInfo(inp).name.length > 0).length;
-    return {
-      form_index: idx,
-      method: cleanToken((f.getAttribute('method') || 'GET').toUpperCase(), 16),
-      action_origin: ai.origin,
-      action_path: ai.path,
-      same_origin_action: Boolean(ai.sameOrigin),
-      https_action: (ai.origin || location.origin).startsWith('https://'),
-      input_count: inputs.length,
-      required_count: inputs.filter((inp) => inp.required || inp.getAttribute('aria-required') === 'true').length,
-      labelled_input_count: labelled,
-      has_submit_control: Boolean(f.querySelector('button[type="submit"], button:not([type]), input[type="submit"], input[type="image"]')),
-      autocomplete_present: Boolean(f.querySelector('[autocomplete]')),
-    };
-  });
-
-  // 12. Behavioural A11y extra counters
-  const liveRegionCount = document.querySelectorAll('[aria-live], [role="status"], [role="alert"], [role="log"]').length;
-  const ariaInvalidCount = document.querySelectorAll('[aria-invalid="true"]').length;
+  if (document.querySelector('.g-recaptcha,.h-captcha,iframe[src*="recaptcha"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"]')) {
+    challengeIndicators.push('captcha_widget');
+  }
+  const captchaFrames = document.querySelectorAll(
+    'iframe[src*="recaptcha"],iframe[src*="hcaptcha"],iframe[src*="challenges.cloudflare.com"],iframe[src*="datadome"]'
+  ).length;
+  const metaCspPresent = Boolean(
+    document.querySelector('meta[http-equiv="Content-Security-Policy" i]')
+  );
+  const manifestLinkPresent = Boolean(document.querySelector('link[rel="manifest" i]'));
 
   return {
-    interactive_raw: { elements: interactiveElements, truncated: interactiveTruncated },
-    application_state_raw: applicationState,
-    interaction_trace: {
-      candidate_scenarios: candidateScenarios,
+    viewport_width: vw,
+    viewport_height: vh,
+    interactive_inventory: {
+      elements: interactiveElements,
+      limits: {
+        max_elements: MAX_INTERACTIVE,
+        discovered_elements: discoveredInteractive,
+        elements_truncated: interactiveTruncated,
+      },
+    },
+    application_state: applicationState,
+    user_journey_trace: {
+      candidate_scenarios: Array.from(scenarioSet),
       steps: interactionSteps,
-      truncated: false,
+      truncated: readOnlyToggleCandidates.length > 16,
     },
     visual_geometry: {
       viewport_width: vw,
       viewport_height: vh,
-      elements: geomElements,
-      limits: { elements: geomTruncated },
+      elements: geometryElements,
+      limits: {
+        dom_truncated: domTruncated,
+        depth_truncated: depthTruncated,
+        elements_truncated: geometryTruncated,
+      },
     },
-    storage_raw: {
-      local_storage_keys: lsInfo.keys,
-      session_storage_keys: ssInfo.keys,
-      keys_truncated: lsInfo.truncated || ssInfo.truncated,
+    storage_partial: {
+      storage_keys: storageKeys,
+      storage_keys_truncated: storageKeysTruncated,
     },
-    security_challenge: {
-      detected: challengeDetected,
-      kind: challengeKind,
-      provider: challengeProvider,
-      challenge_form_present: Boolean(document.querySelector('form[action*="challenge"], form#challenge-form')),
+    third_party_capabilities: Array.from(thirdPartyCapabilities.entries()),
+    security_dom: {
+      meta_csp_present: metaCspPresent,
+      external_scripts_without_sri: externalScriptsWithoutSri,
+      unsafe_target_blank_links: unsafeTargetBlankLinks,
+      challenge_indicators: challengeIndicators,
+      captcha_frame_count: captchaFrames,
     },
-    performance_extra: {
-      hydration_framework: hydrationFramework,
-      render_blocking_count: renderBlockingResources,
+    performance_dom: {
+      lcp_candidate: lcpCandidate,
+      blocking_head_scripts: blockingHeadScripts,
+      blocking_head_stylesheets: blockingHeadStylesheets,
+      preload_hint_count: preloadHintCount,
+      preconnect_hint_count: preconnectHintCount,
     },
     media_and_fonts: {
-      images: mediaImages,
-      media_elements: mediaEls,
-      font_faces: fontFaces,
-      images_truncated: imagesTruncated,
+      media_assets: mediaAssets,
+      media_truncated: mediaTruncated,
+      font_assets: fontAssets,
       fonts_truncated: fontsTruncated,
+      total_font_transfer_bytes: 0,
     },
-    indexability_raw: {
-      meta_robots: metaRobots,
-      canonical_url: canonicalInfo.origin && canonicalInfo.path ? `${canonicalInfo.origin}${canonicalInfo.path}` : null,
-      canonical_same_origin: canonicalInfo.sameOrigin,
-      canonical_self_referencing: canonicalSelf,
-      hreflang_links: hreflangLinks,
-      meta_refresh_seconds: metaRefreshSeconds,
-      noindex_effective: combinedRobots.includes('noindex'),
-      nofollow_effective: combinedRobots.includes('nofollow'),
-      rel_next_present: Boolean(document.querySelector('link[rel="next" i]')),
-      rel_prev_present: Boolean(document.querySelector('link[rel="prev" i]')),
-      pagination_param_detected: /[?&](page|p|offset|cursor)=/i.test(location.search || ''),
+    indexability_dom: {
+      rendered_meta_noindex: renderedMetaNoindex,
+      rendered_meta_nofollow: renderedMetaNofollow,
+      canonical_tag_count: canonicalLinks.length,
+      distinct_canonical_count: new Set(canonicalHrefs).size,
+      rendered_canonical_origin: firstCanonicalParts?.origin || null,
+      rendered_canonical_path: firstCanonicalParts?.path || null,
+      canonical_is_self_referential: canonicalIsSelf,
+      has_pagination_rel_links: hasPaginationRel,
+      hreflang_alternates: hreflangAlternates,
+      hreflang_truncated: hreflangEls.length > MAX_HREFLANG,
+      duplicate_hreflang: duplicateHreflang,
     },
     structured_data: {
-      entities: structuredEntities,
-      json_ld_parse_errors: jsonLdErrors,
-      truncated: jsonLdScripts.length > MAX_STRUCTURED,
+      json_ld_block_count: jsonLdScripts.length,
+      malformed_json_ld_count: malformedJsonLdCount,
+      entities,
+      entities_truncated: entitiesTruncated,
+      social_card: {
+        og_title_present: ogTitle,
+        og_description_present: ogDesc,
+        og_image_present: ogImg,
+        og_url_present: ogUrl,
+        og_type_present: ogType,
+        og_complete: ogTitle && ogDesc && ogImg && ogUrl,
+        twitter_card_kind: twitterCardKind,
+        twitter_title_present: twitterTitle,
+        twitter_image_present: twitterImg,
+        twitter_complete: Boolean(twitterCardKind) && twitterTitle && twitterImg,
+        _raw_title: rawTitle || null,
+        rendered_title_fingerprint: null,
+      },
+      issues: structuredIssues,
     },
-    link_graph_raw: {
-      outgoing_links: outgoingLinks,
-      forms: formSummaries,
+    link_graph: {
+      cluster_summary: clusterSummary,
+      links,
       links_truncated: linksTruncated,
+      forms,
       forms_truncated: formsTruncated,
-      internal_link_count: internalLinkCount,
-      external_link_count: externalLinkCount,
-      broken_fragment_count: brokenFragmentCount,
-      javascript_void_link_count: jsVoidCount,
     },
+    visual_dom: {
+      above_fold_coverage_milli: aboveFoldCoverageMilli,
+      landmarks,
+    },
+    manifest_link_present: manifestLinkPresent,
     beh_extra: {
       live_region_count: liveRegionCount,
       aria_invalid_count: ariaInvalidCount,
@@ -701,420 +1338,458 @@ function collectInPageSensoryBundle() {
   };
 }
 
-function finalizeIdentityHashes(identity) {
-  if (!identity || !identity.id) return identity;
-  if (identity.id.raw_key !== undefined) {
-    const key = sha256HexUtf16Le(identity.id.raw_key);
-    identity.id = { status: identity.id.status || 'unique', key };
-  }
-  return {
-    path: Array.isArray(identity.path) ? identity.path : null,
-    id: identity.id,
-  };
-}
+function assembleSensoryInventories(params, sha256HexFn) {
+  const {
+    bundle,
+    finalUrl,
+    mainResponseHeaders,
+    mainStatusCode,
+    resources,
+    cookies,
+    viewports,
+    perfObs,
+    screenshotSha256,
+    screenshotByteLen,
+    swInfo,
+    indexedDbInfo,
+    loadTimedOut,
+    pendingRequestsCount,
+  } = params;
 
-function buildAxNodeInventoryFromCdp(rawNodes) {
-  const MAX_AX_NODES = 256;
-  const nodes = Array.isArray(rawNodes) ? rawNodes : [];
-  const truncated = nodes.length > MAX_AX_NODES;
-  const capped = nodes.slice(0, MAX_AX_NODES);
-  const idToIndex = new Map();
-  capped.forEach((n, idx) => {
-    if (n.nodeId) idToIndex.set(String(n.nodeId), idx);
-  });
-  const interactiveRoles = new Set(['button', 'link', 'textbox', 'checkbox', 'radio', 'combobox', 'menuitem', 'tab', 'switch', 'slider', 'searchbox']);
-  const out = capped.map((n, idx) => {
-    const role = String(n.role?.value || 'none').toLowerCase();
-    const rawName = String(n.name?.value || '').trim();
-    const rawDesc = String(n.description?.value || '').trim();
-    const props = Array.isArray(n.properties) ? n.properties : [];
-    const getProp = (name) => props.find((p) => p.name === name)?.value?.value;
-    const focusable = Boolean(getProp('focusable'));
-    const focused = Boolean(getProp('focused'));
-    const disabled = Boolean(getProp('disabled'));
-    const expandedVal = getProp('expanded');
-    const expanded = typeof expandedVal === 'boolean' ? expandedVal : null;
-    const selectedVal = getProp('selected');
-    const selected = typeof selectedVal === 'boolean' ? selectedVal : null;
-    const checkedVal = getProp('checked');
-    const checked = checkedVal === 'true' || checkedVal === true ? true : (checkedVal === 'false' || checkedVal === false ? false : null);
-    const modal = Boolean(getProp('modal'));
-    const liveVal = getProp('live');
-    const livePoliteness = typeof liveVal === 'string' ? liveVal : null;
-    const ignored = Boolean(n.ignored);
-    const ignoredReason = Array.isArray(n.ignoredReasons) && n.ignoredReasons[0]?.name ? String(n.ignoredReasons[0].name) : null;
-    const nameSourceRaw = Array.isArray(n.name?.sources) ? n.name.sources.find((s) => s.value?.value)?.type : null;
-    let nameSource = 'none';
-    if (rawName.length > 0) {
-      if (nameSourceRaw === 'attribute') nameSource = 'aria_label';
-      else if (nameSourceRaw === 'relatedElement') nameSource = 'associated_label';
-      else if (nameSourceRaw === 'contents') nameSource = 'contents';
-      else if (nameSourceRaw === 'placeholder') nameSource = 'placeholder';
-      else nameSource = 'other';
+  const hashIdentity = (idObj) => {
+    if (!idObj || !idObj.id) return;
+    if (idObj.id._raw_id) {
+      idObj.id.key = `sha256:${sha256HexFn(idObj.id._raw_id)}`;
+      delete idObj.id._raw_id;
     }
-    return {
-      node_index: idx,
-      ax_node_id: String(n.nodeId || idx),
-      parent_index: n.parentId && idToIndex.has(String(n.parentId)) ? idToIndex.get(String(n.parentId)) : null,
-      child_count: Array.isArray(n.childIds) ? n.childIds.length : 0,
-      role,
-      name_present: rawName.length > 0,
-      name_length: rawName.length,
-      name_fingerprint: rawName.length > 0 ? `ax-name-v1:sha256:${sha256HexUtf8(rawName)}` : null,
-      name_source: nameSource,
-      description_present: rawDesc.length > 0,
-      focusable,
-      focused,
-      disabled,
-      expanded,
-      selected,
-      checked,
-      modal,
-      live_politeness: livePoliteness,
-      ignored,
-      ignored_reason: ignoredReason,
-      interactive: !ignored && interactiveRoles.has(role),
-    };
-  });
-  return {
-    nodes: out,
-    limits: { max_nodes: MAX_AX_NODES, nodes_truncated: truncated },
   };
-}
 
-function assembleSensoryInventories({
-  bundle,
-  finalUrl,
-  mainResponseHeaders,
-  mainStatusCode,
-  resources,
-  cookies,
-  viewports,
-  perfObs,
-  screenshotSha256,
-  layoutMetrics,
-  swInfo,
-}) {
-  const b = bundle || {};
-  let pageOrigin = null;
+  if (!bundle || typeof bundle !== 'object') {
+    return {};
+  }
+
+  // Finalize hashes on interactive_inventory
+  for (const el of bundle.interactive_inventory?.elements || []) {
+    hashIdentity(el.identity);
+    if (el._raw_accessible_name) {
+      el.accessible_name_fingerprint = {
+        version: 1,
+        digest: sha256HexFn(el._raw_accessible_name),
+      };
+    }
+    delete el._raw_accessible_name;
+  }
+
+  // Finalize application_state
+  const appState = bundle.application_state || {};
+  appState.network_idle_reached = !loadTimedOut && Number(pendingRequestsCount || 0) === 0;
+  if (appState._raw_structural_sig) {
+    appState.structural_fingerprint = sha256HexFn(appState._raw_structural_sig);
+  }
+  delete appState._raw_structural_sig;
+
+  // Finalize user_journey_trace
+  for (const step of bundle.user_journey_trace?.steps || []) {
+    if (step.target_identity) hashIdentity(step.target_identity);
+  }
+
+  // Finalize visual_geometry
+  for (const geo of bundle.visual_geometry?.elements || []) {
+    hashIdentity(geo.identity);
+  }
+
+  // Finalize cookie_and_storage
+  let pageHost = '';
+  let pageOrigin = '';
   try {
-    pageOrigin = new URL(finalUrl).origin.toLowerCase();
+    const u = new URL(finalUrl);
+    pageHost = u.hostname.toLowerCase();
+    pageOrigin = u.origin;
   } catch {}
 
-  // 1. Interactive inventory
-  const rawInteractiveEls = Array.isArray(b.interactive_raw?.elements) ? b.interactive_raw.elements : [];
-  const interactiveElements = rawInteractiveEls.map((el) => {
-    const rawName = el.raw_name_for_hash || '';
-    delete el.raw_name_for_hash;
-    el.identity = finalizeIdentityHashes(el.identity);
-    el.name_fingerprint = rawName.length > 0 ? sha256HexUtf8(rawName) : null;
-    return el;
-  });
-  const interactiveInventory = {
-    elements: interactiveElements,
-    limits: { elements: Boolean(b.interactive_raw?.truncated) },
-  };
-
-  // 2. Application state
-  const appRaw = b.application_state_raw || {};
-  const applicationState = {
-    document_ready_state: appRaw.document_ready_state || 'complete',
-    navigation_type: appRaw.navigation_type || 'navigate',
-    structural_fingerprint: appRaw.raw_structural_seed ? sha256HexUtf8(appRaw.raw_structural_seed) : null,
-    visible_text_fingerprint: appRaw.raw_visible_text_seed ? sha256HexUtf8(appRaw.raw_visible_text_seed) : null,
-    active_dialog_present: Boolean(appRaw.active_dialog_present),
-    active_element_role: appRaw.active_element_role || null,
-    active_element_tag: appRaw.active_element_tag || null,
-    active_tab_count: Number(appRaw.active_tab_count || 0),
-    expanded_controls_count: Number(appRaw.expanded_controls_count || 0),
-    disabled_controls_count: Number(appRaw.disabled_controls_count || 0),
-    required_inputs_count: Number(appRaw.required_inputs_count || 0),
-    invalid_inputs_count: Number(appRaw.invalid_inputs_count || 0),
-    loading_indicators_count: Number(appRaw.loading_indicators_count || 0),
-    error_banners_count: Number(appRaw.error_banners_count || 0),
-    empty_state_indicators_count: Number(appRaw.empty_state_indicators_count || 0),
-    scroll_x: Number(appRaw.scroll_x || 0),
-    scroll_y: Number(appRaw.scroll_y || 0),
-    max_scroll_y: Number(appRaw.max_scroll_y || 0),
-    network_idle_observed: Boolean(appRaw.network_idle_observed ?? true),
-  };
-
-  // 3. Visual geometry
-  const vg = b.visual_geometry || { viewport_width: 1280, viewport_height: 720, elements: [], limits: { elements: false } };
-  if (Array.isArray(vg.elements)) {
-    for (const ge of vg.elements) {
-      ge.identity = finalizeIdentityHashes(ge.identity);
-    }
-  }
-
-  // 4. Cookies & Storage
   const rawCookies = Array.isArray(cookies) ? cookies : [];
-  const cookiesTruncated = rawCookies.length > 64;
-  const normalizeSameSite = (v) => {
-    const s = String(v || '').toLowerCase();
-    if (s === 'strict' || s === 'lax' || s === 'none') return s;
-    return 'unspecified';
-  };
-  const cookieList = rawCookies.slice(0, 64).map((c) => {
-    const cDomain = String(c.domain || '').replace(/^\./, '').toLowerCase();
-    const isThirdParty = pageOrigin ? !pageOrigin.endsWith(cDomain) : false;
-    const cName = String(c.name || '').slice(0, 128);
-    const valStr = typeof c.value === 'string' ? c.value : '';
+  const mappedCookies = rawCookies.slice(0, 128).map((c) => {
+    const name = String(c.name || '').slice(0, 128);
+    const domain = String(c.domain || '').toLowerCase().replace(/^\./, '');
+    const sameSiteRaw = String(c.sameSite || '').toLowerCase();
+    const sameSite =
+      sameSiteRaw === 'strict'
+        ? 'strict'
+        : sameSiteRaw === 'lax'
+          ? 'lax'
+          : sameSiteRaw === 'none'
+            ? 'none'
+            : 'unspecified';
+    const thirdParty = Boolean(
+      pageHost && domain && domain !== pageHost && !pageHost.endsWith(`.${domain}`)
+    );
     return {
-      name: cName,
+      name,
       domain: String(c.domain || '').slice(0, 128),
       path: String(c.path || '/').slice(0, 128),
       secure: Boolean(c.secure),
       http_only: Boolean(c.httpOnly),
-      same_site: normalizeSameSite(c.sameSite),
+      same_site: sameSite,
       session: Boolean(c.session),
-      expires_unix_secs: typeof c.expires === 'number' && c.expires > 0 ? Math.round(c.expires) : null,
-      third_party: isThirdParty,
-      host_prefix_valid: !cName.startsWith('__Host-') || (Boolean(c.secure) && String(c.path || '') === '/'),
-      secure_prefix_valid: !cName.startsWith('__Secure-') || Boolean(c.secure),
-      value_length: valStr.length,
-      value_digest: valStr.length > 0 ? sha256HexUtf8(valStr) : null,
+      value_byte_len: typeof c.value === 'string' ? c.value.length : Number(c.size || 0),
+      third_party: thirdParty,
+      has_security_prefix: name.startsWith('__Host-') || name.startsWith('__Secure-'),
+      observed_before_consent: true,
     };
   });
+
+  const idbList = Array.isArray(indexedDbInfo?.databases) ? indexedDbInfo.databases : [];
   const cookieAndStorage = {
-    cookies: cookieList,
-    local_storage_keys: Array.isArray(b.storage_raw?.local_storage_keys) ? b.storage_raw.local_storage_keys : [],
-    session_storage_keys: Array.isArray(b.storage_raw?.session_storage_keys) ? b.storage_raw.session_storage_keys : [],
-    indexed_db_databases: [],
-    cache_storage_names: Array.isArray(swInfo?.cache_names) ? swInfo.cache_names : [],
-    cookies_truncated: cookiesTruncated,
-    storage_keys_truncated: Boolean(b.storage_raw?.keys_truncated),
+    cookies: mappedCookies,
+    storage_keys: bundle.storage_partial?.storage_keys || [],
+    indexed_db_count: idbList.length,
+    indexed_db_databases: idbList,
+    indexed_db_enumerated: Boolean(indexedDbInfo?.enumerated),
+    limits: {
+      max_cookies: 128,
+      cookies_truncated: rawCookies.length > 128,
+      max_storage_keys: 128,
+      storage_keys_truncated: Boolean(bundle.storage_partial?.storage_keys_truncated),
+    },
   };
 
-  // 5. Third-party inventory
-  const thirdPartyMap = new Map();
-  const classifyThirdParty = (origin) => {
-    const h = origin.toLowerCase();
-    if (/google-analytics|googletagmanager|plausible|matomo|segment|mixpanel|hotjar/.test(h)) return 'analytics';
-    if (/doubleclick|googlesyndication|adsystem|adnxs|criteo|taboola/.test(h)) return 'advertising';
-    if (/fonts\.googleapis|fonts\.gstatic|use\.typekit/.test(h)) return 'font_provider';
-    if (/cloudflare|jsdelivr|unpkg|cdnjs|fastly|akamai|cloudfront/.test(h)) return 'cdn';
-    if (/challenges\.cloudflare|hcaptcha|recaptcha/.test(h)) return 'captcha_or_fraud';
-    if (/intercom|zendesk|crisp|hubspot/.test(h)) return 'customer_support';
-    if (/youtube|vimeo|facebook|twitter|linkedin|instagram/.test(h)) return 'social_or_embed';
-    if (/stripe|paypal|braintree|adyen/.test(h)) return 'payment';
-    return 'unclassified';
-  };
-  for (const r of Array.isArray(resources) ? resources : []) {
+  // Finalize third_party_inventory
+  const capMap = new Map(bundle.third_party_capabilities || []);
+  const tpOrigins = new Map();
+  let fontTransferBytes = 0;
+  let swServedCount = 0;
+  let diskCacheCount = 0;
+  let mixedContentCount = 0;
+  const isHttpsPage = String(finalUrl || '').startsWith('https://');
+
+  for (const res of Array.isArray(resources) ? resources : []) {
+    const rType = String(res.resource_type || '');
+    const tBytes = Number(res.transfer_size || 0);
+    if (rType === 'Font') fontTransferBytes += tBytes;
+    if (res.cache_source === 'service_worker') swServedCount += 1;
+    else if (res.cache_source === 'disk_cache' || res.cache_source === 'prefetch_cache') {
+      diskCacheCount += 1;
+    }
+    if (isHttpsPage && String(res.url || '').startsWith('http://')) {
+      mixedContentCount += 1;
+    }
+    let resOrigin = '';
     try {
-      const u = new URL(r.url);
-      const orig = u.origin.toLowerCase();
-      if (pageOrigin && orig !== pageOrigin) {
-        const prev = thirdPartyMap.get(orig) || {
-          origin: orig,
-          category: classifyThirdParty(orig),
-          request_count: 0,
-          script_count: 0,
-          transfer_bytes: 0,
-          sets_cookies: cookieList.some((c) => orig.endsWith(c.domain.replace(/^\./, '').toLowerCase())),
-        };
-        prev.request_count++;
-        if (r.resource_type === 'script') prev.script_count++;
-        prev.transfer_bytes += Number(r.transfer_size || 0);
-        thirdPartyMap.set(orig, prev);
-      }
+      resOrigin = new URL(res.url).origin;
     } catch {}
+    if (!resOrigin || resOrigin === pageOrigin) continue;
+    const entry = tpOrigins.get(resOrigin) || {
+      origin: resOrigin,
+      total_requests: 0,
+      total_transfer_bytes: 0,
+      script_requests: 0,
+      xhr_fetch_beacon_requests: 0,
+      iframe_requests: 0,
+      failed_or_blocked_requests: 0,
+      capability: capMap.get(resOrigin) || {
+        executes_script_in_main_frame: false,
+        script_without_sri_count: 0,
+        script_with_sri_count: 0,
+        iframe_count: 0,
+        unsandboxed_iframe_count: 0,
+        sets_or_sends_cookies: false,
+      },
+    };
+    entry.total_requests += 1;
+    entry.total_transfer_bytes += tBytes;
+    if (rType === 'Script') entry.script_requests += 1;
+    else if (rType === 'XHR' || rType === 'Fetch' || rType === 'Ping') {
+      entry.xhr_fetch_beacon_requests += 1;
+    } else if (rType === 'Document') {
+      entry.iframe_requests += 1;
+    }
+    if (res.status_code && res.status_code >= 400) {
+      entry.failed_or_blocked_requests += 1;
+    }
+    tpOrigins.set(resOrigin, entry);
   }
-  const tpOrigins = Array.from(thirdPartyMap.values()).sort((a, b) => b.request_count - a.request_count);
+  const tpList = Array.from(tpOrigins.values()).sort(
+    (a, b) => b.total_requests - a.total_requests
+  );
   const thirdPartyInventory = {
-    origins: tpOrigins.slice(0, 64),
-    truncated: tpOrigins.length > 64,
+    origins: tpList.slice(0, 128),
+    truncated: tpList.length > 128,
   };
 
-  // 6. Security posture & challenge
+  // Security posture & challenge
   const hdrs = mainResponseHeaders || {};
-  const cspHeader = hdrs['content-security-policy'] || '';
-  const parseCspDirective = (dir) => {
-    const m = cspHeader.match(new RegExp(`(?:^|;)\\s*${dir}\\s+([^;]+)`, 'i'));
-    return m ? m[1].trim().split(/\s+/).slice(0, 16) : [];
+  const getHdr = (name) => {
+    const key = Object.keys(hdrs).find((k) => k.toLowerCase() === name.toLowerCase());
+    return key ? String(hdrs[key] || '') : '';
   };
-  const mixedActive = (Array.isArray(resources) ? resources : []).filter((r) => pageOrigin?.startsWith('https://') && r.url?.startsWith('http://') && ['script', 'stylesheet', 'xhr', 'fetch', 'document'].includes(r.resource_type)).length;
-  const mixedPassive = (Array.isArray(resources) ? resources : []).filter((r) => pageOrigin?.startsWith('https://') && r.url?.startsWith('http://') && ['image', 'media', 'font'].includes(r.resource_type)).length;
-  const formsList = Array.isArray(b.link_graph_raw?.forms) ? b.link_graph_raw.forms : [];
+  const cspHeader = getHdr('content-security-policy');
+  const cspRoHeader = getHdr('content-security-policy-report-only');
+  const hstsHeader = getHdr('strict-transport-security');
+  let hstsMaxAge = null;
+  const hstsMatch = hstsHeader.match(/max-age=(\d+)/i);
+  if (hstsMatch) hstsMaxAge = Number(hstsMatch[1]);
+  const xcto = getHdr('x-content-type-options').toLowerCase().includes('nosniff');
+  const xfo =
+    Boolean(getHdr('x-frame-options')) || cspHeader.toLowerCase().includes('frame-ancestors');
+
   const securityPosture = {
-    csp_present: Boolean(cspHeader),
-    csp_report_only_present: Boolean(hdrs['content-security-policy-report-only']),
-    csp_default_src: parseCspDirective('default-src'),
-    csp_script_src: parseCspDirective('script-src'),
-    csp_style_src: parseCspDirective('style-src'),
-    csp_connect_src: parseCspDirective('connect-src'),
-    csp_frame_ancestors: parseCspDirective('frame-ancestors'),
-    csp_allows_unsafe_inline_script: /script-src[^;]*'unsafe-inline'/i.test(cspHeader),
-    csp_allows_unsafe_eval_script: /script-src[^;]*'unsafe-eval'/i.test(cspHeader),
-    hsts_present: Boolean(hdrs['strict-transport-security']),
-    x_content_type_options: hdrs['x-content-type-options'] || null,
-    x_frame_options: hdrs['x-frame-options'] || null,
-    referrer_policy: hdrs['referrer-policy'] || null,
-    permissions_policy_present: Boolean(hdrs['permissions-policy']),
-    coop_header: hdrs['cross-origin-opener-policy'] || null,
-    coep_header: hdrs['cross-origin-embedder-policy'] || null,
-    corp_header: hdrs['cross-origin-resource-policy'] || null,
-    mixed_content_active_count: mixedActive,
-    mixed_content_passive_count: mixedPassive,
-    external_scripts_without_sri_count: tpOrigins.reduce((acc, o) => acc + o.script_count, 0),
-    insecure_form_action_count: formsList.filter((f) => !f.https_action).length,
-  };
-  const normalizeChallengeKind = (k) => {
-    if (k === 'waf_interstitial' || k === 'captcha_widget' || k === 'js_challenge' || k === 'rate_limit_block') return k;
-    if (k === 'captcha') return 'captcha_widget';
-    if (k === 'rate_limit') return 'rate_limit_block';
-    return 'none';
-  };
-  const securityChallenge = {
-    detected: Boolean(b.security_challenge?.detected),
-    kind: normalizeChallengeKind(b.security_challenge?.kind),
-    provider: b.security_challenge?.provider || null,
-    challenge_form_present: Boolean(b.security_challenge?.challenge_form_present),
-    http_status: typeof mainStatusCode === 'number' ? mainStatusCode : null,
+    https_final_url: isHttpsPage,
+    csp_present: Boolean(cspHeader) || Boolean(bundle.security_dom?.meta_csp_present),
+    csp_report_only: !cspHeader && Boolean(cspRoHeader),
+    csp_unsafe_inline_script: cspHeader.includes("'unsafe-inline'"),
+    csp_unsafe_eval_script: cspHeader.includes("'unsafe-eval'"),
+    hsts_present: Boolean(hstsHeader),
+    hsts_max_age_secs: hstsMaxAge,
+    x_content_type_options_nosniff: xcto,
+    x_frame_options_present: xfo,
+    referrer_policy_present: Boolean(getHdr('referrer-policy')),
+    permissions_policy_present: Boolean(getHdr('permissions-policy')),
+    coop_present: Boolean(getHdr('cross-origin-opener-policy')),
+    coep_present: Boolean(getHdr('cross-origin-embedder-policy')),
+    corp_present: Boolean(getHdr('cross-origin-resource-policy')),
+    runtime_csp_violation_count: 0,
+    mixed_content_request_count: mixedContentCount,
+    external_scripts_without_sri: Number(bundle.security_dom?.external_scripts_without_sri || 0),
+    unsafe_target_blank_links: Number(bundle.security_dom?.unsafe_target_blank_links || 0),
   };
 
-  // 7. Performance attribution
-  let lcpOrigin = null;
-  let lcpPath = null;
-  if (perfObs?.lcp_url) {
-    try {
-      const lu = new URL(perfObs.lcp_url, finalUrl);
-      lcpOrigin = lu.origin.toLowerCase();
-      lcpPath = sanitizeEndpointPath(lu.href);
-    } catch {}
+  const indicators = Array.isArray(bundle.security_dom?.challenge_indicators)
+    ? bundle.security_dom.challenge_indicators.slice()
+    : [];
+  if (getHdr('cf-mitigated')) indicators.push('cf-mitigated');
+  let provider = null;
+  if (indicators.some((i) => i.includes('cloudflare') || i === 'cf-mitigated')) {
+    provider = 'cloudflare';
+  } else if (indicators.includes('captcha_widget')) {
+    provider = 'captcha_widget';
+  } else if (mainStatusCode === 403 || mainStatusCode === 429 || mainStatusCode === 503) {
+    if (indicators.length > 0) provider = 'generic_interstitial';
   }
-  const normalizeHydrationFramework = (f) => {
-    if (f === 'nextjs' || f === 'nuxt' || f === 'remix' || f === 'sveltekit' || f === 'astro' || f === 'angular' || f === 'react_generic' || f === 'vue_generic') return f;
-    if (f === 'next_js') return 'nextjs';
-    return 'none';
+  const securityChallenge = {
+    challenge_detected: indicators.length > 0,
+    provider,
+    blocking_page_content:
+      indicators.length > 0 &&
+      (mainStatusCode === 403 || mainStatusCode === 429 || mainStatusCode === 503),
+    http_status_code: mainStatusCode || null,
+    captcha_frame_count: Number(bundle.security_dom?.captcha_frame_count || 0),
+    matched_indicators: indicators,
   };
-  const scriptResources = (Array.isArray(resources) ? resources : []).filter((r) => r.resource_type === 'script');
+
+  // Performance attribution
+  const lcp = bundle.performance_dom?.lcp_candidate || null;
+  if (lcp && lcp.identity) {
+    hashIdentity(lcp.identity);
+    if (typeof perfObs?.fcp_ms === 'number') {
+      lcp.render_time_ms = perfObs.fcp_ms;
+    }
+  }
   const performanceAttribution = {
-    lcp_element_tag: perfObs?.lcp_element || null,
-    lcp_resource_origin: lcpOrigin,
-    lcp_resource_path: lcpPath,
-    cls_culprit_tags: [],
-    render_blocking_count: Number(b.performance_extra?.render_blocking_count || 0),
-    long_task_attribution_origins: pageOrigin ? [pageOrigin] : [],
-    hydration_framework: normalizeHydrationFramework(b.performance_extra?.hydration_framework),
-    script_count: scriptResources.length,
-    total_script_transfer_bytes: scriptResources.reduce((acc, r) => acc + Number(r.transfer_size || 0), 0),
+    lcp_candidate: lcp,
+    total_cls_milli: 0,
+    cls_shift_regions: [],
+    render_blocking_chain: {
+      blocking_head_scripts: Number(bundle.performance_dom?.blocking_head_scripts || 0),
+      blocking_head_stylesheets: Number(bundle.performance_dom?.blocking_head_stylesheets || 0),
+      preload_hint_count: Number(bundle.performance_dom?.preload_hint_count || 0),
+      preconnect_hint_count: Number(bundle.performance_dom?.preconnect_hint_count || 0),
+      blocking_transfer_bytes: 0,
+    },
   };
 
-  // 8. Indexability & Authority
-  const xRobotsTag = hdrs['x-robots-tag'] || null;
-  const idxRaw = b.indexability_raw || {};
-  const noindexEffective = Boolean(idxRaw.noindex_effective || (xRobotsTag && /noindex/i.test(xRobotsTag)));
-  const nofollowEffective = Boolean(idxRaw.nofollow_effective || (xRobotsTag && /nofollow/i.test(xRobotsTag)));
+  // Media and fonts
+  const mediaAndFonts = bundle.media_and_fonts || {
+    media_assets: [],
+    media_truncated: false,
+    font_assets: [],
+    fonts_truncated: false,
+    total_font_transfer_bytes: 0,
+  };
+  for (const m of mediaAndFonts.media_assets || []) {
+    hashIdentity(m.identity);
+  }
+  mediaAndFonts.total_font_transfer_bytes = fontTransferBytes;
+
+  // Indexability authority
+  const xRobots = getHdr('x-robots-tag').toLowerCase();
+  const httpNoindex = xRobots.includes('noindex');
+  const httpNofollow = xRobots.includes('nofollow');
+  const idxDom = bundle.indexability_dom || {};
+  const conflicts = [];
+  if (Number(idxDom.distinct_canonical_count || 0) > 1) {
+    conflicts.push('multiple_conflicting_canonicals');
+  }
+  if ((httpNoindex || idxDom.rendered_meta_noindex) && idxDom.canonical_tag_count > 0 && !idxDom.canonical_is_self_referential) {
+    conflicts.push('noindex_with_non_self_canonical');
+  }
+  if (idxDom.duplicate_hreflang) {
+    conflicts.push('duplicate_hreflang_code');
+  }
+  if (
+    Array.isArray(idxDom.hreflang_alternates) &&
+    idxDom.hreflang_alternates.length > 0 &&
+    !idxDom.hreflang_alternates.some((h) => h.is_self_referential)
+  ) {
+    conflicts.push('missing_self_referential_hreflang');
+  }
+
   const indexabilityAuthority = {
-    meta_robots: Array.isArray(idxRaw.meta_robots) ? idxRaw.meta_robots : [],
-    x_robots_tag: xRobotsTag,
-    canonical_url: idxRaw.canonical_url || null,
-    canonical_same_origin: idxRaw.canonical_same_origin ?? null,
-    canonical_self_referencing: idxRaw.canonical_self_referencing ?? null,
-    hreflang_links: Array.isArray(idxRaw.hreflang_links) ? idxRaw.hreflang_links : [],
-    meta_refresh_seconds: idxRaw.meta_refresh_seconds ?? null,
-    noindex_effective: noindexEffective,
-    nofollow_effective: nofollowEffective,
-    rel_next_present: Boolean(idxRaw.rel_next_present),
-    rel_prev_present: Boolean(idxRaw.rel_prev_present),
-    pagination_param_detected: Boolean(idxRaw.pagination_param_detected),
+    effectively_indexable:
+      mainStatusCode === 200 && !httpNoindex && !idxDom.rendered_meta_noindex,
+    http_x_robots_noindex: httpNoindex,
+    http_x_robots_nofollow: httpNofollow,
+    rendered_meta_noindex: Boolean(idxDom.rendered_meta_noindex),
+    rendered_meta_nofollow: Boolean(idxDom.rendered_meta_nofollow),
+    canonical_tag_count: Number(idxDom.canonical_tag_count || 0),
+    rendered_canonical_origin: idxDom.rendered_canonical_origin || null,
+    rendered_canonical_path: idxDom.rendered_canonical_path || null,
+    canonical_is_self_referential: Boolean(idxDom.canonical_is_self_referential),
+    has_pagination_rel_links: Boolean(idxDom.has_pagination_rel_links),
+    hreflang_alternates: idxDom.hreflang_alternates || [],
+    hreflang_truncated: Boolean(idxDom.hreflang_truncated),
+    conflicts,
   };
 
-  // 9. Link graph
-  const lgRaw = b.link_graph_raw || {};
-  const outgoingLinks = (Array.isArray(lgRaw.outgoing_links) ? lgRaw.outgoing_links : []).map((l) => {
-    const rawAnchor = l.raw_anchor_for_hash || '';
-    delete l.raw_anchor_for_hash;
-    l.anchor_text_fingerprint = rawAnchor.length > 0 ? sha256HexUtf8(rawAnchor) : null;
-    return l;
-  });
-  const linkGraph = {
-    outgoing_links: outgoingLinks,
-    forms: formsList,
-    links_truncated: Boolean(lgRaw.links_truncated),
-    forms_truncated: Boolean(lgRaw.forms_truncated),
-    internal_link_count: Number(lgRaw.internal_link_count || 0),
-    external_link_count: Number(lgRaw.external_link_count || 0),
-    broken_fragment_count: Number(lgRaw.broken_fragment_count || 0),
-    javascript_void_link_count: Number(lgRaw.javascript_void_link_count || 0),
-  };
+  // Structured data
+  const structuredData = bundle.structured_data || {};
+  if (structuredData.social_card) {
+    if (structuredData.social_card._raw_title) {
+      structuredData.social_card.rendered_title_fingerprint = {
+        version: 1,
+        digest: sha256HexFn(structuredData.social_card._raw_title),
+      };
+    }
+    delete structuredData.social_card._raw_title;
+  }
 
-  // 10. Responsive comparison from viewports
-  const vps = Array.isArray(viewports) ? viewports : [];
-  const vpProfiles = vps.map((vp) => ({
-    profile: vp.viewport_name,
-    width: vp.width,
-    height: vp.height,
-    document_scroll_width: vp.has_horizontal_overflow ? vp.width + 64 : vp.width,
-    document_scroll_height: vp.height,
-    horizontal_overflow: Boolean(vp.has_horizontal_overflow),
-    visible_interactive_count: interactiveElements.filter((e) => e.visible).length,
-    small_tap_target_count: Number(vp.small_tap_targets || 0),
-    small_text_node_count: Number(vp.small_text_nodes || 0),
-    offscreen_control_count: Number(vp.offscreen_controls || 0),
-    fixed_header_height_pct: Number(vp.fixed_header_height_pct || 0),
-  }));
+  // Responsive comparison from real viewport observations
+  const desktopVp = (Array.isArray(viewports) ? viewports : []).find((v) => v.name === 'desktop') || {
+    width: 1280,
+    scroll_width: 1280,
+    visible_controls: bundle.interactive_inventory?.elements?.filter((e) => e.visible).length || 0,
+    horizontal_overflow_px: 0,
+    small_touch_targets_count: 0,
+  };
+  const mobileVp = (Array.isArray(viewports) ? viewports : []).find((v) => v.name === 'mobile') || {
+    width: 375,
+    scroll_width: 375,
+    visible_controls: desktopVp.visible_controls,
+    horizontal_overflow_px: 0,
+    small_touch_targets_count: 0,
+  };
   const anomalies = [];
-  for (const vp of vpProfiles) {
-    if (vp.horizontal_overflow) {
-      anomalies.push({ viewport_profile: vp.profile, kind: 'horizontal_overflow', affected_count: 1 });
-    }
-    if (vp.small_tap_target_count > 0) {
-      anomalies.push({ viewport_profile: vp.profile, kind: 'tap_target_too_small', affected_count: vp.small_tap_target_count });
-    }
-    if (vp.offscreen_control_count > 0) {
-      anomalies.push({ viewport_profile: vp.profile, kind: 'offscreen_interactive_control', affected_count: vp.offscreen_control_count });
-    }
-    if (vp.fixed_header_height_pct >= 30) {
-      anomalies.push({ viewport_profile: vp.profile, kind: 'excessive_fixed_header', affected_count: 1 });
-    }
+  if (Number(mobileVp.horizontal_overflow_px || 0) > 0) {
+    anomalies.push({
+      anomaly_index: anomalies.length,
+      kind: 'mobile_horizontal_overflow',
+      identity: null,
+      tag: 'body',
+      mobile_metric_px: Number(mobileVp.scroll_width || mobileVp.width + mobileVp.horizontal_overflow_px),
+      desktop_metric_px: Number(desktopVp.scroll_width || desktopVp.width),
+    });
+  }
+  if (Number(mobileVp.small_touch_targets_count || 0) > 0) {
+    anomalies.push({
+      anomaly_index: anomalies.length,
+      kind: 'undersized_mobile_touch_target',
+      identity: null,
+      tag: 'button',
+      mobile_metric_px: Number(mobileVp.small_touch_targets_count),
+      desktop_metric_px: Number(desktopVp.small_touch_targets_count || 0),
+    });
   }
   const responsiveComparison = {
-    viewports: vpProfiles,
+    mobile_viewport_width: Number(mobileVp.width || 375),
+    mobile_scroll_width: Number(mobileVp.scroll_width || Number(mobileVp.width || 375) + Number(mobileVp.horizontal_overflow_px || 0)),
+    desktop_viewport_width: Number(desktopVp.width || 1280),
+    desktop_scroll_width: Number(desktopVp.scroll_width || Number(desktopVp.width || 1280) + Number(desktopVp.horizontal_overflow_px || 0)),
+    desktop_visible_controls: Number(desktopVp.visible_controls ?? (bundle.interactive_inventory?.elements?.filter((e) => e.visible).length || 0)),
+    mobile_visible_controls: Number(mobileVp.visible_controls ?? desktopVp.visible_controls ?? 0),
+    mobile_undersized_touch_targets: Number(mobileVp.small_touch_targets_count || 0),
     anomalies,
+    anomalies_truncated: false,
   };
 
-  // 11. Visual artifacts
+  // Link graph
+  const linkGraph = bundle.link_graph || {
+    cluster_summary: {
+      internal_links: 0,
+      external_links: 0,
+      header_nav_links: 0,
+      main_content_links: 0,
+      footer_links: 0,
+      empty_anchor_links: 0,
+    },
+    links: [],
+    links_truncated: false,
+    forms: [],
+    forms_truncated: false,
+  };
+  for (const l of linkGraph.links || []) {
+    hashIdentity(l.identity);
+    if (l._raw_anchor_text) {
+      l.anchor_text_fingerprint = {
+        version: 1,
+        digest: sha256HexFn(l._raw_anchor_text),
+      };
+    }
+    delete l._raw_anchor_text;
+  }
+  for (const f of linkGraph.forms || []) {
+    hashIdentity(f.identity);
+  }
+
+  // Visual artifacts
   const visualArtifacts = {
-    viewport_width: layoutMetrics?.width || 1280,
-    viewport_height: layoutMetrics?.height || 720,
-    full_page_width: layoutMetrics?.contentWidth || 1280,
-    full_page_height: layoutMetrics?.contentHeight || 720,
     viewport_screenshot_sha256: screenshotSha256 || null,
-    above_fold_non_whitespace_ratio_pct: screenshotSha256 ? 65 : null,
-    fixed_overlay_coverage_pct: vpProfiles[0]?.fixed_header_height_pct ?? 0,
+    screenshot_byte_len: Number(screenshotByteLen || 0),
+    viewport_width: Number(bundle.viewport_width || 1280),
+    viewport_height: Number(bundle.viewport_height || 800),
+    above_fold_coverage_milli: Number(bundle.visual_dom?.above_fold_coverage_milli || 0),
+    landmarks: bundle.visual_dom?.landmarks || [],
   };
 
-  // 12. Service worker lifecycle
-  const swFulfilledCount = (Array.isArray(resources) ? resources : []).filter((r) => r.cache_source === 'service_worker').length;
-  const serviceWorkerLifecycle = {
-    controller_present: Boolean(swInfo?.controller_present),
-    registrations: Array.isArray(swInfo?.registrations) ? swInfo.registrations : [],
-    cache_names: Array.isArray(swInfo?.cache_names) ? swInfo.cache_names : [],
-    caches_truncated: Boolean(swInfo?.caches_truncated),
-    intercepted_request_count: swFulfilledCount,
-    sw_fulfilled_request_count: swFulfilledCount,
+  // Service worker lifecycle
+  const regs = Array.isArray(swInfo?.registrations) ? swInfo.registrations : [];
+  const firstReg = regs[0] || null;
+  let regState = 'none';
+  if (firstReg) {
+    const st = String(firstReg.state || '').toLowerCase();
+    if (st === 'activated') regState = 'activated';
+    else if (st === 'activating') regState = 'activating';
+    else if (st === 'waiting' || st === 'installed') regState = 'waiting';
+    else if (st === 'installing') regState = 'installing';
+  }
+  const cacheBuckets = Array.isArray(swInfo?.cache_names) ? swInfo.cache_names.slice(0, 16) : [];
+  const serviceWorker = {
+    registration_state: regState,
+    page_controlled: Boolean(swInfo?.controller_present),
+    script_path: firstReg?.script_path || null,
+    scope_path: firstReg?.scope_path || null,
+    cache_storage_bucket_count: cacheBuckets.length,
+    cache_bucket_names: cacheBuckets,
+    sw_served_request_count: swServedCount,
+    disk_or_prefetch_cache_request_count: diskCacheCount,
+    manifest_link_present: Boolean(bundle.manifest_link_present),
   };
 
   return {
-    interactive_inventory: interactiveInventory,
-    application_state: applicationState,
-    interaction_trace: b.interaction_trace || { candidate_scenarios: [], steps: [], truncated: false },
-    visual_geometry: vg,
+    interactive_inventory: bundle.interactive_inventory,
+    application_state: appState,
+    user_journey_trace: bundle.user_journey_trace,
+    visual_geometry: bundle.visual_geometry,
     cookie_and_storage: cookieAndStorage,
     third_party_inventory: thirdPartyInventory,
     security_posture: securityPosture,
     security_challenge: securityChallenge,
     performance_attribution: performanceAttribution,
-    media_and_fonts: b.media_and_fonts || null,
+    media_and_fonts: mediaAndFonts,
     indexability_authority: indexabilityAuthority,
-    structured_data: b.structured_data || null,
+    structured_data: structuredData,
     responsive_comparison: responsiveComparison,
     link_graph: linkGraph,
     visual_artifacts: visualArtifacts,
-    service_worker_lifecycle: serviceWorkerLifecycle,
-    beh_extra: b.beh_extra || { live_region_count: 0, aria_invalid_count: 0 },
+    service_worker: serviceWorker,
+    beh_extra: bundle.beh_extra,
   };
 }
-
