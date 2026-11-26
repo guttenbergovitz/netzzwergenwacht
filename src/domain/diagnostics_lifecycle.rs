@@ -25,14 +25,39 @@ pub struct VisualArtifactEvidence {
     /// Lowercase hex SHA-256 digest of the captured viewport PNG screenshot bytes, if captured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub viewport_screenshot_sha256: Option<String>,
-    /// Byte length of the captured viewport PNG screenshot (`0` if unavailable).
-    pub screenshot_byte_len: u64,
-    /// Viewport width in CSS pixels at screenshot capture.
-    pub viewport_width: u32,
-    /// Viewport height in CSS pixels at screenshot capture.
-    pub viewport_height: u32,
-    /// Proportion of the above-the-fold viewport covered by non-empty landmark/content boxes (`0..1000`).
-    pub above_fold_coverage_milli: u32,
+    /// Byte length of the captured viewport PNG screenshot; `None` when no screenshot was captured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screenshot_byte_len: Option<u64>,
+    /// Viewport width in CSS pixels at screenshot capture, when observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport_width: Option<u32>,
+    /// Viewport height in CSS pixels at screenshot capture, when observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewport_height: Option<u32>,
+    /// Estimated coverage of the above-the-fold viewport by retained eligible element
+    /// rectangles, in thousandths (`0..=1000`).
+    ///
+    /// This is a geometric estimate from a fixed sample grid over the bounding boxes of
+    /// selected element families. It is not pixel-derived visual coverage, painted area,
+    /// text occupancy or content density, and `None` means no eligible rectangle was
+    /// retained or the viewport could not be measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub above_fold_retained_element_coverage_milli: Option<u32>,
+    /// Number of columns in the sampling grid used for the coverage estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_grid_columns: Option<u32>,
+    /// Number of rows in the sampling grid used for the coverage estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_grid_rows: Option<u32>,
+    /// Number of element rectangles retained for the coverage estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_retained_element_count: Option<u32>,
+    /// Maximum number of element rectangles the collector retains for the estimate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_retained_element_limit: Option<u32>,
+    /// Whether additional eligible rectangles were discarded by the retention limit.
+    #[serde(default)]
+    pub coverage_elements_truncated: bool,
     /// Bounded list of primary visual landmark boxes (capped at 16).
     pub landmarks: Vec<VisualRegionLandmarkObs>,
 }

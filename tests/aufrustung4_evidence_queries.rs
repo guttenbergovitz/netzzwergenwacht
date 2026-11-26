@@ -337,8 +337,8 @@ fn journey_trace() -> UserJourneyTrace {
             state_changed: true,
             focus_changed: false,
             dialog_changed: false,
-            new_runtime_errors: 0,
-            triggered_requests: 0,
+            runtime_errors_observed_in_window: 0,
+            requests_observed_in_window: 0,
         }],
         truncated: false,
     }
@@ -643,10 +643,15 @@ fn link_graph() -> LinkGraphInventory {
 fn visual_artifacts() -> VisualArtifactEvidence {
     VisualArtifactEvidence {
         viewport_screenshot_sha256: Some("f".repeat(64)),
-        screenshot_byte_len: 20_480,
-        viewport_width: 1280,
-        viewport_height: 720,
-        above_fold_coverage_milli: 640,
+        screenshot_byte_len: Some(20_480),
+        viewport_width: Some(1280),
+        viewport_height: Some(720),
+        above_fold_retained_element_coverage_milli: Some(640),
+        coverage_grid_columns: Some(40),
+        coverage_grid_rows: Some(25),
+        coverage_retained_element_count: Some(12),
+        coverage_retained_element_limit: Some(64),
+        coverage_elements_truncated: false,
         landmarks: vec![VisualRegionLandmarkObs {
             landmark_role: "banner".to_owned(),
             bbox: ElementBoundingBox {

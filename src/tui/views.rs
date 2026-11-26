@@ -1731,15 +1731,30 @@ fn build_visual_sw_and_tls_caa_lines(
     ))];
     if let Some(v) = vis.artifacts {
         out.push(Line::from(format!(
-            " Screenshot SHA-256: {} ({} B) | Above-fold coverage: {}‰ | Landmarks: {}",
+            " Screenshot SHA-256: {} ({} B) | Estimated retained-rect coverage: {}‰ ({}x{} grid, {}/{} rects{}) | Landmarks: {}",
             sanitize_line(
                 v.viewport_screenshot_sha256
                     .as_deref()
                     .unwrap_or("unavailable"),
                 24
             ),
-            v.screenshot_byte_len,
-            v.above_fold_coverage_milli,
+            v.screenshot_byte_len
+                .map_or_else(|| "unobserved".to_owned(), |bytes| bytes.to_string()),
+            v.above_fold_retained_element_coverage_milli
+                .map_or_else(|| "unobserved".to_owned(), |milli| milli.to_string()),
+            v.coverage_grid_columns
+                .map_or_else(|| "?".to_owned(), |value| value.to_string()),
+            v.coverage_grid_rows
+                .map_or_else(|| "?".to_owned(), |value| value.to_string()),
+            v.coverage_retained_element_count
+                .map_or_else(|| "?".to_owned(), |value| value.to_string()),
+            v.coverage_retained_element_limit
+                .map_or_else(|| "?".to_owned(), |value| value.to_string()),
+            if v.coverage_elements_truncated {
+                ", truncated"
+            } else {
+                ""
+            },
             v.landmarks.len()
         )));
     }

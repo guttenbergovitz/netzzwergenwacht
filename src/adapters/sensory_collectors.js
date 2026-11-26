@@ -334,6 +334,8 @@ function collectInPageSensoryBundle() {
 
   const landmarks = [];
   const aboveFoldRects = [];
+  const ABOVE_FOLD_RECT_LIMIT = 64;
+  let aboveFoldRectsTruncated = false;
 
   let externalScriptsWithoutSri = 0;
   let unsafeTargetBlankLinks = 0;
@@ -414,13 +416,15 @@ function collectInPageSensoryBundle() {
         tag === 'img' ||
         tag === 'button')
     ) {
-      if (aboveFoldRects.length < 64) {
+      if (aboveFoldRects.length < ABOVE_FOLD_RECT_LIMIT) {
         aboveFoldRects.push({
           x1: Math.max(0, bbox.x),
           y1: Math.max(0, bbox.y),
           x2: Math.min(vw, bbox.x + bbox.width),
           y2: Math.min(vh, bbox.y + bbox.height),
         });
+      } else {
+        aboveFoldRectsTruncated = true;
       }
     }
 
@@ -862,11 +866,15 @@ function collectInPageSensoryBundle() {
     walk(document.body, 1, ['body[1]']);
   }
 
-  // Compute real above-the-fold coverage in thousandths (0..1000) from union of visible rects on a 40x25 grid
-  let aboveFoldCoverageMilli = 0;
+  // Estimated coverage of the above-the-fold viewport by retained element rectangles,
+  // in thousandths. Each retained rectangle is sampled on a fixed 40x25 grid; the result
+  // is a geometric estimate, not pixel-derived visual coverage or painted area.
+  const COVERAGE_GRID_X = 40;
+  const COVERAGE_GRID_Y = 25;
+  let aboveFoldCoverageMilli = null;
   if (vw > 0 && vh > 0 && aboveFoldRects.length > 0) {
-    const GRID_X = 40;
-    const GRID_Y = 25;
+    const GRID_X = COVERAGE_GRID_X;
+    const GRID_Y = COVERAGE_GRID_Y;
     let coveredCells = 0;
     for (let gx = 0; gx < GRID_X; gx += 1) {
       const cx = ((gx + 0.5) * vw) / GRID_X;
@@ -1037,8 +1045,8 @@ function collectInPageSensoryBundle() {
       expanded_changed: expandedChanged,
       dialog_changed: dialogChanged,
       dom_fingerprint_changed: sigChanged,
-      new_runtime_errors: Math.max(0, afterErrors - beforeErrors),
-      triggered_requests: Math.max(0, afterResources - beforeResources),
+      runtime_errors_observed_in_window: Math.max(0, afterErrors - beforeErrors),
+      requests_observed_in_window: Math.max(0, afterResources - beforeResources),
     });
     // Restore original toggle state if we changed expansion
     if (expandedChanged) {
@@ -1542,7 +1550,12 @@ function collectInPageSensoryBundle() {
       forms_truncated: formsTruncated,
     },
     visual_dom: {
-      above_fold_coverage_milli: aboveFoldCoverageMilli,
+      above_fold_retained_element_coverage_milli: aboveFoldCoverageMilli,
+      coverage_grid_columns: aboveFoldCoverageMilli === null ? null : COVERAGE_GRID_X,
+      coverage_grid_rows: aboveFoldCoverageMilli === null ? null : COVERAGE_GRID_Y,
+      coverage_retained_element_count: aboveFoldRects.length,
+      coverage_retained_element_limit: ABOVE_FOLD_RECT_LIMIT,
+      coverage_elements_truncated: aboveFoldRectsTruncated,
       landmarks,
     },
     manifest_link_present: manifestLinkPresent,
@@ -2025,13 +2038,22 @@ function assembleSensoryInventories(params, sha256HexFn) {
   }
 
   // Visual artifacts
+  const visualDom = bundle.visual_dom || {};
+  const observedVisualNumber = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
   const visualArtifacts = {
     viewport_screenshot_sha256: screenshotSha256 || null,
-    screenshot_byte_len: Number(screenshotByteLen || 0),
-    viewport_width: Number(bundle.viewport_width || 1280),
-    viewport_height: Number(bundle.viewport_height || 800),
-    above_fold_coverage_milli: Number(bundle.visual_dom?.above_fold_coverage_milli || 0),
-    landmarks: bundle.visual_dom?.landmarks || [],
+    screenshot_byte_len: observedVisualNumber(screenshotByteLen),
+    viewport_width: observedVisualNumber(bundle.viewport_width),
+    viewport_height: observedVisualNumber(bundle.viewport_height),
+    above_fold_retained_element_coverage_milli: observedVisualNumber(
+      visualDom.above_fold_retained_element_coverage_milli
+    ),
+    coverage_grid_columns: observedVisualNumber(visualDom.coverage_grid_columns),
+    coverage_grid_rows: observedVisualNumber(visualDom.coverage_grid_rows),
+    coverage_retained_element_count: observedVisualNumber(visualDom.coverage_retained_element_count),
+    coverage_retained_element_limit: observedVisualNumber(visualDom.coverage_retained_element_limit),
+    coverage_elements_truncated: Boolean(visualDom.coverage_elements_truncated),
+    landmarks: visualDom.landmarks || [],
   };
 
   // Service worker lifecycle

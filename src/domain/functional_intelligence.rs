@@ -331,10 +331,16 @@ pub struct InteractionTraceStep {
     /// Whether the structural fingerprint changed after the action.
     #[serde(default)]
     pub dom_fingerprint_changed: bool,
-    /// Number of new runtime console errors or exceptions triggered during the step.
-    pub new_runtime_errors: u32,
-    /// Number of network requests initiated during the step.
-    pub triggered_requests: u32,
+    /// Runtime errors counted during the observation window of the step.
+    ///
+    /// A count difference observed across the window, not proof that the action
+    /// caused the errors.
+    pub runtime_errors_observed_in_window: u32,
+    /// Network requests counted during the observation window of the step.
+    ///
+    /// A count difference observed across the window, not proof that the action
+    /// issued the requests.
+    pub requests_observed_in_window: u32,
 }
 
 /// Bounded read-only interaction trace and discovered candidate user journeys.

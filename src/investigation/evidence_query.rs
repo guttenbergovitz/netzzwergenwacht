@@ -1231,7 +1231,10 @@ pub(super) fn cited_application_state_refs(
 pub struct InteractionStepFilter {
     /// Match only steps of a specific action kind.
     pub action: Option<InteractionActionKind>,
-    /// Match only steps that produced a focus, expansion, dialog, or runtime error change.
+    /// Match only steps where a state change or runtime error was observed in the window.
+    ///
+    /// Selection is an observation of co-occurrence within the probe window, not
+    /// a claim that the action caused the change.
     pub only_state_changing: bool,
 }
 
@@ -1299,7 +1302,7 @@ pub fn query_interaction_trace<'a>(
                     || s.expanded_changed
                     || s.dialog_changed
                     || s.dom_fingerprint_changed
-                    || s.new_runtime_errors > 0)
+                    || s.runtime_errors_observed_in_window > 0)
         })
         .collect();
     let total_matching = matching.len();
@@ -2707,8 +2710,9 @@ pub(super) fn cited_visual_artifact_refs(
     vec![EvidenceRef::new(
         EvidenceSource::BrowserRuntime,
         format!(
-            "visual-artifacts:coverage_milli={}:landmarks={}",
-            v.above_fold_coverage_milli,
+            "visual-artifacts:retained_rect_coverage_milli={}:landmarks={}",
+            v.above_fold_retained_element_coverage_milli
+                .map_or_else(|| "unobserved".to_owned(), |milli| milli.to_string()),
             v.landmarks.len()
         ),
     )]

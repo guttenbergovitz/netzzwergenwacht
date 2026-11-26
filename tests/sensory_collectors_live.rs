@@ -253,11 +253,11 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
             "opening <details> must change the measured DOM structure fingerprint"
         );
         assert_eq!(
-            step.triggered_requests, 0,
+            step.requests_observed_in_window, 0,
             "a native disclosure toggle must not trigger network requests"
         );
         assert_eq!(
-            step.new_runtime_errors, 0,
+            step.runtime_errors_observed_in_window, 0,
             "a native disclosure toggle must not raise runtime errors"
         );
     }
@@ -472,12 +472,25 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         .as_ref()
         .expect("visual_artifacts populated");
     assert!(vis.viewport_screenshot_sha256.is_some());
-    assert!(vis.screenshot_byte_len > 0);
     assert!(
-        vis.above_fold_coverage_milli > 0 && vis.above_fold_coverage_milli <= 1000,
-        "expected measured above_fold_coverage_milli in 1..=1000, got {}",
-        vis.above_fold_coverage_milli
+        vis.screenshot_byte_len.is_some_and(|bytes| bytes > 0),
+        "expected an observed screenshot byte length"
     );
+    let coverage = vis
+        .above_fold_retained_element_coverage_milli
+        .expect("expected an estimated retained-rect coverage value");
+    assert!(
+        coverage > 0 && coverage <= 1000,
+        "expected estimated retained-rect coverage in 1..=1000, got {coverage}"
+    );
+    assert_eq!(vis.coverage_grid_columns, Some(40));
+    assert_eq!(vis.coverage_grid_rows, Some(25));
+    assert!(
+        vis.coverage_retained_element_count
+            .is_some_and(|count| count > 0),
+        "expected retained element rectangles to be counted"
+    );
+    assert_eq!(vis.coverage_retained_element_limit, Some(64));
     assert!(
         !vis.landmarks.is_empty(),
         "expected visual region landmarks in the fixture"
