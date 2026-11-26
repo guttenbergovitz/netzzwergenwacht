@@ -315,6 +315,12 @@ pub struct InvestigationReport {
     /// Final lifecycle state.
     pub state: InvestigationState,
     /// Preserved evidence snapshot including follow-up Level 2 captures.
+    ///
+    /// Retention is explicit: `Some` means the authoritative evidence survives with the
+    /// report so an operator can re-query it offline, and `None` means the evidence was
+    /// intentionally omitted (for example after a pre-collection failure) rather than
+    /// that the investigation observed nothing. Consumers must not read an absent
+    /// snapshot as an empty capture.
     pub snapshot: Option<EvidenceSnapshot>,
     /// Initial Level 1 deterministic report.
     pub initial_report: Option<AuditReport>,

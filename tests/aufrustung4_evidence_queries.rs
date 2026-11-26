@@ -1160,6 +1160,49 @@ async fn kommandant_without_citation_forces_inconclusive() {
     );
 }
 
+#[tokio::test]
+async fn retained_evidence_survives_saving_and_offline_reload() {
+    let evaluation = r#"{"status":"supported","interactive_element_nodes":[11],"evaluation_summary":"Two controls observed.","conclusion":"Interactive controls confirmed."}"#;
+    let report = investigate(evaluation.to_owned()).await;
+
+    let retained = report
+        .snapshot
+        .as_ref()
+        .expect("the investigation must retain its authoritative snapshot");
+    let live_page = query_interactive_elements(retained, &InteractiveElementFilter::default(), 0);
+    assert_eq!(live_page.status, EvidenceQueryStatus::Captured);
+
+    let json = serde_json::to_string(&report).expect("serialise investigation report");
+    let reloaded: InvestigationReport =
+        serde_json::from_str(&json).expect("deserialise investigation report");
+    let restored = reloaded
+        .snapshot
+        .as_ref()
+        .expect("retained evidence must survive serialisation");
+    let offline_page =
+        query_interactive_elements(restored, &InteractiveElementFilter::default(), 0);
+    assert_eq!(offline_page.status, EvidenceQueryStatus::Captured);
+    assert_eq!(offline_page.total_matching, live_page.total_matching);
+
+    let mut omitted = reloaded;
+    omitted.snapshot = None;
+    let path = std::env::temp_dir().join(format!(
+        "nzw-evidence-retention-{}.json",
+        std::process::id()
+    ));
+    std::fs::write(
+        &path,
+        serde_json::to_string(&omitted).expect("serialise omitted report"),
+    )
+    .expect("write report without retained evidence");
+    let artefacts = netzzwergenwacht::tui::load_offline_report(&path).expect("load offline report");
+    assert!(
+        artefacts.snapshot.is_none(),
+        "an intentionally omitted snapshot must not reappear as captured evidence"
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
 fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
     let buffer = terminal.backend().buffer();
     let mut text = String::new();

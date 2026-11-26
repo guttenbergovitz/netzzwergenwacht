@@ -122,7 +122,7 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
         return Ok(DiagnosticArtefacts {
             target: inv_report.target.as_str().to_owned(),
             mode: DiagnosticRunMode::AgenticInvestigation,
-            snapshot: None,
+            snapshot: inv_report.snapshot.clone(),
             audit_report: inv_report.initial_report.clone(),
             investigation_report: Some(inv_report),
             patrol_report: None,
@@ -138,10 +138,11 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
         let first_audit = first_inv
             .as_ref()
             .and_then(|inv| inv.initial_report.clone());
+        let retained_snapshot = first_inv.as_ref().and_then(|inv| inv.snapshot.clone());
         return Ok(DiagnosticArtefacts {
             target,
             mode: DiagnosticRunMode::AutonomousPatrol,
-            snapshot: None,
+            snapshot: retained_snapshot,
             audit_report: first_audit,
             investigation_report: first_inv,
             patrol_report: Some(patrol_report),
