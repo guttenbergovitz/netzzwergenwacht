@@ -528,6 +528,7 @@ async fn cancelled_run_stops_before_acquisition() {
         String::from("cancel probe"),
         sink,
         cancel_rx,
+        std::path::Path::new(".nzw/memory"),
     )
     .await;
 
@@ -535,5 +536,15 @@ async fn cancelled_run_stops_before_acquisition() {
     assert!(
         error.contains("cancelled by operator"),
         "unexpected cancellation error: {error}"
+    );
+}
+
+#[test]
+fn workbench_patrol_memory_defaults_to_the_shared_directory() {
+    let options = netzzwergenwacht::tui::TuiStartupOptions::default();
+    assert_eq!(
+        options.memory_dir,
+        std::path::PathBuf::from(netzzwergenwacht::patrol::memory::DEFAULT_MEMORY_DIR),
+        "the workbench must continue the same patrol memory as the CLI"
     );
 }

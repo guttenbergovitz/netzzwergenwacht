@@ -175,7 +175,7 @@ enum Command {
         #[arg(long)]
         browser: bool,
         /// Directory for persistent application memory (defaults to `.nzw/memory`).
-        #[arg(long, default_value = ".nzw/memory")]
+        #[arg(long, default_value = netzzwergenwacht::patrol::memory::DEFAULT_MEMORY_DIR)]
         memory_dir: PathBuf,
         /// Maximum pages actively inspected per patrol.
         #[arg(long, default_value_t = 10)]
@@ -241,6 +241,9 @@ enum Command {
         /// Force ASCII-only borders and indicators.
         #[arg(long)]
         ascii: bool,
+        /// Directory for persistent patrol memory shared with `nzw patrol` (defaults to `.nzw/memory`).
+        #[arg(long, default_value = netzzwergenwacht::patrol::memory::DEFAULT_MEMORY_DIR)]
+        memory_dir: PathBuf,
     },
 }
 
@@ -510,6 +513,7 @@ async fn main() -> ExitCode {
             monochrome,
             high_contrast,
             ascii,
+            memory_dir,
         } => {
             let theme_mode = if monochrome {
                 Some(ThemeMode::Monochrome)
@@ -528,6 +532,7 @@ async fn main() -> ExitCode {
                 history_path: history,
                 output_path: output,
                 policy: target_policy(allow_private),
+                memory_dir,
                 theme_mode,
                 ascii_only: ascii,
                 ..TuiStartupOptions::default()

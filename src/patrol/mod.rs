@@ -32,10 +32,10 @@ use crate::persistence::{self, RegressionReport};
 
 pub use self::memory::{
     ApplicationId, ApplicationMemory, CATALOG_SCHEMA_VERSION, CatalogAnomalyFilter,
-    CatalogAnomalyRow, CatalogPageRow, CatalogRunRow, CatalogTargetRow, EvidenceFreshness,
-    PatrolIndexCatalog, RememberedPage, hash_body, load_memory, load_or_rebuild_catalog,
-    query_catalog_anomalies, query_catalog_runs, query_catalog_stale_pages, query_catalog_targets,
-    record_patrol_run, save_memory,
+    CatalogAnomalyRow, CatalogPageRow, CatalogRunRow, CatalogTargetRow, DEFAULT_MEMORY_DIR,
+    EvidenceFreshness, PatrolIndexCatalog, RememberedPage, hash_body, load_memory,
+    load_or_rebuild_catalog, query_catalog_anomalies, query_catalog_runs,
+    query_catalog_stale_pages, query_catalog_targets, record_patrol_run, save_memory,
 };
 use self::sampling::{SampleSelection, SamplingPlan, build_sampling_plan};
 

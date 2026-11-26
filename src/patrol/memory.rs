@@ -183,6 +183,10 @@ pub fn save_memory(dir: &Path, memory: &ApplicationMemory) -> Result<(), Persist
 /// Schema version of the persisted [`PatrolIndexCatalog`].
 pub const CATALOG_SCHEMA_VERSION: u32 = 1;
 
+/// Default directory for persistent application memory, shared by `nzw patrol` and
+/// the Zwergenleitstand workbench so both continue the same application history.
+pub const DEFAULT_MEMORY_DIR: &str = ".nzw/memory";
+
 /// Indexed target summary row in the portfolio patrol catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CatalogTargetRow {

@@ -59,6 +59,9 @@ pub struct TuiStartupOptions {
     pub output_path: Option<PathBuf>,
     /// Target validation policy (e.g. `--allow-local`).
     pub policy: TargetPolicy,
+    /// Directory for persistent patrol memory. Shared with `nzw patrol` so the
+    /// workbench continues the same application history instead of starting fresh.
+    pub memory_dir: PathBuf,
     /// Execution budget governing network, browser, and LLM limits.
     pub budget: ExecutionBudget,
     /// Investigation objective for `AgenticInvestigation` mode.
@@ -81,6 +84,7 @@ impl Default for TuiStartupOptions {
             history_path: None,
             output_path: None,
             policy: TargetPolicy::PublicOnly,
+            memory_dir: PathBuf::from(crate::patrol::memory::DEFAULT_MEMORY_DIR),
             budget: ExecutionBudget::default(),
             objective: String::from(
                 "Identify high-impact web quality, reliability, accessibility, and security issues",
@@ -336,6 +340,7 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                         options.policy,
                         options.budget,
                         options.objective.clone(),
+                        options.memory_dir.clone(),
                     ));
                 }
                 AppEffect::CancelActiveRun => {
@@ -468,6 +473,7 @@ fn spawn_background_run(
     policy: TargetPolicy,
     budget: ExecutionBudget,
     objective: String,
+    memory_dir: PathBuf,
 ) -> ActiveBackgroundTask {
     let (sink, event_rx) = diagnostic_event_channel(run_id);
     let (result_tx, result_rx) = mpsc::channel(1);
@@ -475,7 +481,13 @@ fn spawn_background_run(
 
     let handle = tokio::spawn(async move {
         let outcome = Box::pin(execute_diagnostic_run_cancellable(
-            spec, policy, budget, objective, sink, cancel_rx,
+            spec,
+            policy,
+            budget,
+            objective,
+            sink,
+            cancel_rx,
+            &memory_dir,
         ))
         .await;
         let _ = Box::pin(result_tx.send(outcome)).await;
@@ -503,7 +515,16 @@ pub async fn execute_diagnostic_run(
     sink: DiagnosticEventSink,
 ) -> Result<DiagnosticArtefacts, String> {
     let (_cancel, cancel_rx) = watch::channel(false);
-    execute_diagnostic_run_cancellable(spec, policy, budget, objective, sink, cancel_rx).await
+    execute_diagnostic_run_cancellable(
+        spec,
+        policy,
+        budget,
+        objective,
+        sink,
+        cancel_rx,
+        Path::new(crate::patrol::memory::DEFAULT_MEMORY_DIR),
+    )
+    .await
 }
 
 /// Executes a diagnostic run with a cooperative cancellation token.
@@ -526,6 +547,7 @@ pub async fn execute_diagnostic_run_cancellable(
     objective: String,
     sink: DiagnosticEventSink,
     cancel: watch::Receiver<bool>,
+    memory_dir: &Path,
 ) -> Result<DiagnosticArtefacts, String> {
     let start = Instant::now();
     let target_str = spec.target.as_str().to_owned();
@@ -667,11 +689,26 @@ pub async fn execute_diagnostic_run_cancellable(
                 policy,
                 budget,
                 patrol_budget,
-                None,
+                Some(memory_dir),
                 None,
                 backend,
             ))
             .await;
+
+            for limitation in [
+                patrol_report.memory_load_error.as_deref(),
+                patrol_report.memory_save_error.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                sink.emit(
+                    EventContext::new().with_target(&target_str),
+                    DiagnosticEventPayload::Warning {
+                        message: format!("patrol memory unavailable: {limitation}"),
+                    },
+                );
+            }
 
             for url in &patrol_report.application_map.discovered_urls {
                 sink.emit(
