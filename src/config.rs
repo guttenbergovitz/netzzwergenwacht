@@ -111,7 +111,19 @@ impl AppConfig {
 }
 
 /// Supported `rig-core` LLM provider families.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
     /// `OpenAI` and OpenAI-compatible endpoints (`OpenRouter`, vLLM, `LiteLLM`).

@@ -17,6 +17,44 @@ use tokio::process::Command;
 /// Maximum bytes read from an external adapter's stdout or stderr (16 MiB).
 const MAX_ADAPTER_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 
+/// Environment variables an adapter subprocess may inherit.
+///
+/// Provider credentials never appear here. Measurement engines need the search path,
+/// a writable temporary directory and their own `NZW_*` tuning knobs; everything else
+/// is dropped so a pasted session credential cannot leak into a child process.
+const SUBPROCESS_ENV_ALLOW_LIST: &[&str] = &[
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "TMP",
+    "TEMP",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TZ",
+    "XDG_CACHE_HOME",
+    "NZW_CHROMIUM_BIN",
+    "NZW_AXE_BIN",
+    "NZW_BROWSER_POLICY",
+    "NZW_ALLOW_UNSAFE_BROWSER_SANDBOX",
+    "NZW_LOAD_TIMEOUT_MS",
+    "NZW_TIMEOUT_MS",
+];
+
+/// Restricts `cmd` to [`SUBPROCESS_ENV_ALLOW_LIST`].
+///
+/// The child starts from an empty environment, so any variable not on the list —
+/// including API keys and session credentials — is absent rather than merely
+/// unmentioned.
+fn apply_restricted_environment(cmd: &mut Command) {
+    cmd.env_clear();
+    for name in SUBPROCESS_ENV_ALLOW_LIST {
+        if let Ok(value) = std::env::var(name) {
+            cmd.env(name, value);
+        }
+    }
+}
+
 /// Executes an external command within `timeout`, returning stdout on success.
 ///
 /// Ensures stdin is closed, stdout/stderr are piped and capped at
@@ -36,6 +74,7 @@ pub(crate) async fn run_bounded_command(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    apply_restricted_environment(cmd);
     #[cfg(unix)]
     cmd.process_group(0);
 
@@ -108,4 +147,40 @@ async fn terminate_process_group(child: &mut tokio::process::Child, pid: Option<
             .await;
     }
     let _ = child.kill().await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn adapter_subprocess_environment_is_restricted_to_the_allow_list() {
+        // `sh` adds a few variables of its own (`PWD`, `SHLVL`, `_`); everything else
+        // must have come from the allow-list.
+        const SHELL_INJECTED: &[&str] = &["PWD", "SHLVL", "_"];
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.arg("-c").arg("env");
+        let output = run_bounded_command("env probe", &mut cmd, Duration::from_secs(10))
+            .await
+            .expect("environment probe should run");
+
+        let mut names = Vec::new();
+        for line in output.lines() {
+            if let Some((name, _)) = line.split_once('=') {
+                names.push(name.to_owned());
+            }
+        }
+        for name in &names {
+            assert!(
+                SUBPROCESS_ENV_ALLOW_LIST.contains(&name.as_str())
+                    || SHELL_INJECTED.contains(&name.as_str()),
+                "adapter subprocess inherited unexpected variable `{name}`"
+            );
+            assert!(
+                !name.ends_with("_API_KEY") && !name.starts_with("NZW_LLM"),
+                "credential variable `{name}` leaked into an adapter subprocess"
+            );
+        }
+    }
 }

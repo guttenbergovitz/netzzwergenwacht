@@ -30,6 +30,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 whatlang = "0.17"
+zeroize = "1"
 x509-parser = "0.17"
 
 [profile.release]

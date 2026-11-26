@@ -96,6 +96,39 @@ impl std::fmt::Debug for RigCompletionProvider {
 }
 
 impl RigCompletionProvider {
+    /// Builds a provider from an already resolved credential.
+    ///
+    /// This is the workbench path: the secret comes from the session store or an
+    /// explicitly named environment variable, and the provider never reads the
+    /// environment itself.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the model identifier is empty.
+    pub fn from_resolved_spec(
+        spec: &crate::config::ModelSpec,
+        resolved: &crate::credentials::ResolvedCredential,
+    ) -> Result<Self, String> {
+        if spec.model.trim().is_empty() {
+            return Err("model identifier must not be empty".to_owned());
+        }
+        let api_key = match resolved.source {
+            crate::credentials::CredentialSource::NotRequired => None,
+            _ => Some(resolved.secret.expose().to_owned()),
+        };
+        let base_url = spec.base_url.clone().or_else(|| {
+            std::env::var("NZW_LLM_BASE_URL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        });
+        Ok(Self {
+            provider: spec.provider,
+            api_key,
+            base_url: base_url.map(|u| u.trim_end_matches('/').to_owned()),
+            model: spec.model.clone(),
+        })
+    }
+
     /// Builds a [`RigCompletionProvider`] from a configured [`ModelSpec`](crate::config::ModelSpec).
     ///
     /// # Errors

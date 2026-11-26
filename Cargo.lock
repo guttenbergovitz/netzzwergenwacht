@@ -1666,6 +1666,7 @@ dependencies = [
  "url",
  "whatlang",
  "x509-parser",
+ "zeroize",
 ]
 
 [[package]]
