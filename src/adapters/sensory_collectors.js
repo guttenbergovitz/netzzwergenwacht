@@ -1608,17 +1608,21 @@ function assembleSensoryInventories(params, sha256HexFn) {
 
   // Performance attribution
   const lcp = bundle.performance_dom?.lcp_candidate || null;
-  if (lcp && lcp.identity) {
-    hashIdentity(lcp.identity);
-  }
-  if (lcp && typeof perfObs?.lcp_ms === 'number') {
-    lcp.render_time_ms = Math.max(0, Math.round(perfObs.lcp_ms));
+  if (lcp) {
+    if (lcp.identity) hashIdentity(lcp.identity);
+    // A geometry-derived candidate must never inherit measured LCP timing.
+    lcp.candidate_source = 'dom_geometry_heuristic';
+    lcp.render_time_ms = null;
   }
   const shiftRegions = Array.isArray(perfObs?.shift_regions)
     ? perfObs.shift_regions.slice(0, 16).map((s, idx) => ({
         shift_index: idx,
         score_milli: Math.max(0, Math.round(Number(s.value || 0) * 1000)),
         start_time_ms: Math.max(0, Math.round(Number(s.start_time || 0))),
+        window_index:
+          typeof s.window_index === 'number' && Number.isInteger(s.window_index) && s.window_index >= 0
+            ? s.window_index
+            : null,
         primary_node_identity: null,
         primary_node_tag: s.tag ? String(s.tag).slice(0, 32) : null,
       }))

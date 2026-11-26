@@ -317,7 +317,7 @@ function findBrowser() {
     await call('Page.addScriptToEvaluateOnNewDocument', {
       source: `window.__nzwCspViolations = [];
       window.addEventListener('securitypolicyviolation', (e) => { if (window.__nzwCspViolations.length < 50) window.__nzwCspViolations.push({ directive: e.violatedDirective || '', blocked_uri: e.blockedURI || '', source_file: e.sourceFile || null, line_number: e.lineNumber || null }); });
-      window.__nzwPerf = { lcpMs: null, lcpElement: null, lcpUrl: null, cls: 0, shiftCount: 0, shifts: [], errors: 0, longTaskCount: 0, longTaskTotalMs: 0, maxLongTaskMs: 0 };
+      window.__nzwPerf = { lcpMs: null, lcpRenderMs: null, lcpLoadMs: null, lcpSizePxSq: null, lcpElement: null, lcpUrl: null, clsMaxWindow: 0, clsWindowCount: 0, shiftCount: 0, shifts: [], errors: 0, longTaskCount: 0, longTaskTotalMs: 0, maxLongTaskMs: 0, lcpObserverInstalled: false, clsObserverInstalled: false, longTaskObserverInstalled: false };
       window.addEventListener('error', () => { window.__nzwPerf.errors += 1; }, true);
       window.addEventListener('unhandledrejection', () => { window.__nzwPerf.errors += 1; });
       const nzwNodePath = (node) => {
@@ -334,28 +334,49 @@ function findBrowser() {
       try {
         new PerformanceObserver((list) => {
           for (const e of list.getEntries()) {
-            window.__nzwPerf.lcpMs = Math.round(e.startTime);
+            window.__nzwPerf.lcpMs = Math.round(e.startTime || 0);
+            window.__nzwPerf.lcpRenderMs = typeof e.renderTime === 'number' && e.renderTime >= 0 ? Math.round(e.renderTime) : null;
+            window.__nzwPerf.lcpLoadMs = typeof e.loadTime === 'number' && e.loadTime >= 0 ? Math.round(e.loadTime) : null;
+            window.__nzwPerf.lcpSizePxSq = typeof e.size === 'number' && e.size >= 0 ? Math.round(e.size) : null;
             window.__nzwPerf.lcpElement = e.element ? (e.element.tagName.toLowerCase() + (e.element.id ? '#' + e.element.id : '')) : null;
             window.__nzwPerf.lcpUrl = e.url || null;
           }
         }).observe({ type: 'largest-contentful-paint', buffered: true });
+        window.__nzwPerf.lcpObserverInstalled = true;
+      } catch {}
+      try {
+        let currentWindow = null;
         new PerformanceObserver((list) => {
           for (const e of list.getEntries()) {
             if (e.hadRecentInput) continue;
-            window.__nzwPerf.cls += e.value || 0;
+            const start = Math.round(e.startTime || 0);
+            const value = Number(e.value || 0);
             window.__nzwPerf.shiftCount += 1;
+            if (!currentWindow || (start - currentWindow.lastStartMs) >= 1000 || (start - currentWindow.firstStartMs) > 5000) {
+              currentWindow = { firstStartMs: start, lastStartMs: start, score: 0 };
+              window.__nzwPerf.clsWindowCount += 1;
+            }
+            currentWindow.lastStartMs = start;
+            currentWindow.score += value;
+            if (currentWindow.score > window.__nzwPerf.clsMaxWindow) {
+              window.__nzwPerf.clsMaxWindow = currentWindow.score;
+            }
             if (window.__nzwPerf.shifts.length < 16) {
               const src = (e.sources && e.sources[0]) || null;
               const node = src && src.node ? src.node : null;
               window.__nzwPerf.shifts.push({
-                value: Number(e.value || 0),
-                start_time: Math.round(e.startTime || 0),
+                value,
+                start_time: start,
+                window_index: window.__nzwPerf.clsWindowCount - 1,
                 tag: node && node.tagName ? node.tagName.toLowerCase() : null,
                 node_path: node && node.tagName ? nzwNodePath(node) : null,
               });
             }
           }
         }).observe({ type: 'layout-shift', buffered: true });
+        window.__nzwPerf.clsObserverInstalled = true;
+      } catch {}
+      try {
         new PerformanceObserver((list) => {
           for (const e of list.getEntries()) {
             const d = Math.round(e.duration || 0);
@@ -364,6 +385,7 @@ function findBrowser() {
             if (d > window.__nzwPerf.maxLongTaskMs) window.__nzwPerf.maxLongTaskMs = d;
           }
         }).observe({ type: 'longtask', buffered: true });
+        window.__nzwPerf.longTaskObserverInstalled = true;
       } catch {}`,
     });
     if (process.env.NZW_BROWSER_POLICY === 'public_only') {
@@ -506,17 +528,24 @@ function findBrowser() {
           dom_interactive_ms: pos(nav.domInteractive),
           dom_content_loaded_ms: pos(nav.domContentLoadedEventEnd),
           load_event_ms: pos(nav.loadEventEnd),
-          lcp_ms: p.lcpMs ?? null,
+          lcp_ms: p.lcpObserverInstalled ? (p.lcpMs ?? null) : null,
+          lcp_render_ms: p.lcpObserverInstalled ? (p.lcpRenderMs ?? null) : null,
+          lcp_load_ms: p.lcpObserverInstalled ? (p.lcpLoadMs ?? null) : null,
+          lcp_size_px_sq: p.lcpObserverInstalled ? (p.lcpSizePxSq ?? null) : null,
           lcp_element: p.lcpElement || null,
           lcp_url: p.lcpUrl || null,
-          cls_thousandths: typeof p.cls === 'number' ? Math.round(p.cls * 1000) : null,
-          layout_shift_count: p.shiftCount || 0,
+          cls_thousandths: p.clsObserverInstalled ? Math.round((p.clsMaxWindow || 0) * 1000) : null,
+          layout_shift_count: p.clsObserverInstalled ? p.shiftCount : null,
+          cls_window_count: p.clsObserverInstalled ? p.clsWindowCount : null,
+          lcp_observer_installed: Boolean(p.lcpObserverInstalled),
+          cls_observer_installed: Boolean(p.clsObserverInstalled),
+          long_task_observer_installed: Boolean(p.longTaskObserverInstalled),
           shift_regions: Array.isArray(p.shifts) ? p.shifts : [],
-          runtime_error_count: typeof p.errors === 'number' ? p.errors : 0,
+          runtime_error_count: p.errors,
           resource_entry_count: performance.getEntriesByType('resource').length,
-          long_task_count: p.longTaskCount || 0,
-          long_task_total_ms: p.longTaskTotalMs || 0,
-          max_long_task_ms: p.maxLongTaskMs || 0,
+          long_task_count: p.longTaskObserverInstalled ? p.longTaskCount : null,
+          long_task_total_ms: p.longTaskObserverInstalled ? p.longTaskTotalMs : null,
+          max_long_task_ms: p.longTaskObserverInstalled ? p.maxLongTaskMs : null,
         } : null;
         let safeCount = (fn) => { try { return fn(); } catch { return 0; } };
         const storageSummary = {

@@ -6,7 +6,7 @@ use std::time::Duration;
 use netzzwergenwacht::adapters::browser::run_browser_with_policy;
 use netzzwergenwacht::domain::{
     AuditTarget, CollectorOutcome, EvidenceSnapshot, FunctionalComponentKind,
-    InteractionSafetyClass, StructuredDataSyntax, TargetPolicy,
+    InteractionSafetyClass, LcpCandidateSource, StructuredDataSyntax, TargetPolicy,
 };
 use netzzwergenwacht::investigation::{
     AccessibilityNodeFilter, CookieStorageFilter, ElementGeometryFilter, EvidenceQueryStatus,
@@ -329,9 +329,30 @@ async fn live_chromium_captures_all_wave_iv_sensory_collectors_and_populates_off
         .as_ref()
         .expect("expected an observed LCP candidate");
     assert_eq!(
-        lcp.render_time_ms,
-        evidence.performance.as_ref().and_then(|p| p.lcp_ms),
-        "LCP render time must be the measured largest-contentful-paint entry, never FCP"
+        lcp.candidate_source,
+        LcpCandidateSource::DomGeometryHeuristic,
+        "a DOM geometry candidate must be labelled as heuristic"
+    );
+    assert!(
+        lcp.render_time_ms.is_none(),
+        "a geometry heuristic must never inherit measured LCP timing"
+    );
+    let runtime = evidence
+        .performance
+        .as_ref()
+        .expect("performance runtime telemetry populated");
+    assert!(
+        runtime.cls_observer_installed,
+        "layout-shift observer installation must be reported"
+    );
+    assert!(
+        runtime.long_task_observer_installed,
+        "longtask observer installation must be reported"
+    );
+    assert_eq!(
+        perf_attr.total_cls_milli.map(u64::from),
+        runtime.cls_thousandths,
+        "reported CLS must come from the measured observer window"
     );
     assert!(
         perf_attr.total_cls_milli.is_some(),

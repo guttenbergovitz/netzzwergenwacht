@@ -26,10 +26,10 @@ use netzzwergenwacht::domain::{
     EvidenceSnapshot, ExecutionBudget, FontAssetObs, FontDisplayPolicy, FunctionalComponentKind,
     HttpEvidence, HttpHeader, IndexabilityAuthorityEvidence, InteractionActionKind,
     InteractionSafetyClass, InteractionTraceStep, InteractiveElementInventory,
-    InteractiveElementObs, InteractiveInventoryLimits, LcpCandidateObs, LighthouseMetrics,
-    LinkClusterSummary, LinkGraphInventory, LinkPlacementRegion, Measurement, MeasurementUnit,
-    MediaAndFontInventory, MediaAssetObs, MediaFormatClass, MediaLoadingStrategy, Origin,
-    PerformanceAttributionEvidence, RenderBlockingChainSummary, RenderedBlockId,
+    InteractiveElementObs, InteractiveInventoryLimits, LcpCandidateObs, LcpCandidateSource,
+    LighthouseMetrics, LinkClusterSummary, LinkGraphInventory, LinkPlacementRegion, Measurement,
+    MeasurementUnit, MediaAndFontInventory, MediaAssetObs, MediaFormatClass, MediaLoadingStrategy,
+    Origin, PerformanceAttributionEvidence, RenderBlockingChainSummary, RenderedBlockId,
     RenderedBlockIdentity, RenderedBlockKind, RenderedContentBlock, RenderedContentLimits,
     RenderedContentSegmentation, RenderedCssVisibility, RenderedFormEndpointObs, RenderedLinkObs,
     RenderedTextFingerprint, RequestHop, ResourceTimingObs, ResponsiveAnomalyKind,
@@ -483,6 +483,7 @@ fn performance_attribution() -> PerformanceAttributionEvidence {
         lcp_candidate: Some(LcpCandidateObs {
             identity: None,
             tag: "h1".to_owned(),
+            candidate_source: LcpCandidateSource::DomGeometryHeuristic,
             render_time_ms: None,
             size_px_sq: 120_000,
             bbox: ElementBoundingBox {

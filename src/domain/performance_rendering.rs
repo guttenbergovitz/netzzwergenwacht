@@ -6,6 +6,18 @@ use serde::{Deserialize, Serialize};
 use crate::domain::functional_intelligence::ElementBoundingBox;
 use crate::domain::rendered_content::RenderedElementIdentity;
 
+/// How an LCP candidate element was identified.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LcpCandidateSource {
+    /// Candidate chosen by DOM geometry heuristics, not by a measured
+    /// `largest-contentful-paint` entry.
+    #[default]
+    DomGeometryHeuristic,
+    /// Candidate resolved from a measured `largest-contentful-paint` entry.
+    PerformanceEntry,
+}
+
 /// Largest Contentful Paint (LCP) candidate element attribution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct LcpCandidateObs {
@@ -14,7 +26,14 @@ pub struct LcpCandidateObs {
     pub identity: Option<RenderedElementIdentity>,
     /// Lowercase tag name of the LCP element (`img`, `h1`, `div`, `video`, etc.).
     pub tag: String,
+    /// How this candidate was identified.
+    #[serde(default)]
+    pub candidate_source: LcpCandidateSource,
     /// Effective paint or render timestamp in milliseconds from navigation start.
+    ///
+    /// Only populated when the candidate came from a measured
+    /// `largest-contentful-paint` entry. A geometry heuristic never inherits
+    /// measured timing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render_time_ms: Option<u64>,
     /// Reported LCP candidate area (`width * height`) in CSS square pixels.
@@ -41,6 +60,9 @@ pub struct ClsShiftRegionObs {
     pub score_milli: u32,
     /// Timestamp of the shift in milliseconds from navigation start.
     pub start_time_ms: u64,
+    /// Zero-based CLS session window this shift belongs to, when grouped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_index: Option<u32>,
     /// Stable element identity of the primary shifted node, if resolved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_node_identity: Option<RenderedElementIdentity>,

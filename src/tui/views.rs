@@ -1768,12 +1768,22 @@ fn build_performance_evidence_lines(
     if let Some(ref perf) = browser.performance {
         lines.push(Line::from(""));
         lines.push(Line::from(format!(
-            " LCP: {:?} ms | CLS (milli): {:?} | TTFB: {:?} ms",
-            perf.lcp_ms, perf.cls_thousandths, perf.ttfb_ms
+            " LCP: {} ms | CLS (milli, max window): {} | TTFB: {} ms",
+            perf.lcp_ms
+                .map_or("unobserved".to_owned(), |v| v.to_string()),
+            perf.cls_thousandths
+                .map_or("unobserved".to_owned(), |v| v.to_string()),
+            perf.ttfb_ms
+                .map_or("unobserved".to_owned(), |v| v.to_string())
         )));
         lines.push(Line::from(format!(
             " Long tasks: {} (total {} ms, max {} ms)",
-            perf.long_task_count, perf.long_task_total_ms, perf.max_long_task_ms
+            perf.long_task_count
+                .map_or("unobserved".to_owned(), |v| v.to_string()),
+            perf.long_task_total_ms
+                .map_or("unobserved".to_owned(), |v| v.to_string()),
+            perf.max_long_task_ms
+                .map_or("unobserved".to_owned(), |v| v.to_string())
         )));
     }
     if let Some(ref cpu) = browser.cpu_profile {

@@ -1374,44 +1374,47 @@ fn check_runtime_perf_metrics(
         }
     }
 
-    if perf.max_long_task_ms > 200 || perf.long_task_total_ms > 300 {
-        findings.push(Finding {
-            fingerprint: FindingFingerprint::default(),
-            rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
-            category: FindingCategory::Performance,
-            evidence_level: EvidenceLevel::Rendered,
-            kind: FindingKind::Deterministic,
-            severity: Severity::Medium,
-            confidence: Confidence::High,
-            title: format!(
-                "Main-thread JS long tasks ({} tasks, max {} ms)",
-                perf.long_task_count, perf.max_long_task_ms
-            ),
-            summary: format!(
-                "Observed {} long task(s) totalling {} ms on the main thread (max {} ms).",
-                perf.long_task_count, perf.long_task_total_ms, perf.max_long_task_ms
-            ),
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::BrowserRuntime,
-                format!(
-                    "long_tasks={};total_ms={};max_ms={}",
-                    perf.long_task_count, perf.long_task_total_ms, perf.max_long_task_ms
+    if let (Some(long_task_count), Some(long_task_total_ms), Some(max_long_task_ms)) = (
+        perf.long_task_count,
+        perf.long_task_total_ms,
+        perf.max_long_task_ms,
+    ) {
+        if max_long_task_ms > 200 || long_task_total_ms > 300 {
+            findings.push(Finding {
+                fingerprint: FindingFingerprint::default(),
+                rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
+                category: FindingCategory::Performance,
+                evidence_level: EvidenceLevel::Rendered,
+                kind: FindingKind::Deterministic,
+                severity: Severity::Medium,
+                confidence: Confidence::High,
+                title: format!(
+                    "Main-thread JS long tasks ({long_task_count} tasks, max {max_long_task_ms} ms)"
                 ),
-            )],
-            remediation: Some(
-                "Break up long-running JavaScript tasks, code-split bundles, and yield to the main thread."
-                    .to_owned(),
-            ),
-        });
-        checks.push(CheckStatus::Failed {
-            rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
-            evidence_level: EvidenceLevel::Rendered,
-        });
-    } else {
-        checks.push(CheckStatus::Passed {
-            rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
-            evidence_level: EvidenceLevel::Rendered,
-        });
+                summary: format!(
+                    "Observed {long_task_count} long task(s) totalling {long_task_total_ms} ms on the main thread (max {max_long_task_ms} ms)."
+                ),
+                evidence_refs: vec![EvidenceRef::new(
+                    EvidenceSource::BrowserRuntime,
+                    format!(
+                        "long_tasks={long_task_count};total_ms={long_task_total_ms};max_ms={max_long_task_ms}"
+                    ),
+                )],
+                remediation: Some(
+                    "Break up long-running JavaScript tasks, code-split bundles, and yield to the main thread."
+                        .to_owned(),
+                ),
+            });
+            checks.push(CheckStatus::Failed {
+                rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        } else {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_JS_LONG_TASKS.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+            });
+        }
     }
 }
 
@@ -1551,12 +1554,17 @@ fn check_runtime_cls_lcp_and_fonts(
                     confidence: Confidence::High,
                     title: format!("Browser CLS exceeds 0.10 ({cls_milli} thousandths)"),
                     summary: format!(
-                        "PerformanceObserver measured CLS = 0.{cls_milli:03} across {} layout shift(s).",
+                        "PerformanceObserver measured CLS = 0.{cls_milli:03} in the largest session window ({} layout shift(s) observed).",
                         perf.layout_shift_count
+                            .map_or_else(|| "unobserved".to_owned(), |count| count.to_string())
                     ),
                     evidence_refs: vec![EvidenceRef::new(
                         EvidenceSource::BrowserRuntime,
-                        format!("cls_thousandths={cls_milli};shifts={}", perf.layout_shift_count),
+                        format!(
+                            "cls_thousandths={cls_milli};shifts={}",
+                            perf.layout_shift_count
+                                .map_or_else(|| "unobserved".to_owned(), |count| count.to_string())
+                        ),
                     )],
                     remediation: Some(
                         "Reserve explicit dimensions on images, embeds, and dynamic containers."
@@ -2519,9 +2527,9 @@ mod tests {
                     }],
                     performance: Some(crate::domain::PerformanceRuntimeObs {
                         ttfb_ms: Some(1_150),
-                        long_task_count: 2,
-                        long_task_total_ms: 420,
-                        max_long_task_ms: 260,
+                        long_task_count: Some(2),
+                        long_task_total_ms: Some(420),
+                        max_long_task_ms: Some(260),
                         ..crate::domain::PerformanceRuntimeObs::default()
                     }),
                     ..crate::domain::BrowserEvidence::default()
@@ -2576,7 +2584,7 @@ mod tests {
                         lcp_ms: Some(3_100),
                         lcp_element: Some("img#hero".to_owned()),
                         cls_thousandths: Some(180),
-                        layout_shift_count: 2,
+                        layout_shift_count: Some(2),
                         ..crate::domain::PerformanceRuntimeObs::default()
                     }),
                     ..crate::domain::BrowserEvidence::default()
@@ -2783,5 +2791,89 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_JS_CPU_BUDGET));
         assert!(ids.contains(&RULE_JS_CPU_HOTSPOT));
+    }
+
+    fn runtime_snapshot(performance: crate::domain::PerformanceRuntimeObs) -> EvidenceSnapshot {
+        EvidenceSnapshot {
+            target: AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: Vec::new(),
+                    headers: vec![HttpHeader {
+                        name: "content-encoding".to_owned(),
+                        value: "identity".to_owned(),
+                    }],
+                    elapsed_ms: Measurement::Measured {
+                        value: 100,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    body_bytes: 64,
+                    body_truncated: false,
+                    body_text: "<html></html>".to_owned(),
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "test".to_owned(),
+            },
+            browser: CollectorOutcome::Captured {
+                data: crate::domain::BrowserEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    performance: Some(performance),
+                    ..crate::domain::BrowserEvidence::default()
+                },
+            },
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        }
+    }
+
+    fn checked_rule_ids(checks: &[crate::domain::CheckStatus]) -> Vec<&str> {
+        checks
+            .iter()
+            .map(|check| match check {
+                crate::domain::CheckStatus::Passed { rule_id, .. }
+                | crate::domain::CheckStatus::Failed { rule_id, .. }
+                | crate::domain::CheckStatus::Skipped { rule_id, .. }
+                | crate::domain::CheckStatus::Unavailable { rule_id, .. } => rule_id.0.as_str(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn absent_performance_observers_are_not_reported_as_zero_or_passing() {
+        let snap = runtime_snapshot(crate::domain::PerformanceRuntimeObs::default());
+        let res = analyse(&snap);
+
+        let finding_ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(!finding_ids.contains(&RULE_RUNTIME_CLS));
+        assert!(!finding_ids.contains(&RULE_JS_LONG_TASKS));
+
+        let checked = checked_rule_ids(&res.checks);
+        assert!(!checked.contains(&RULE_RUNTIME_CLS));
+        assert!(!checked.contains(&RULE_JS_LONG_TASKS));
+    }
+
+    #[test]
+    fn observed_zero_cls_passes_without_a_finding() {
+        let snap = runtime_snapshot(crate::domain::PerformanceRuntimeObs {
+            cls_thousandths: Some(0),
+            cls_window_count: Some(1),
+            layout_shift_count: Some(0),
+            cls_observer_installed: true,
+            long_task_count: Some(0),
+            long_task_total_ms: Some(0),
+            max_long_task_ms: Some(0),
+            long_task_observer_installed: true,
+            ..crate::domain::PerformanceRuntimeObs::default()
+        });
+        let res = analyse(&snap);
+
+        let finding_ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(!finding_ids.contains(&RULE_RUNTIME_CLS));
+        assert!(!finding_ids.contains(&RULE_JS_LONG_TASKS));
+        assert!(checked_rule_ids(&res.checks).contains(&RULE_RUNTIME_CLS));
     }
 }

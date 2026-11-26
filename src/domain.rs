@@ -927,26 +927,56 @@ pub struct PerformanceRuntimeObs {
     /// `loadEventEnd` timestamp in milliseconds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub load_event_ms: Option<u64>,
-    /// Largest Contentful Paint in milliseconds from `PerformanceObserver`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Largest Contentful Paint start time in milliseconds from `PerformanceObserver`.
+    ///
+    /// Absent when no `largest-contentful-paint` entry was observed. Never
+    /// substituted with First Contentful Paint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lcp_ms: Option<u64>,
+    /// LCP render time reported by the `largest-contentful-paint` entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lcp_render_ms: Option<u64>,
+    /// LCP load time reported by the `largest-contentful-paint` entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lcp_load_ms: Option<u64>,
+    /// Rendered area of the LCP entry in square pixels, when reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lcp_size_px_sq: Option<u64>,
     /// Tag/selector summary of the LCP element, if observed.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lcp_element: Option<String>,
     /// Resource URL of the LCP element, if applicable.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lcp_url: Option<String>,
     /// Cumulative Layout Shift expressed in integer thousandths (for example `150` = `0.150`).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    ///
+    /// Holds the largest observed session-window score, not a session total.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cls_thousandths: Option<u64>,
     /// Number of layout shift entries without recent input.
-    pub layout_shift_count: usize,
-    /// Number of main-thread long tasks (`> 50ms`).
-    pub long_task_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout_shift_count: Option<usize>,
+    /// Number of CLS session windows observed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cls_window_count: Option<u32>,
+    /// Whether the `largest-contentful-paint` observer was installed successfully.
+    #[serde(default)]
+    pub lcp_observer_installed: bool,
+    /// Whether the `layout-shift` observer was installed successfully.
+    #[serde(default)]
+    pub cls_observer_installed: bool,
+    /// Whether the `longtask` observer was installed successfully.
+    #[serde(default)]
+    pub long_task_observer_installed: bool,
+    /// Number of main-thread long tasks (`> 50ms`), when the observer was installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_task_count: Option<usize>,
     /// Total duration of observed long tasks in milliseconds.
-    pub long_task_total_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_task_total_ms: Option<u64>,
     /// Maximum single long task duration in milliseconds.
-    pub max_long_task_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_long_task_ms: Option<u64>,
 }
 
 /// Level 2 client-side storage and cookie count summary (counts only, never values).
