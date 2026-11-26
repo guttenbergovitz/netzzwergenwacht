@@ -923,10 +923,18 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             out.push(Line::from(
                 " RESOURCE WATERFALL (Observed start_time_ms & duration_ms):",
             ));
+            // The axis spans only observed start times and durations; an
+            // unobserved duration must not shorten a bar or stretch the scale.
             let max_end_ms = page
                 .resources
                 .iter()
-                .filter_map(|r| Some(r.start_time_ms?.saturating_add(r.duration_ms.unwrap_or(0))))
+                .filter_map(|r| {
+                    let start = r.start_time_ms?;
+                    Some(match r.duration_ms {
+                        Some(duration) => start.saturating_add(duration),
+                        None => start,
+                    })
+                })
                 .max()
                 .unwrap_or(1)
                 .max(1);
@@ -987,9 +995,11 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                                 origin.as_deref().unwrap_or("unavailable")
                             )
                         }
-                        BrowserEventDetail::Completed { encoded_bytes, .. } => {
-                            format!("COMPLETED ({} B)", encoded_bytes.unwrap_or(0))
-                        }
+                        BrowserEventDetail::Completed { encoded_bytes, .. } => encoded_bytes
+                            .map_or_else(
+                                || String::from("COMPLETED (size unobserved)"),
+                                |bytes| format!("COMPLETED ({bytes} B)"),
+                            ),
                         BrowserEventDetail::NetworkFailure => {
                             String::from("NET FAIL: transport error")
                         }
@@ -1106,14 +1116,21 @@ fn build_waterfall_bar(
     let Some(start) = start_ms else {
         return "................".to_owned();
     };
-    let dur = duration_ms.unwrap_or(10).max(1);
     let start_col = usize::try_from((start.saturating_mul(WIDTH as u64)) / max_end_ms)
         .unwrap_or(0)
         .min(WIDTH - 1);
-    let span_cols = usize::try_from((dur.saturating_mul(WIDTH as u64)) / max_end_ms)
-        .unwrap_or(1)
-        .max(1);
-    let end_col = (start_col + span_cols).min(WIDTH);
+    // An unobserved duration marks only the observed start instant instead of
+    // inventing a plausible span.
+    let end_col = match duration_ms {
+        Some(duration) => {
+            let span_cols =
+                usize::try_from((duration.max(1).saturating_mul(WIDTH as u64)) / max_end_ms)
+                    .unwrap_or(1)
+                    .max(1);
+            (start_col + span_cols).min(WIDTH)
+        }
+        None => start_col + 1,
+    };
     let mut bar = String::with_capacity(WIDTH);
     for col in 0..WIDTH {
         if col >= start_col && col < end_col {
@@ -2592,4 +2609,35 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_waterfall_bar;
+
+    #[test]
+    fn unobserved_start_renders_as_dots() {
+        assert_eq!(
+            build_waterfall_bar(None, Some(10), 1_000, "#"),
+            "................"
+        );
+    }
+
+    #[test]
+    fn unobserved_duration_marks_only_the_observed_start() {
+        let bar = build_waterfall_bar(Some(0), None, 1_000, "#");
+        assert_eq!(bar.chars().filter(|cell| *cell == '#').count(), 1);
+    }
+
+    #[test]
+    fn observed_duration_spans_proportional_cells() {
+        let bar = build_waterfall_bar(Some(0), Some(1_000), 1_000, "#");
+        assert_eq!(bar.chars().filter(|cell| *cell == '#').count(), 16);
+    }
+
+    #[test]
+    fn observed_duration_never_collapses_to_zero_cells() {
+        let bar = build_waterfall_bar(Some(0), Some(1), 1_000_000, "#");
+        assert_eq!(bar.chars().filter(|cell| *cell == '#').count(), 1);
+    }
 }

@@ -866,12 +866,20 @@ pub struct QueryBrowserEvidenceOutput {
     /// Whether the subresource list was truncated at the collector cap.
     pub resources_truncated: bool,
     /// Total encoded transfer bytes across captured subresources.
-    pub total_transfer_bytes: u64,
+    ///
+    /// `None` when at least one captured subresource has no observed transfer
+    /// size, because the sum would otherwise present an unknown contributor as
+    /// zero bytes.
+    pub total_transfer_bytes: Option<u64>,
     /// Distinct third-party hostnames observed in subresource requests.
     pub third_party_hosts: Vec<String>,
     /// Count of runtime errors grouped by `error_kind`.
     pub runtime_error_counts: std::collections::BTreeMap<String, usize>,
-    /// Sample of up to 10 slowest subresources (`url`, `resource_type`, `duration_ms`, `transfer_size`, `initiator_type`).
+    /// Sample of up to 10 slowest subresources with an observed duration
+    /// (`url`, `resource_type`, `duration_ms`, `transfer_size`, `initiator_type`).
+    ///
+    /// Subresources whose duration was not observed are excluded rather than
+    /// ranked as if they took zero milliseconds.
     pub slowest_resources: Vec<crate::domain::ResourceTimingObs>,
 }
 

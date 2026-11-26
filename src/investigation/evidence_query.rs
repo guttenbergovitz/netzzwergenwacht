@@ -333,8 +333,14 @@ pub struct NetworkResourceFilter<'a> {
     /// Case-insensitive CDP/initiator resource type filter (e.g. `"script"`, `"image"`).
     pub resource_type: Option<&'a str>,
     /// Minimum observed load duration in milliseconds.
+    ///
+    /// Resources whose duration was not observed are excluded rather than
+    /// treated as zero milliseconds.
     pub min_duration_ms: Option<u64>,
     /// Minimum observed transfer size in bytes.
+    ///
+    /// Resources whose transfer size was not observed are excluded rather than
+    /// treated as zero bytes.
     pub min_transfer_bytes: Option<u64>,
     /// When `true`, only include resources with HTTP status codes `>= 400`.
     pub status_error_only: bool,
@@ -348,12 +354,16 @@ impl NetworkResourceFilter<'_> {
             return false;
         }
         if let Some(min_dur) = self.min_duration_ms
-            && resource.duration_ms.unwrap_or(0) < min_dur
+            && resource
+                .duration_ms
+                .is_none_or(|duration| duration < min_dur)
         {
             return false;
         }
         if let Some(min_bytes) = self.min_transfer_bytes
-            && resource.transfer_size.unwrap_or(0) < min_bytes
+            && resource
+                .transfer_size
+                .is_none_or(|transfer| transfer < min_bytes)
         {
             return false;
         }
@@ -552,7 +562,7 @@ pub fn summarise_browser_outcome(
             warnings,
             resource_count: 0,
             resources_truncated: false,
-            total_transfer_bytes: 0,
+            total_transfer_bytes: None,
             third_party_hosts: Vec::new(),
             runtime_error_counts: BTreeMap::new(),
             slowest_resources: Vec::new(),
@@ -563,9 +573,12 @@ pub fn summarise_browser_outcome(
         .ok()
         .and_then(|u| u.host_str().map(str::to_ascii_lowercase));
     let mut third_party_hosts = BTreeSet::new();
-    let mut total_transfer_bytes = 0_u64;
+    let mut total_transfer_bytes = Some(0_u64);
     for res in &data.resources {
-        total_transfer_bytes = total_transfer_bytes.saturating_add(res.transfer_size.unwrap_or(0));
+        total_transfer_bytes = match (total_transfer_bytes, res.transfer_size) {
+            (Some(total), Some(transfer)) => Some(total.saturating_add(transfer)),
+            _ => None,
+        };
         if let Ok(u) = url::Url::parse(&res.url)
             && let Some(h) = u.host_str().map(str::to_ascii_lowercase)
             && page_host.as_deref() != Some(h.as_str())
@@ -580,8 +593,13 @@ pub fn summarise_browser_outcome(
         *runtime_error_counts.entry(kind).or_insert(0) += 1;
     }
 
-    let mut slowest = data.resources.clone();
-    slowest.sort_by_key(|a| Reverse(a.duration_ms.unwrap_or(0)));
+    let mut slowest: Vec<_> = data
+        .resources
+        .iter()
+        .filter(|res| res.duration_ms.is_some())
+        .cloned()
+        .collect();
+    slowest.sort_by_key(|resource| Reverse(resource.duration_ms));
     slowest.truncate(10);
 
     QueryBrowserEvidenceOutput {
@@ -3088,12 +3106,73 @@ mod tests {
         let summary = query_browser_evidence_from_snapshot(&snapshot).unwrap();
         assert_eq!(summary.collection_status, "partial");
         assert_eq!(summary.resource_count, 2);
-        assert_eq!(summary.total_transfer_bytes, 92_000);
+        assert_eq!(summary.total_transfer_bytes, Some(92_000));
         assert_eq!(
             summary.third_party_hosts,
             vec!["cdn.thirdparty.example".to_owned()]
         );
         assert_eq!(summary.runtime_error_counts.get("csp_violation"), Some(&1));
+    }
+
+    #[test]
+    fn network_filters_and_summaries_exclude_unobserved_numeric_values() {
+        let mut snapshot = base_snapshot();
+        snapshot.browser = CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.org/".to_owned(),
+                resources: vec![
+                    ResourceTimingObs {
+                        url: "https://example.org/app.js".to_owned(),
+                        resource_type: "script".to_owned(),
+                        duration_ms: Some(900),
+                        transfer_size: Some(4_096),
+                        status_code: Some(200),
+                        ..ResourceTimingObs::default()
+                    },
+                    ResourceTimingObs {
+                        url: "https://example.org/unknown.js".to_owned(),
+                        resource_type: "script".to_owned(),
+                        duration_ms: None,
+                        transfer_size: None,
+                        status_code: None,
+                        ..ResourceTimingObs::default()
+                    },
+                ],
+                ..BrowserEvidence::default()
+            },
+        };
+
+        let slow = query_network_resources(
+            &snapshot,
+            &NetworkResourceFilter {
+                min_duration_ms: Some(500),
+                ..NetworkResourceFilter::default()
+            },
+            0,
+        );
+        assert_eq!(slow.total_matching, 1);
+        assert_eq!(slow.resources[0].url, "https://example.org/app.js");
+
+        let large = query_network_resources(
+            &snapshot,
+            &NetworkResourceFilter {
+                min_transfer_bytes: Some(1),
+                ..NetworkResourceFilter::default()
+            },
+            0,
+        );
+        assert_eq!(large.total_matching, 1);
+
+        let unfiltered = query_network_resources(&snapshot, &NetworkResourceFilter::default(), 0);
+        assert_eq!(unfiltered.total_matching, 2);
+
+        let summary = query_browser_evidence_from_snapshot(&snapshot).expect("captured browser");
+        assert_eq!(
+            summary.total_transfer_bytes, None,
+            "an unobserved transfer size must make the total unknown, not zero"
+        );
+        assert_eq!(summary.slowest_resources.len(), 1);
+        assert_eq!(summary.slowest_resources[0].duration_ms, Some(900));
     }
 
     #[test]
