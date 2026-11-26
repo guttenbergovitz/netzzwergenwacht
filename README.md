@@ -30,10 +30,17 @@ NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on `develop` / 
   - **Agentic Investigation (`nzw investigate`, `nzw verify`)**: `rig-core` (`0.42.0`) `PortableTool` catalogue (`inspect_browser_runtime`, `inspect_rendered_accessibility`, `inspect_page_performance`, `inspect_document_structure`, `inspect_security_posture`, `crawl_and_cluster_site`), multi-turn `KommandantZwerg` hypothesis loop, `InvestigationScope` origin enforcement, `ExecutiveBrief`, `ReleaseReadinessAssessment`, `RemediationTask`s, and `--audience pm|po|cto|technical` Markdown/JSON reports.
   - **Zwergenprüfstand** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): Controlled benchmark fixtures and comparative Mode A vs Mode C evaluation suite.
   - **Zwergenleitstand TUI (`nzw tui`, `--tui`)**: Ratatui + Crossterm interactive investigation workbench with nine keyboard-driven views (`1:Overview`, `2:Brigade`, `3:Targets`, `4:Findings`, `5:Evidence`, `6:Investigation`, `7:Topology`, `8:History`, `9:System`), live `DiagnosticEvent` streaming over bounded channels, offline Evidence Query Engine exploration, terminal escape/BiDi sanitisation, and `StandardDark` / `HighContrast` / `Monochrome` (`--monochrome`, `--ascii`) themes.
+  - **Sensory expansion & evidence integrity (Operation Aufrüstung IV)**: element-level inventories captured inside the existing Chromium session — interactive elements, application state, bounded interaction probes, visual geometry, accessibility nodes, cookies and storage, third-party origins, security posture and challenge evidence, performance attribution, media and fonts, indexability, structured data, responsive comparison, link graph, visual artefacts, service worker lifecycle, and TLS/CAA diagnostics — each queryable offline through 21 typed Evidence Query Engine tools with explicit `EvidenceQueryStatus`. Measurement semantics follow [ADR 0016](docs/adr/0016-measurement-honesty-invariant.md): absent observations stay absent instead of becoming `0`, `false`, or an empty inventory.
   - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`, `nzw report`, `nzw tui`) with plain-text, Markdown, versioned JSON output, and interactive TUI mode (`--tui`), TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), `tracing` diagnostics (`RUST_LOG`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
   - Production hardening: chaos/cancellation integration tests (`tests/chaos_and_cancellation.rs`), `cargo-audit` CI check, LTO-optimised release profile, and automated tag release packaging (`.github/workflows/release.yml`).
 
 See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
+
+### Known limitations
+
+- No capability has been empirically validated against real applications yet; validation, comparison, and effectiveness studies are a separate operation.
+- Deferred capabilities (multi-scenario consent, Event Timing/INP, CSS token inventory, media binary inspection, PDF intelligence, multi-engine compatibility, field telemetry, historical comparison queries, full certificate-chain verification) are listed explicitly in the roadmap and must not be treated as available.
+- Interactive probes are restricted behavioural probes: they observe real application behaviour without network isolation, and are labelled as such in the captured evidence.
 
 ## Usage
 
