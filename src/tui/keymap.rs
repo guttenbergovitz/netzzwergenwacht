@@ -110,6 +110,7 @@ pub fn translate_key_event(key: KeyEvent, state: &AppState) -> Option<UserAction
         KeyCode::Char('r') => Some(UserAction::ToggleReview),
         KeyCode::Char('n') => Some(UserAction::OpenLauncher),
         KeyCode::Char('w') => Some(UserAction::SaveCurrentReport),
+        KeyCode::Char('e') => Some(UserAction::ExportHtmlReport),
         KeyCode::Char('t') => Some(UserAction::CycleTheme),
         KeyCode::Char('a') => Some(UserAction::ToggleAscii),
         KeyCode::Char('?') => Some(UserAction::ToggleHelp),

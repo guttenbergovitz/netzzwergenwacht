@@ -53,6 +53,8 @@ pub enum UserAction {
     OpenLauncher,
     /// Save the current report to disk (`report.json` or configured output path).
     SaveCurrentReport,
+    /// Export the current audit report as a self-contained HTML file.
+    ExportHtmlReport,
     /// Cycle theme mode (`StandardDark` -> `HighContrast` -> `Monochrome`).
     CycleTheme,
     /// Toggle ASCII glyph fallback mode.

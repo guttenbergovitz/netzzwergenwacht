@@ -221,8 +221,25 @@ pub fn save_current_report(state: &AppState, path: &Path) -> Result<PathBuf, Str
         .audit_report
         .as_ref()
         .ok_or_else(|| String::from("no completed audit report available to save"))?;
-    persistence::append_report(path, report)
-        .map_err(|err| format!("failed to save report to {}: {err}", path.display()))?;
+    let is_html = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("html") || ext.eq_ignore_ascii_case("htm"));
+    if is_html {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("failed to create directory {}: {err}", parent.display()))?;
+        }
+        let assessment = crate::analysis::assessment::assess_audit_report(report);
+        let html = crate::report_html::render_audit_html(report, &assessment);
+        std::fs::write(path, html)
+            .map_err(|err| format!("failed to write HTML report to {}: {err}", path.display()))?;
+    } else {
+        persistence::append_report(path, report)
+            .map_err(|err| format!("failed to save report to {}: {err}", path.display()))?;
+    }
     Ok(path.to_path_buf())
 }
 

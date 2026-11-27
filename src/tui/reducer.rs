@@ -268,6 +268,17 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
             state.status_message =
                 String::from("No AuditReport available to save yet. Run an inspection first.");
         }
+        UserAction::ExportHtmlReport => {
+            if state.audit_report.is_some() {
+                let path = state.output_path.as_ref().map_or_else(
+                    || PathBuf::from("nzw-report.html"),
+                    |p| p.with_extension("html"),
+                );
+                return vec![AppEffect::SaveReport(path)];
+            }
+            state.status_message =
+                String::from("No AuditReport available to export yet. Run an inspection first.");
+        }
         UserAction::CycleTheme => {
             let next_mode = match state.theme.mode {
                 ThemeMode::StandardDark => ThemeMode::HighContrast,
@@ -1408,5 +1419,46 @@ mod tests {
         );
         assert!(state.finding_filter.dwarf.is_some());
         assert_eq!(state.finding_detail_scroll, 0);
+    }
+
+    #[test]
+    fn export_html_report_requests_html_save_path() {
+        let target = crate::domain::AuditTarget::parse(
+            "https://example.com/",
+            crate::domain::TargetPolicy::PublicOnly,
+        )
+        .unwrap();
+        let snap = crate::domain::EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 1_700_000_000,
+            http: crate::domain::CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            tls: crate::domain::CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            browser: crate::domain::CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            lighthouse: crate::domain::CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            axe: crate::domain::CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+        };
+        let mut state = AppState {
+            audit_report: Some(crate::analysis::run_all(&snap)),
+            launcher: crate::tui::state::LauncherState {
+                open: false,
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+        let effs = reduce(&mut state, AppAction::User(UserAction::ExportHtmlReport));
+        assert_eq!(
+            effs,
+            vec![AppEffect::SaveReport(PathBuf::from("nzw-report.html"))]
+        );
     }
 }

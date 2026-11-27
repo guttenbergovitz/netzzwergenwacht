@@ -88,6 +88,7 @@ Values that were not observed are shown as `unobserved`, `unavailable`, `partial
 | `d` | Cycle specialist (dwarf) filter |
 | `[` / `]` | Scroll Finding Details pane up / down |
 | `w` | Save the current report |
+| `e` | Export the current report as self-contained HTML |
 | `t` | Cycle theme (standard, high contrast, monochrome) |
 | `a` | Toggle ASCII-only rendering |
 | `c` | Cancel the active run |
