@@ -24,6 +24,7 @@ pub mod semantics;
 pub mod seo;
 pub mod stats;
 pub mod visual;
+pub mod visual_diff;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
