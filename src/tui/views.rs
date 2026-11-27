@@ -2509,11 +2509,7 @@ fn render_launcher_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         }
     };
 
-    let credential_display = if state.launcher.credential_input.is_empty() {
-        "(not set)".to_owned()
-    } else {
-        "*".repeat(state.launcher.credential_input.chars().count().min(32))
-    };
+    let credential_display = state.launcher.credential_input.masked();
     let discovery_display = if let Some(error) = &state.launcher.discovery_error {
         format!("failed: {error}")
     } else if state.launcher.discovered_models.is_empty() {

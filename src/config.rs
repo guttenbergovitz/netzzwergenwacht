@@ -197,6 +197,32 @@ pub struct ModelRoutingConfig {
     pub dwarfs: BTreeMap<String, ModelSpec>,
 }
 
+impl ModelSpec {
+    /// Returns a specification for `provider`/`model` that keeps this specification's
+    /// endpoint and credential variable when the provider is unchanged.
+    ///
+    /// A custom endpoint belongs to the provider it was configured for; borrowing it for
+    /// a different provider would silently redirect traffic.
+    #[must_use]
+    pub fn with_model_override(&self, provider: ProviderKind, model: &str) -> Self {
+        if self.provider == provider {
+            Self {
+                provider,
+                model: model.to_owned(),
+                base_url: self.base_url.clone(),
+                api_key_env: self.api_key_env.clone(),
+            }
+        } else {
+            Self {
+                provider,
+                model: model.to_owned(),
+                base_url: None,
+                api_key_env: None,
+            }
+        }
+    }
+}
+
 impl ModelRoutingConfig {
     /// Resolves the effective [`ModelSpec`] for `dwarf_id`.
     #[must_use]

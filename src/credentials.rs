@@ -69,6 +69,14 @@ impl SessionSecret {
         Ok(Self(Zeroizing::new(value)))
     }
 
+    /// Wraps an already zeroizing buffer, keeping the same emptiness rule.
+    fn from_zeroizing(value: Zeroizing<String>) -> Result<Self, String> {
+        if value.trim().is_empty() {
+            return Err("credential must not be empty".to_owned());
+        }
+        Ok(Self(value))
+    }
+
     /// Exposes the secret to the provider client.
     #[must_use]
     pub fn expose(&self) -> &str {
@@ -86,6 +94,76 @@ impl SessionSecret {
 impl fmt::Debug for SessionSecret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SessionSecret([REDACTED])")
+    }
+}
+
+/// Editable buffer for a secret typed into an interface.
+///
+/// The buffer zeroizes its contents on drop and on replacement, so a partially typed
+/// credential is not left as plain heap text. It deliberately exposes no `&str`, only a
+/// fixed-width mask, and converts to a [`SessionSecret`] by moving the buffer out.
+#[derive(Clone, Default, PartialEq, Eq)]
+pub struct SessionBuffer {
+    value: Zeroizing<String>,
+}
+
+impl SessionBuffer {
+    /// Creates an empty buffer.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends one character.
+    pub fn push(&mut self, ch: char) {
+        self.value.push(ch);
+    }
+
+    /// Removes the last character.
+    pub fn pop(&mut self) {
+        self.value.pop();
+    }
+
+    /// Discards the typed content and zeroizes it.
+    pub fn clear(&mut self) {
+        self.value.clear();
+    }
+
+    /// Whether nothing has been typed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.value.is_empty()
+    }
+
+    /// Number of typed characters, used for input bounds.
+    #[must_use]
+    pub fn char_count(&self) -> usize {
+        self.value.chars().count()
+    }
+
+    /// Returns a fixed-width mask. The length never varies, so the mask cannot leak
+    /// the secret's shape.
+    #[must_use]
+    pub fn masked(&self) -> String {
+        if self.value.is_empty() {
+            "(not set)".to_owned()
+        } else {
+            "********".to_owned()
+        }
+    }
+
+    /// Moves the typed value into a [`SessionSecret`], leaving the buffer empty.
+    pub fn take(&mut self) -> Option<SessionSecret> {
+        let value = std::mem::take(&mut self.value);
+        SessionSecret::from_zeroizing(value).ok()
+    }
+}
+
+impl fmt::Debug for SessionBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SessionBuffer")
+            .field("credential", &self.masked())
+            .finish()
     }
 }
 
@@ -236,12 +314,18 @@ impl SessionCredentialStore {
                 source: CredentialSource::Environment(name.clone()),
             });
         }
-        for name in provider_default_variables(spec.provider) {
-            if let Some(secret) = env(name).and_then(|value| SessionSecret::new(value).ok()) {
-                return Some(ResolvedCredential {
-                    secret,
-                    source: CredentialSource::Environment((*name).to_owned()),
-                });
+        // A provider default variable belongs to that provider's own endpoint. Sending
+        // `OPENAI_API_KEY` to a custom base URL would disclose a credential to a third
+        // party, so a custom endpoint requires an explicit `api_key_env` or a session
+        // credential.
+        if spec.base_url.is_none() {
+            for name in provider_default_variables(spec.provider) {
+                if let Some(secret) = env(name).and_then(|value| SessionSecret::new(value).ok()) {
+                    return Some(ResolvedCredential {
+                        secret,
+                        source: CredentialSource::Environment((*name).to_owned()),
+                    });
+                }
             }
         }
         if spec.provider == ProviderKind::Ollama {
@@ -408,6 +492,58 @@ mod tests {
         assert_eq!(
             resolved.source,
             CredentialSource::Environment("TEAM_GATEWAY_KEY".to_owned())
+        );
+    }
+
+    #[test]
+    fn session_buffer_masks_and_moves_without_leaking() {
+        let mut buffer = SessionBuffer::new();
+        assert!(buffer.is_empty());
+        for ch in "canary-buffer-7c".chars() {
+            buffer.push(ch);
+        }
+        assert_eq!(buffer.char_count(), 16);
+        assert_eq!(buffer.masked(), "********");
+        assert!(
+            !format!("{buffer:?}").contains("canary"),
+            "buffer Debug leaked"
+        );
+
+        let secret = buffer.take().expect("typed value becomes a secret");
+        assert!(buffer.is_empty());
+        assert_eq!(secret.expose(), "canary-buffer-7c");
+    }
+
+    #[test]
+    fn custom_endpoint_never_receives_a_provider_default_key() {
+        let store = SessionCredentialStore::new();
+        let custom = ModelSpec {
+            base_url: Some("https://gateway.example.com/v1".to_owned()),
+            ..ModelSpec::default()
+        };
+        let resolved = store.resolve_with(&custom, |name| match name {
+            "NZW_LLM_API_KEY" | "OPENCODE_API_KEY" | "OPENAI_API_KEY" => {
+                Some("sk-provider-default".to_owned())
+            }
+            _ => None,
+        });
+        assert!(
+            resolved.is_none(),
+            "a provider default key must not be offered to a custom endpoint"
+        );
+
+        let explicit = ModelSpec {
+            api_key_env: Some("GATEWAY_API_KEY".to_owned()),
+            ..custom
+        };
+        let resolved = store
+            .resolve_with(&explicit, |name| {
+                (name == "GATEWAY_API_KEY").then(|| "gateway-key".to_owned())
+            })
+            .expect("explicit variable is honoured for a custom endpoint");
+        assert_eq!(
+            resolved.source,
+            CredentialSource::Environment("GATEWAY_API_KEY".to_owned())
         );
     }
 

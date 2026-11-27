@@ -468,6 +468,12 @@ pub async fn probe_connection(
 /// Maximum identifiers retained from a model listing.
 const MAX_DISCOVERED_MODELS: usize = 200;
 
+/// Anthropic requires an explicit API version header.
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+
+/// Upper bound on a model listing body; the limit is enforced while streaming.
+const MAX_MODEL_LISTING_BYTES: usize = 256 * 1024;
+
 /// Lists models advertised by an OpenAI-compatible or Ollama endpoint.
 ///
 /// Discovery is best effort: a provider that does not implement listing returns an
@@ -501,7 +507,13 @@ pub async fn discover_models(
         .build()
         .map_err(|err| format!("failed to build HTTP client: {err}"))?;
     let mut request = client.get(&url);
-    if resolved.source != crate::credentials::CredentialSource::NotRequired {
+    if spec.provider == crate::config::ProviderKind::Anthropic {
+        // The Anthropic API authenticates with `x-api-key` plus a version header; a
+        // bearer token is not accepted.
+        request = request
+            .header("x-api-key", resolved.secret.expose())
+            .header("anthropic-version", ANTHROPIC_VERSION);
+    } else if resolved.source != crate::credentials::CredentialSource::NotRequired {
         request = request.bearer_auth(resolved.secret.expose());
     }
     let response = request
@@ -514,13 +526,30 @@ pub async fn discover_models(
             response.status().as_u16()
         ));
     }
-    let body = response
-        .text()
-        .await
-        .map_err(|err| format!("failed to read model listing: {err}"))?;
-    if body.len() > 256 * 1024 {
-        return Err("model listing exceeded the 256 KiB cap".to_owned());
+    if response
+        .content_length()
+        .is_some_and(|length| length > MAX_MODEL_LISTING_BYTES as u64)
+    {
+        return Err(format!(
+            "model listing exceeded the {MAX_MODEL_LISTING_BYTES} byte cap"
+        ));
     }
+    let mut body = Vec::new();
+    let mut response = response;
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|err| format!("failed to read model listing: {err}"))?
+    {
+        if body.len() + chunk.len() > MAX_MODEL_LISTING_BYTES {
+            return Err(format!(
+                "model listing exceeded the {MAX_MODEL_LISTING_BYTES} byte cap"
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let body =
+        String::from_utf8(body).map_err(|_| "model listing was not valid UTF-8".to_owned())?;
     let parsed: serde_json::Value = serde_json::from_str(&body)
         .map_err(|err| format!("model listing was not valid JSON: {err}"))?;
 

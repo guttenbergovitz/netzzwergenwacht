@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use crate::brigade::DwarfId;
 use crate::config::{ModelSpec, ProviderKind};
-use crate::credentials::{CredentialScope, SessionSecret};
+use crate::credentials::CredentialScope;
 use crate::domain::AuditTarget;
 use crate::events::{CollectorId, DiagnosticEvent, DiagnosticEventPayload, DiagnosticRunMode};
 use crate::intelligence::ConnectionOutcome;
@@ -323,6 +323,7 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
             LauncherField::Mode => state.launcher.mode = cycle_mode_prev(state.launcher.mode),
             LauncherField::Provider => {
                 state.launcher.provider = cycle_provider(state.launcher.provider, false);
+                reset_route_verification(state);
             }
             LauncherField::Model if !state.launcher.discovered_models.is_empty() => {
                 cycle_discovered_model(state, false);
@@ -333,6 +334,7 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
             LauncherField::Mode => state.launcher.mode = cycle_mode_next(state.launcher.mode),
             LauncherField::Provider => {
                 state.launcher.provider = cycle_provider(state.launcher.provider, true);
+                reset_route_verification(state);
             }
             LauncherField::Model if !state.launcher.discovered_models.is_empty() => {
                 cycle_discovered_model(state, true);
@@ -349,7 +351,7 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
                 state.launcher.error_message = None;
                 state.launcher.connection = ConnectionOutcome::NotTested;
             }
-            LauncherField::Credential if state.launcher.credential_input.len() < 4096 => {
+            LauncherField::Credential if state.launcher.credential_input.char_count() < 4096 => {
                 state.launcher.credential_input.push(ch);
                 state.launcher.error_message = None;
                 state.launcher.connection = ConnectionOutcome::NotTested;
@@ -392,6 +394,7 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
             }
             LauncherField::Provider => {
                 state.launcher.provider = cycle_provider(state.launcher.provider, true);
+                reset_route_verification(state);
             }
             LauncherField::BrowserToggle
             | LauncherField::AxeToggle
@@ -435,18 +438,34 @@ const fn cycle_provider(provider: ProviderKind, forward: bool) -> ProviderKind {
 }
 
 /// Resolves the model specification the operator configured in the Launcher.
+/// Discards verification results that no longer describe the selected route.
+fn reset_route_verification(state: &mut AppState) {
+    state.launcher.connection = ConnectionOutcome::NotTested;
+    state.launcher.discovered_models.clear();
+    state.launcher.discovery_error = None;
+}
+
 fn launcher_model_spec(state: &AppState) -> Result<ModelSpec, String> {
     let model = state.launcher.model_input.trim();
+    let configured = state
+        .config
+        .as_ref()
+        .map(|config| config.models.resolve_for_dwarf(DwarfId::Kommandant).clone());
     if !model.is_empty() {
-        return Ok(ModelSpec {
-            provider: state.launcher.provider,
-            model: model.to_owned(),
-            base_url: None,
-            api_key_env: None,
+        // The operator changed the model, not the endpoint: keep the configured endpoint
+        // and credential variable when the provider still matches.
+        return Ok(match configured {
+            Some(configured) => configured.with_model_override(state.launcher.provider, model),
+            None => ModelSpec {
+                provider: state.launcher.provider,
+                model: model.to_owned(),
+                base_url: None,
+                api_key_env: None,
+            },
         });
     }
-    match &state.config {
-        Some(config) => Ok(config.models.resolve_for_dwarf(DwarfId::Kommandant).clone()),
+    match configured {
+        Some(configured) => Ok(configured),
         None => Err(String::from(
             "Enter a model identifier or provide a configuration file; no model is configured for KommandantZwerg.",
         )),
@@ -454,16 +473,12 @@ fn launcher_model_spec(state: &AppState) -> Result<ModelSpec, String> {
 }
 
 /// Moves a pending credential into the session store, returning its scope.
-fn absorb_launcher_credential(state: &mut AppState, spec: &ModelSpec) -> Result<(), String> {
-    if state.launcher.credential_input.is_empty() {
-        return Ok(());
+fn absorb_launcher_credential(state: &mut AppState, spec: &ModelSpec) {
+    if let Some(secret) = state.launcher.credential_input.take() {
+        state
+            .credentials
+            .insert(CredentialScope::for_model_spec(spec), secret);
     }
-    let secret = SessionSecret::new(state.launcher.credential_input.clone())?;
-    state
-        .credentials
-        .insert(CredentialScope::for_model_spec(spec), secret);
-    state.launcher.credential_input.clear();
-    Ok(())
 }
 
 fn request_connection_test(state: &mut AppState) -> Vec<AppEffect> {
@@ -474,10 +489,7 @@ fn request_connection_test(state: &mut AppState) -> Vec<AppEffect> {
             return Vec::new();
         }
     };
-    if let Err(message) = absorb_launcher_credential(state, &spec) {
-        state.launcher.error_message = Some(sanitize_line(&message, 120));
-        return Vec::new();
-    }
+    absorb_launcher_credential(state, &spec);
     let resolved = state.credentials.resolve(&spec);
     state.launcher.connection = ConnectionOutcome::Testing;
     state.status_message = format!("Testing {} ...", spec.model);
@@ -500,10 +512,7 @@ fn request_model_discovery(state: &mut AppState) -> Vec<AppEffect> {
             return Vec::new();
         }
     };
-    if let Err(message) = absorb_launcher_credential(state, &spec) {
-        state.launcher.error_message = Some(sanitize_line(&message, 120));
-        return Vec::new();
-    }
+    absorb_launcher_credential(state, &spec);
     let resolved = state.credentials.resolve(&spec);
     state.launcher.discovery_error = None;
     state.status_message = format!("Discovering {} models ...", spec.provider.as_str());
@@ -598,13 +607,7 @@ fn try_launch_from_launcher(state: &mut AppState) -> Vec<AppEffect> {
             );
             let model = state.launcher.model_input.trim().to_owned();
             match launcher_model_spec(state) {
-                Ok(spec) => {
-                    if let Err(message) = absorb_launcher_credential(state, &spec) {
-                        state.launcher.open = true;
-                        state.launcher.error_message = Some(sanitize_line(&message, 120));
-                        return Vec::new();
-                    }
-                }
+                Ok(spec) => absorb_launcher_credential(state, &spec),
                 Err(message) => {
                     if matches!(
                         state.launcher.mode,
@@ -1218,7 +1221,7 @@ mod tests {
             !rendered.contains("canary-9f3"),
             "session credential must never appear in debug output"
         );
-        assert_eq!(state.launcher.credential_input, "canary-9f3");
+        assert_eq!(state.launcher.credential_input.char_count(), 10);
     }
 
     #[test]
@@ -1295,5 +1298,56 @@ mod tests {
             .as_deref()
             .expect("discovery failure recorded");
         assert!(error.contains("rejected"), "unexpected message: {error}");
+    }
+    #[test]
+    fn entered_model_keeps_the_configured_endpoint_and_credential_source() {
+        let config = crate::config::AppConfig {
+            models: crate::config::ModelRoutingConfig {
+                kommandant: Some(ModelSpec {
+                    provider: ProviderKind::Anthropic,
+                    model: "configured-model".to_owned(),
+                    base_url: Some("https://gateway.example.com/v1".to_owned()),
+                    api_key_env: Some("GATEWAY_KEY".to_owned()),
+                }),
+                ..crate::config::ModelRoutingConfig::default()
+            },
+            ..crate::config::AppConfig::default()
+        };
+        let mut state = AppState {
+            config: Some(config),
+            ..AppState::default()
+        };
+        state.launcher.provider = ProviderKind::Anthropic;
+        state.launcher.model_input = "operator-model".to_owned();
+
+        let spec = launcher_model_spec(&state).expect("model resolved");
+        assert_eq!(spec.model, "operator-model");
+        assert_eq!(
+            spec.base_url.as_deref(),
+            Some("https://gateway.example.com/v1"),
+            "a model override must not discard the configured endpoint"
+        );
+        assert_eq!(spec.api_key_env.as_deref(), Some("GATEWAY_KEY"));
+
+        state.launcher.provider = ProviderKind::Ollama;
+        let spec = launcher_model_spec(&state).expect("model resolved");
+        assert_eq!(
+            spec.base_url, None,
+            "another provider must not inherit an endpoint it does not own"
+        );
+    }
+
+    #[test]
+    fn changing_the_provider_invalidates_route_verification() {
+        let mut state = AppState::default();
+        state.launcher.open = true;
+        state.launcher.focused_field = LauncherField::Provider;
+        state.launcher.connection = ConnectionOutcome::Reachable;
+        state.launcher.discovered_models = vec!["a".to_owned()];
+
+        let _ = reduce(&mut state, AppAction::User(UserAction::MoveRight));
+
+        assert_eq!(state.launcher.connection, ConnectionOutcome::NotTested);
+        assert_eq!(state.launcher.discovered_models.len(), 0);
     }
 }

@@ -676,6 +676,24 @@ fn build_run_router(
     config: Option<&crate::config::AppConfig>,
 ) -> Arc<dyn crate::intelligence::ProviderRouter> {
     let model = spec.model.trim();
+    if let Some(config) = config {
+        // A configuration file describes the whole brigade. The launcher only overrides
+        // the Kommandant route, and only when the operator actually entered a model.
+        let mut routing = config.models.clone();
+        if !model.is_empty() {
+            routing.kommandant = Some(
+                routing
+                    .resolve_for_dwarf(crate::brigade::DwarfId::Kommandant)
+                    .with_model_override(spec.provider, model),
+            );
+        }
+        return Arc::new(
+            crate::intelligence::CachedProviderRouter::from_config_and_store(
+                &routing,
+                &state.credentials,
+            ),
+        );
+    }
     if !model.is_empty() {
         let spec_model = crate::config::ModelSpec {
             provider: spec.provider,
@@ -689,14 +707,6 @@ fn build_run_router(
         ) {
             return Arc::new(router);
         }
-    }
-    if let Some(config) = config {
-        return Arc::new(
-            crate::intelligence::CachedProviderRouter::from_config_and_store(
-                &config.models,
-                &state.credentials,
-            ),
-        );
     }
     Arc::new(crate::intelligence::EmptyProviderRouter)
 }

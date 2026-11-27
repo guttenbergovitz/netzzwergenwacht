@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use crate::analysis::AuditReport;
 use crate::brigade::{DwarfId, DwarfRole, ZWERGENBRIGADE};
 use crate::config::{AppConfig, ProviderKind};
-use crate::credentials::SessionCredentialStore;
+use crate::credentials::{SessionBuffer, SessionCredentialStore};
 use crate::discovery::{DiscoveredPage, PageCrawlStatus};
 use crate::domain::{
     CollectorOutcome, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot, EvidenceSource,
@@ -492,8 +492,8 @@ pub struct LauncherState {
     pub provider: ProviderKind,
     /// Editable model identifier.
     pub model_input: String,
-    /// Session credential buffer, wiped when the run starts or the field is cleared.
-    pub credential_input: String,
+    /// Session credential buffer, zeroized when the run starts or the field is cleared.
+    pub credential_input: SessionBuffer,
     /// Result of the most recent connection test.
     pub connection: ConnectionOutcome,
     /// Models advertised by the provider during the last discovery request.
@@ -521,7 +521,7 @@ impl Default for LauncherState {
             mode: DiagnosticRunMode::DeterministicCheck,
             provider: ProviderKind::OpenAi,
             model_input: String::new(),
-            credential_input: String::new(),
+            credential_input: SessionBuffer::new(),
             connection: ConnectionOutcome::NotTested,
             discovered_models: Vec::new(),
             discovery_error: None,
@@ -548,14 +548,7 @@ impl std::fmt::Debug for LauncherState {
                 &format_args!("{} advertised", self.discovered_models.len()),
             )
             .field("discovery_error", &self.discovery_error)
-            .field(
-                "credential_input",
-                &if self.credential_input.is_empty() {
-                    "empty"
-                } else {
-                    "[REDACTED]"
-                },
-            )
+            .field("credential_input", &self.credential_input.masked())
             .field("connection", &self.connection)
             .field("enable_browser", &self.enable_browser)
             .field("enable_axe", &self.enable_axe)
