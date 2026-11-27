@@ -50,3 +50,6 @@ todo = "deny"
 unimplemented = "deny"
 dbg_macro = "deny"
 clone_on_ref_ptr = "deny"
+
+[dev-dependencies]
+rusqlite = { version = "0.43", features = ["bundled"] }
