@@ -97,6 +97,9 @@ enum Command {
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Optional file path to write the rendered batch report (`json`, `html`, `sarif`, `markdown`, `text`).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
         /// Allow loopback and private network targets (for local testing only).
         #[arg(long)]
         allow_private: bool,
@@ -861,6 +864,7 @@ async fn main() -> ExitCode {
             targets_file,
             config: config_path,
             format,
+            output,
             allow_private,
             max_concurrency,
             fail_on,
@@ -870,6 +874,7 @@ async fn main() -> ExitCode {
                 &targets_file,
                 config_path.as_deref(),
                 format,
+                output.as_deref(),
                 allow_private,
                 max_concurrency,
                 fail_on,
@@ -1901,10 +1906,12 @@ fn merge_policy(
     merged
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_batch(
     targets_file: &Path,
     config_path: Option<&Path>,
     format: OutputFormat,
+    output: Option<&Path>,
     allow_private: bool,
     max_concurrency: Option<usize>,
     fail_on: Option<FailOnSeverity>,
@@ -1973,7 +1980,7 @@ async fn run_batch(
         ExitCode::from(EXIT_OK)
     };
 
-    render_batch_report(&batch_report, format, code)
+    render_batch_report(&batch_report, format, output, code)
 }
 
 fn parse_targets_file(
@@ -2013,14 +2020,15 @@ fn parse_targets_file(
 fn render_batch_report(
     batch_report: &BatchReport,
     format: OutputFormat,
+    output: Option<&Path>,
     code: ExitCode,
 ) -> ExitCode {
     match format {
         OutputFormat::Json => match serde_json::to_string_pretty(batch_report) {
-            Ok(json) => {
-                println!("{json}");
-                code
-            }
+            Ok(json) => match write_output_or_stdout(output, &json) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            },
             Err(err) => {
                 eprintln!("failed to serialise batch JSON: {err}");
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
@@ -2050,33 +2058,41 @@ fn render_batch_report(
             code
         }
         OutputFormat::Html => {
-            let mut lines = vec![format!(
-                "Targets: {} total, {} completed, {} invalid",
-                batch_report.total_targets, batch_report.completed, batch_report.failed_targets
-            )];
-            for item in &batch_report.items {
-                let status = if item.policy.passed { "PASS" } else { "FAIL" };
-                lines.push(format!(
-                    "[{status}] {} (C:{} H:{} M:{} L:{})",
-                    item.report.target.as_str(),
-                    item.report.summary.critical_findings,
-                    item.report.summary.high_findings,
-                    item.report.summary.medium_findings,
-                    item.report.summary.low_findings,
-                ));
-            }
-            println!(
-                "{}",
-                netzzwergenwacht::report_html::wrap_preformatted_html(
-                    "Batch Audit",
-                    &lines.join("\n"),
-                )
+            let errors: Vec<netzzwergenwacht::report_html::BatchHtmlError<'_>> = batch_report
+                .target_errors
+                .iter()
+                .map(|e| netzzwergenwacht::report_html::BatchHtmlError {
+                    raw_target: &e.raw_target,
+                    error: &e.error,
+                })
+                .collect();
+            let items: Vec<netzzwergenwacht::report_html::BatchHtmlItem<'_>> = batch_report
+                .items
+                .iter()
+                .map(|i| netzzwergenwacht::report_html::BatchHtmlItem {
+                    report: &i.report,
+                    passed: i.policy.passed,
+                })
+                .collect();
+            let html = netzzwergenwacht::report_html::render_batch_html(
+                batch_report.total_targets,
+                batch_report.completed,
+                batch_report.failed_targets,
+                &errors,
+                &items,
             );
-            code
+            match write_output_or_stdout(output, &html) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            }
         }
         OutputFormat::Sarif => {
-            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
-            code
+            let reports: Vec<&AuditReport> = batch_report.items.iter().map(|i| &i.report).collect();
+            let sarif = netzzwergenwacht::report_sarif::render_batch_sarif(&reports);
+            match write_output_or_stdout(output, &sarif) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            }
         }
     }
 }

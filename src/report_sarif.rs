@@ -44,6 +44,23 @@ pub fn render_audit_sarif(report: &AuditReport) -> String {
     build_sarif_envelope(&rules, &results)
 }
 
+/// Aggregates findings from multiple [`AuditReport`] entries into one SARIF 2.1.0 payload.
+#[must_use]
+pub fn render_batch_sarif(reports: &[&AuditReport]) -> String {
+    let mut rules_by_id: BTreeMap<&str, Value> = BTreeMap::new();
+    let mut results = Vec::new();
+    for report in reports {
+        let uri = report.target.as_str();
+        for analyser in &report.analysers {
+            for finding in &analyser.findings {
+                push_finding_sarif(finding, uri, None, &mut rules_by_id, &mut results);
+            }
+        }
+    }
+    let rules: Vec<Value> = rules_by_id.into_values().collect();
+    build_sarif_envelope(&rules, &results)
+}
+
 /// Renders only new, reintroduced, and worsened findings from a [`RegressionReport`]
 /// as a SARIF 2.1.0 payload so CI gates annotate regressions without baseline noise.
 #[must_use]
@@ -364,5 +381,48 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0]["ruleId"], "sec.new");
         assert_eq!(results[1]["ruleId"], "sec.reintro");
+    }
+
+    #[test]
+    fn batch_sarif_aggregates_findings_across_targets() {
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let snapshot = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 1_700_000_000,
+            http: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            browser: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            lighthouse: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            axe: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+        };
+        let mut report = analysis::run_all(&snapshot);
+        report.analysers[0].findings.push(Finding {
+            fingerprint: FindingFingerprint("fp-batch".to_owned()),
+            rule_id: RuleId("sec.batch.test".to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: "Batch test".to_owned(),
+            summary: "Batch summary".to_owned(),
+            evidence_refs: vec![],
+            remediation: None,
+        });
+
+        let sarif_str = render_batch_sarif(&[&report]);
+        let parsed: Value = serde_json::from_str(&sarif_str).unwrap();
+        let results = parsed["runs"][0]["results"].as_array().unwrap();
+        assert!(results.iter().any(|r| r["ruleId"] == "sec.batch.test"));
     }
 }

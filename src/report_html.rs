@@ -257,6 +257,126 @@ pub fn wrap_preformatted_html(title: &str, content: &str) -> String {
     wrap_document(title, &body)
 }
 
+/// Borrowed invalid-target entry for a batch HTML report.
+pub struct BatchHtmlError<'a> {
+    /// Raw target string from the targets file.
+    pub raw_target: &'a str,
+    /// Validation or collection error description.
+    pub error: &'a str,
+}
+
+/// Borrowed completed-target entry for a batch HTML report.
+pub struct BatchHtmlItem<'a> {
+    /// Completed single-page audit report.
+    pub report: &'a AuditReport,
+    /// Whether the target passed the configured policy gate.
+    pub passed: bool,
+}
+
+/// Renders a multi-target batch audit as a self-contained HTML5 portfolio dashboard.
+#[must_use]
+pub fn render_batch_html(
+    total_targets: usize,
+    completed: usize,
+    failed_targets: usize,
+    errors: &[BatchHtmlError<'_>],
+    items: &[BatchHtmlItem<'_>],
+) -> String {
+    let passed_count = items.iter().filter(|i| i.passed).count();
+    let failed_policy = items.len().saturating_sub(passed_count);
+    let has_failures = failed_targets > 0 || failed_policy > 0;
+    let badge_class = if has_failures { "sev-crit" } else { "sev-pass" };
+    let badge_label = if has_failures { "FAIL" } else { "PASS" };
+
+    let mut body = String::new();
+    let _ = writeln!(
+        body,
+        "<header class=\"hero\">\
+         <div>\
+           <p class=\"eyebrow\">NetzZwergenWacht &middot; {}</p>\
+           <h1>Batch Portfolio Audit</h1>\
+           <p class=\"meta\">{} target(s) configured &middot; {} completed</p>\
+         </div>\
+         <div class=\"verdict {badge_class}\">{badge_label}</div>\
+         </header>",
+        escape_html(MOTTO),
+        total_targets,
+        completed,
+    );
+
+    let _ = writeln!(
+        body,
+        "<section class=\"cards\">\
+         <div class=\"card\"><span class=\"label\">Total Targets</span><strong>{total_targets}</strong></div>\
+         <div class=\"card\"><span class=\"label\">Completed</span><strong>{completed}</strong></div>\
+         <div class=\"card sev-pass\"><span class=\"label\">Passed Policy</span><strong>{passed_count}</strong></div>\
+         <div class=\"card {}\"><span class=\"label\">Failed Policy</span><strong>{failed_policy}</strong></div>\
+         <div class=\"card {}\"><span class=\"label\">Invalid Targets</span><strong>{failed_targets}</strong></div>\
+         </section>",
+        if failed_policy > 0 { "sev-crit" } else { "" },
+        if failed_targets > 0 { "sev-high" } else { "" },
+    );
+
+    if !errors.is_empty() {
+        let _ = writeln!(
+            body,
+            "<section class=\"panel\"><h2>Invalid Targets ({})</h2>\
+             <table><thead><tr><th>Target</th><th>Error</th></tr></thead><tbody>",
+            errors.len(),
+        );
+        for err in errors {
+            let _ = writeln!(
+                body,
+                "<tr><td><code>{}</code></td><td>{}</td></tr>",
+                escape_html(err.raw_target),
+                escape_html(err.error),
+            );
+        }
+        let _ = writeln!(body, "</tbody></table></section>");
+    }
+
+    let _ = writeln!(
+        body,
+        "<section class=\"panel\"><h2>Target Results ({})</h2>\
+         <table><thead><tr><th>Target</th><th>Policy</th><th>Crit</th><th>High</th><th>Med</th><th>Low</th><th>Top Issue</th></tr></thead><tbody>",
+        items.len(),
+    );
+    for item in items {
+        let s = &item.report.summary;
+        let badge = if item.passed { "sev-pass" } else { "sev-crit" };
+        let label = if item.passed { "PASS" } else { "FAIL" };
+        let top_issue = item
+            .report
+            .analysers
+            .iter()
+            .flat_map(|a| a.findings.iter())
+            .min_by_key(|f| match f.severity {
+                Severity::Critical => 0_u8,
+                Severity::High => 1_u8,
+                Severity::Medium => 2_u8,
+                Severity::Low => 3_u8,
+                Severity::Info => 4_u8,
+            })
+            .map_or_else(
+                || "—".to_owned(),
+                |f| format!("{}: {}", f.rule_id.0, f.title),
+            );
+        let _ = writeln!(
+            body,
+            "<tr><td><code>{}</code></td><td><span class=\"badge {badge}\">{label}</span></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            escape_html(item.report.target.as_str()),
+            s.critical_findings,
+            s.high_findings,
+            s.medium_findings,
+            s.low_findings,
+            escape_html(&top_issue),
+        );
+    }
+    let _ = writeln!(body, "</tbody></table></section>");
+
+    wrap_document("NetzZwergenWacht Batch Portfolio Audit", &body)
+}
+
 /// Renders a cross-run [`RegressionReport`] (`diff` / `verify`) as a
 /// self-contained HTML5 document highlighting new, reintroduced, worsened,
 /// and resolved findings.
@@ -1043,5 +1163,47 @@ mod tests {
         assert!(html.contains("New Findings (1)"));
         assert!(!html.contains("<script>alert(1)</script>"));
         assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    #[test]
+    fn batch_html_renders_portfolio_table_and_escapes_errors() {
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let snapshot = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 1_700_000_000,
+            http: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            browser: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            lighthouse: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+            axe: CollectorOutcome::Skipped {
+                reason: "offline".to_owned(),
+            },
+        };
+        let report = analysis::run_all(&snapshot);
+        let html = render_batch_html(
+            2,
+            1,
+            1,
+            &[BatchHtmlError {
+                raw_target: "http://<bad>",
+                error: "invalid host",
+            }],
+            &[BatchHtmlItem {
+                report: &report,
+                passed: false,
+            }],
+        );
+        assert!(html.contains("Batch Portfolio Audit"));
+        assert!(html.contains("https://example.com/"));
+        assert!(!html.contains("http://<bad>"));
+        assert!(html.contains("http://&lt;bad&gt;"));
     }
 }
