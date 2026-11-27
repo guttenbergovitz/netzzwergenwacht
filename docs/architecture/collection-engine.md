@@ -24,6 +24,27 @@ The **Collection Engine** is solely responsible for acquiring external evidence 
 - Each collector returns `CollectorOutcome<T>`: `Captured(T)` | `Partial { data: T, warnings: Vec<String> }` | `Failed(CollectionError)` | `Skipped(String)`.
 - Collector failures do not crash the orchestrator; they are recorded in the `EvidenceSnapshot` so downstream analysers know which evidence is absent.
 
+## 2a. Application crawl scheduling
+
+Application-wide acquisition is scheduled, not looped (ADR 0027). `crawl_and_cluster` consumes a
+deduplicating priority frontier through a bounded worker pool:
+
+- The global worker count comes from `ExecutionBudget::max_concurrency`; each host is additionally
+  capped at four concurrent acquisitions, so one origin cannot occupy the pool.
+- The frontier has a fixed byte-free capacity (`max_pages * 4`, clamped to 32..=4096). Rejected
+  offers are counted as `queue_rejections`; repeat offers are counted as `duplicate_offers`.
+  Neither is silently discarded.
+- `/robots.txt` is retrieved once per crawl before any page is fetched and evaluated for this
+  agent's token, including `*` wildcards and `$` anchors. Disallowed URLs are discovered but never
+  requested, and are reported separately from budget skips. A `robots.txt` that cannot be
+  retrieved is reported as `unavailable`, never as "everything is allowed".
+- One pooled HTTP client is reused per host and pinned address set for the duration of the crawl.
+  Reuse cannot weaken SSRF defence: the cached client can only reach addresses validated when it
+  was created, and a new resolution yields a different cache key.
+- `CrawlCoverage` partitions the discovered population into fetched, analysed, failed, budget
+  skipped, robots blocked and cancelled, and reports `complete = false` whenever any URL was left
+  unacquired. Counts are observed, never estimated.
+
 ## Source content segmentation
 
 The shared HTML5 parse yields content evidence for editorial integrity and

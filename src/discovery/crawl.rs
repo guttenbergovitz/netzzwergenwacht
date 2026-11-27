@@ -5,12 +5,14 @@
 //! [`TargetPolicy`]. The scheduling contract is recorded in ADR 0027.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::task::JoinSet;
 use url::Url;
 
 use super::frontier::{CrawlFrontier, DiscoverySource, EnqueueOutcome};
+use super::robots;
 use super::{
     CrawlBudget, CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageType,
     build_captured_graph_input, classify_page, cluster_systemic_issues, discover_same_origin_links,
@@ -37,6 +39,14 @@ struct PageOutcome {
     links: Vec<AuditTarget>,
     graph_input: Option<GraphPageInput>,
     report: Option<AuditReport>,
+}
+
+/// Crawl-wide acquisition settings shared by every page task.
+#[derive(Clone, Copy)]
+struct PageSchedule {
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+    max_depth: usize,
 }
 
 fn origin_key(target: &AuditTarget) -> String {
@@ -89,17 +99,19 @@ async fn acquire_page(
     target: AuditTarget,
     depth: usize,
     remaining: std::time::Duration,
-    exec_budget: ExecutionBudget,
-    policy: TargetPolicy,
+    schedule: PageSchedule,
     in_sitemap: bool,
-    max_depth: usize,
+    cache: Arc<collection::CrawlHttpCache>,
 ) -> PageOutcome {
+    let exec_budget = schedule.exec_budget;
+    let policy = schedule.policy;
+    let max_depth = schedule.max_depth;
     let per_page_budget = ExecutionBudget {
         audit_timeout: exec_budget.audit_timeout.min(remaining),
         http_timeout: exec_budget.http_timeout.min(remaining),
         ..exec_budget
     };
-    let snapshot = collection::collect_http(&target, &per_page_budget, policy).await;
+    let snapshot = collection::collect_http_cached(&target, &per_page_budget, policy, &cache).await;
 
     let (status, page_type, links, graph_input, report) = match &snapshot.http {
         CollectorOutcome::Captured { data } => {
@@ -178,6 +190,12 @@ pub(super) async fn crawl_concurrently(
     let mut frontier = CrawlFrontier::new(queue_bound);
     let mut sitemap_urls: HashSet<String> = HashSet::new();
 
+    // The exclusion file is consulted once per crawl, before any page is fetched. A failure to
+    // retrieve it is recorded rather than assumed to mean "everything is allowed".
+    let (robots_outcome, robots_rules) = robots::fetch_robots(&seed, &exec_budget, policy).await;
+    let robots_rules = Arc::new(robots_rules);
+    let cache = Arc::new(collection::CrawlHttpCache::new(global_limit.max(2)));
+
     let _ = frontier.enqueue(seed.clone(), 0, DiscoverySource::Seed);
     if crawl_budget.max_depth > 0 && crawl_budget.max_pages > 1 {
         for url in seed_sitemap_urls(&seed, exec_budget, policy).await {
@@ -194,6 +212,7 @@ pub(super) async fn crawl_concurrently(
     let mut pending: Vec<super::frontier::FrontierEntry> = Vec::new();
     let mut fetched = 0usize;
     let mut cancelled = 0usize;
+    let mut robots_blocked = 0usize;
     let mut budget_exhausted = false;
     let mut deadline_reached = false;
 
@@ -222,21 +241,28 @@ pub(super) async fn crawl_concurrently(
                 pending.push(entry);
                 break;
             }
+            if !robots_rules.allows(&robots::path_and_query(&entry.target)) {
+                robots_blocked = robots_blocked.saturating_add(1);
+                continue;
+            }
             let origin = origin_key(&entry.target);
             *per_origin_in_flight.entry(origin).or_insert(0) += 1;
             fetched = fetched.saturating_add(1);
             let in_sitemap = sitemap_urls.contains(entry.target.as_str());
-            let budget = exec_budget;
-            let max_depth = crawl_budget.max_depth;
+            let schedule = PageSchedule {
+                exec_budget,
+                policy,
+                max_depth: crawl_budget.max_depth,
+            };
+            let cache = Arc::clone(&cache);
             in_flight.spawn(async move {
                 acquire_page(
                     entry.target,
                     entry.depth,
                     remaining,
-                    budget,
-                    policy,
+                    schedule,
                     in_sitemap,
-                    max_depth,
+                    cache,
                 )
                 .await
             });
@@ -332,12 +358,14 @@ pub(super) async fn crawl_concurrently(
     let complete = !budget_exhausted && !deadline_reached && cancelled == 0;
 
     let coverage = CrawlCoverage {
-        discovered_urls: pages.len(),
+        discovered_urls: pages.len().saturating_add(robots_blocked),
         fetched_urls: fetched,
         analysed_urls,
         failed_urls,
         skipped_budget_urls,
         cancelled_urls: cancelled,
+        robots_blocked_urls: robots_blocked,
+        robots: robots_outcome,
         queue_rejections: frontier.queue_full_count(),
         duplicate_offers: frontier.duplicate_count(),
         max_pages: crawl_budget.max_pages,
@@ -369,21 +397,30 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+    use crate::discovery::RobotsOutcome;
     use crate::domain::TargetPolicy;
 
     struct Fixture {
         addr: std::net::SocketAddr,
         max_concurrent: Arc<AtomicUsize>,
+        requested_paths: Arc<std::sync::Mutex<Vec<String>>>,
     }
 
     async fn spawn_fixture() -> Fixture {
+        spawn_fixture_with_robots(None).await
+    }
+
+    async fn spawn_fixture_with_robots(robots: Option<String>) -> Fixture {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let current = Arc::new(AtomicUsize::new(0));
         let max_concurrent = Arc::new(AtomicUsize::new(0));
+        let requested_paths = Arc::new(std::sync::Mutex::new(Vec::new()));
 
         let current_task = Arc::clone(&current);
         let max_task = Arc::clone(&max_concurrent);
+        let paths_task = Arc::clone(&requested_paths);
+        let robots = Arc::new(robots);
         tokio::spawn(async move {
             loop {
                 let Ok((mut socket, _)) = listener.accept().await else {
@@ -391,6 +428,8 @@ mod tests {
                 };
                 let current = Arc::clone(&current_task);
                 let max_seen = Arc::clone(&max_task);
+                let paths = Arc::clone(&paths_task);
+                let robots = Arc::clone(&robots);
                 tokio::spawn(async move {
                     let live = current.fetch_add(1, Ordering::SeqCst) + 1;
                     max_seen.fetch_max(live, Ordering::SeqCst);
@@ -403,14 +442,19 @@ mod tests {
                         .and_then(|line| line.split_whitespace().nth(1))
                         .unwrap_or("/")
                         .to_owned();
+                    if let Ok(mut seen) = paths.lock() {
+                        seen.push(path.clone());
+                    }
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     let body = if path == "/" {
                         "<html><head><title>Seed</title></head><body>\
                          <a href=\"/a\">A</a><a href=\"/a\">A again</a>\
                          <a href=\"/b\">B</a><a href=\"/c\">C</a></body></html>"
                             .to_owned()
-                    } else if path == "/sitemap.xml" || path == "/robots.txt" {
+                    } else if path == "/sitemap.xml" {
                         String::new()
+                    } else if path == "/robots.txt" {
+                        robots.as_deref().unwrap_or_default().to_owned()
                     } else {
                         format!("<html><head><title>{path}</title></head><body>ok</body></html>")
                     };
@@ -433,6 +477,7 @@ mod tests {
         Fixture {
             addr,
             max_concurrent,
+            requested_paths,
         }
     }
 
@@ -493,6 +538,52 @@ mod tests {
         assert!(
             peak >= 2,
             "expected concurrent acquisitions, observed peak {peak}"
+        );
+    }
+
+    #[tokio::test]
+    async fn robots_disallow_prevents_acquisition_and_is_accounted_for() {
+        let fixture =
+            spawn_fixture_with_robots(Some("User-agent: *\nDisallow: /b\n".to_owned())).await;
+        let target = |path: &str| {
+            AuditTarget::parse(
+                &format!("http://{}{path}", fixture.addr),
+                TargetPolicy::AllowPrivate,
+            )
+            .unwrap()
+        };
+        let summary = crawl_concurrently(
+            target("/"),
+            CrawlBudget {
+                max_pages: 8,
+                max_depth: 1,
+                max_duration: Duration::from_secs(20),
+            },
+            ExecutionBudget {
+                max_concurrency: 4,
+                ..ExecutionBudget::default()
+            },
+            TargetPolicy::AllowPrivate,
+        )
+        .await;
+
+        assert_eq!(summary.coverage.robots, RobotsOutcome::Observed);
+        assert_eq!(summary.coverage.robots_blocked_urls, 1);
+        assert_eq!(
+            summary
+                .pages
+                .iter()
+                .filter(|page| page.status == PageCrawlStatus::Investigated)
+                .count(),
+            3,
+            "the seed and the two permitted links"
+        );
+
+        // The disallowed URL must never reach the origin.
+        let requested = fixture.requested_paths.lock().unwrap().clone();
+        assert!(
+            !requested.iter().any(|path| path == "/b"),
+            "robots-disallowed path was fetched: {requested:?}"
         );
     }
 }

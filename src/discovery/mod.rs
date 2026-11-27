@@ -13,8 +13,10 @@ use url::Url;
 
 mod crawl;
 pub mod frontier;
+pub mod robots;
 
 pub use frontier::DiscoverySource;
+pub use robots::RobotsOutcome;
 
 use crate::analysis::document::DocumentObservations;
 use crate::analysis::graph::GraphPageInput;
@@ -152,6 +154,13 @@ pub struct CrawlCoverage {
     pub skipped_budget_urls: usize,
     /// URLs whose acquisition was cancelled when the crawl deadline expired.
     pub cancelled_urls: usize,
+    /// URLs whose acquisition was refused by the origin's robots exclusion rules.
+    ///
+    /// These URLs were discovered but never fetched. They are counted separately from budget
+    /// skips because the reason for exclusion is the origin's policy, not our budget.
+    pub robots_blocked_urls: usize,
+    /// How the robots exclusion file was obtained for the seed origin.
+    pub robots: RobotsOutcome,
     /// Link discoveries rejected because the bounded frontier was full.
     pub queue_rejections: usize,
     /// Repeat discoveries of a URL already queued or acquired.

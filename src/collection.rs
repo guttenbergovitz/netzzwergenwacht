@@ -3,8 +3,9 @@
 //! Only the collection engine performs network I/O. It produces an immutable
 //! [`EvidenceSnapshot`] governed by [`ExecutionBudget`] and [`TargetPolicy`].
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use reqwest::StatusCode;
@@ -48,6 +49,46 @@ pub async fn collect_http_with_caa_endpoint(
     policy: TargetPolicy,
     caa_doh_endpoint: Option<&str>,
 ) -> EvidenceSnapshot {
+    collect_http_with_source(
+        target,
+        budget,
+        policy,
+        caa_doh_endpoint,
+        ClientSource::Fresh,
+    )
+    .await
+}
+
+/// Performs the same bounded collection as [`collect_http`] while reusing a pooled HTTP client
+/// from `cache` for hosts that were already resolved and validated during this crawl.
+///
+/// Unlike [`collect_http_with_caa_endpoint`], this entry point never queries DNS CAA: additional
+/// external dependencies stay an explicit per-page decision rather than an implicit crawl default.
+pub async fn collect_http_cached(
+    target: &AuditTarget,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+    cache: &CrawlHttpCache,
+) -> EvidenceSnapshot {
+    collect_http_with_source(target, budget, policy, None, ClientSource::Cached(cache)).await
+}
+
+/// Where the HTTP client for one request comes from.
+#[derive(Clone, Copy)]
+enum ClientSource<'a> {
+    /// A dedicated client, as used by single-page collection.
+    Fresh,
+    /// A client reused for the crawl, keyed by host and pinned address set.
+    Cached(&'a CrawlHttpCache),
+}
+
+async fn collect_http_with_source(
+    target: &AuditTarget,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+    caa_doh_endpoint: Option<&str>,
+    source: ClientSource<'_>,
+) -> EvidenceSnapshot {
     tracing::debug!(
         target = target.as_str(),
         "starting HTTP evidence collection"
@@ -59,7 +100,7 @@ pub async fn collect_http_with_caa_endpoint(
 
     let outcome = tokio::time::timeout(
         budget.audit_timeout,
-        execute_bounded_get(target, budget, policy),
+        execute_bounded_get(target, budget, policy, source),
     )
     .await;
 
@@ -348,6 +389,82 @@ pub async fn check_if_unchanged(
     ConditionalCheckOutcome::ChangedOrUnverifiable
 }
 
+/// Bounded cache of HTTP clients shared by one crawl.
+///
+/// A crawl resolves each host once per distinct pinned address set and reuses the resulting
+/// client, so connection pools, TLS sessions and resolved addresses are shared between pages
+/// instead of rebuilt for every request. Reuse does not weaken SSRF defence: a cached client can
+/// only reach the addresses that were validated when it was created, and a fresh resolution that
+/// yields different addresses produces a different cache key and therefore a new client.
+pub struct CrawlHttpCache {
+    capacity: usize,
+    clients: Mutex<HashMap<String, reqwest::Client>>,
+}
+
+impl CrawlHttpCache {
+    /// Creates a cache holding at most `capacity` clients.
+    ///
+    /// When the cache is full a new host evicts the whole set rather than growing without bound;
+    /// eviction costs a rebuild and never affects results.
+    #[must_use]
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.max(1),
+            clients: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Number of clients currently cached.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.clients.lock().map_or(0, |clients| clients.len())
+    }
+
+    /// `true` when no client is cached yet.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    async fn client_for(
+        &self,
+        target: &AuditTarget,
+        http_timeout: std::time::Duration,
+        policy: TargetPolicy,
+    ) -> Result<reqwest::Client, String> {
+        let pinned_addrs = resolve_and_validate(target, policy).await?;
+        let host_for_pin = strip_ipv6_brackets(target.host());
+        let key = format!(
+            "{host_for_pin}|{pinned_addrs:?}|{}",
+            http_timeout.as_millis()
+        );
+
+        if let Ok(clients) = self.clients.lock()
+            && let Some(client) = clients.get(&key)
+        {
+            return Ok(client.clone());
+        }
+
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .tls_info(true)
+            .redirect(Policy::none())
+            .timeout(http_timeout)
+            .user_agent(USER_AGENT)
+            .resolve_to_addrs(host_for_pin, &pinned_addrs)
+            .build()
+            .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+
+        if let Ok(mut clients) = self.clients.lock() {
+            if clients.len() >= self.capacity {
+                clients.clear();
+            }
+            clients.insert(key, client.clone());
+        }
+        Ok(client)
+    }
+}
+
 /// Collects HTTP and TLS evidence for multiple targets with concurrency bounded
 /// by `budget.max_concurrency`, preserving input target order.
 pub async fn collect_batch(
@@ -383,24 +500,33 @@ async fn execute_bounded_get(
     initial_target: &AuditTarget,
     budget: &ExecutionBudget,
     policy: TargetPolicy,
+    source: ClientSource<'_>,
 ) -> Result<(HttpEvidence, CollectorOutcome<TlsEvidence>), String> {
     let started = Instant::now();
     let mut current_target = initial_target.clone();
     let mut redirect_chain = Vec::new();
 
     loop {
-        let pinned_addrs = resolve_and_validate(&current_target, policy).await?;
-        let host_for_pin = strip_ipv6_brackets(current_target.host());
-
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .tls_info(true)
-            .redirect(Policy::none())
-            .timeout(budget.http_timeout)
-            .user_agent(USER_AGENT)
-            .resolve_to_addrs(host_for_pin, &pinned_addrs)
-            .build()
-            .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+        let client = match source {
+            ClientSource::Cached(cache) => {
+                cache
+                    .client_for(&current_target, budget.http_timeout, policy)
+                    .await?
+            }
+            ClientSource::Fresh => {
+                let pinned_addrs = resolve_and_validate(&current_target, policy).await?;
+                let host_for_pin = strip_ipv6_brackets(current_target.host());
+                reqwest::Client::builder()
+                    .no_proxy()
+                    .tls_info(true)
+                    .redirect(Policy::none())
+                    .timeout(budget.http_timeout)
+                    .user_agent(USER_AGENT)
+                    .resolve_to_addrs(host_for_pin, &pinned_addrs)
+                    .build()
+                    .map_err(|e| format!("failed to build HTTP client: {e}"))?
+            }
+        };
 
         let mut response = client
             .get(current_target.as_str())
