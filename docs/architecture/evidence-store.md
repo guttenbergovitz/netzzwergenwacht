@@ -9,18 +9,25 @@ survive the process that produced them.
 Implementation: `src/evidence_store.rs`. Engine decision: ADR 0032, amended by
 ADR 0033 (Turso Database, MVCC).
 
-## What is stored in schema version 1
+## What is stored in schema version 2
 
 | Table | Contents |
 | --- | --- |
 | `runs` | One row per recorded crawl: identity, seed, recording time, completeness, the full page and resource coverage counters, and the robots outcome |
 | `pages` | One row per discovered URL with depth, inferred page type and explicit crawl status |
-| `resources` | One row per acquired subresource with kind, status, HTTP status, declared content type, observed byte length and truncation |
+| `resources` | One row per acquired subresource with kind, status, HTTP status, declared content type and encoding, observed byte length, `Cache-Control`, `ETag`/`Last-Modified` presence, truncation and failure reason |
 | `systemic_issues` | One row per cross-page cluster with rule identity, affected breadth, classification and summary |
 
 `PRAGMA user_version` carries the schema version. Migrations are forward-only: a
 store written by a newer build is refused with an explicit version pair rather than
-partially interpreted.
+partially interpreted, and an older store is upgraded in place by applying each
+step in order.
+
+Version 2 added the five resource fields that version 1 used in memory and then
+dropped. Its header flags are nullable rather than defaulted, so a row written by
+version 1 reads back as *not stored* instead of claiming that a response carried no
+`ETag`. The reader keeps that distinction: `etag_present == Some(false)` is an
+observed absence, `None` is an absence of evidence.
 
 ## Contracts
 
@@ -45,7 +52,7 @@ partially interpreted.
 
 ## What is not stored yet
 
-Schema version 1 deliberately stops at the observations the crawler already
+Schema version 2 deliberately stops at the observations the crawler already
 produces. Not yet persisted:
 
 - per-page findings and their evidence references;

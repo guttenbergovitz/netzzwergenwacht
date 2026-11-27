@@ -230,8 +230,8 @@ async fn acquire_resource(
         content_encoding: fetch.content_encoding,
         byte_len: fetch.byte_len,
         cache_control: fetch.cache_control,
-        etag_present: fetch.etag_present,
-        last_modified_present: fetch.last_modified_present,
+        etag_present: Some(fetch.etag_present),
+        last_modified_present: Some(fetch.last_modified_present),
         truncated: fetch.truncated,
         error: fetch.error,
     }
@@ -787,7 +787,7 @@ mod tests {
         assert_eq!(css.http_status, Some(200));
         assert_eq!(css.content_type.as_deref(), Some("text/css"));
         assert_eq!(css.byte_len, Some(21));
-        assert!(css.etag_present);
+        assert_eq!(css.etag_present, Some(true));
         assert!(!css.truncated);
 
         // Observations are ordered by URL, so the report is stable across runs.

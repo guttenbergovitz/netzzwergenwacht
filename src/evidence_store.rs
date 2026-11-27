@@ -39,7 +39,7 @@ use crate::discovery::{
 ///
 /// Migrations are forward-only: a store written by a newer build is refused
 /// rather than partially understood.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// Maximum number of simultaneous write connections.
 ///
@@ -423,8 +423,9 @@ impl EvidenceStore {
             connection
                 .execute(
                     "INSERT INTO resources (run_id, url, kind, status, http_status, content_type,
-                        byte_len, truncated)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                        byte_len, truncated, content_encoding, cache_control, etag_present,
+                        last_modified_present, error)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                      ON CONFLICT(run_id, url) DO NOTHING",
                     (
                         record.run_id,
@@ -435,6 +436,11 @@ impl EvidenceStore {
                         resource.content_type.clone(),
                         resource.byte_len.map(epoch),
                         flag(resource.truncated),
+                        resource.content_encoding.clone(),
+                        resource.cache_control.clone(),
+                        resource.etag_present.map(i64::from),
+                        resource.last_modified_present.map(i64::from),
+                        resource.error.clone(),
                     ),
                 )
                 .await
@@ -616,14 +622,18 @@ impl EvidenceStore {
             match kind {
                 Some(kind) => connection
                     .query(
-                        "SELECT url, kind, status, http_status, content_type, byte_len, truncated
+                        "SELECT url, kind, status, http_status, content_type, byte_len, truncated,
+                                content_encoding, cache_control, etag_present, last_modified_present,
+                                error
                          FROM resources WHERE run_id = ?1 AND kind = ?2 ORDER BY url ASC LIMIT ?3",
                         (run_id, resource_kind_label(kind), limit),
                     )
                     .await?,
                 None => connection
                     .query(
-                        "SELECT url, kind, status, http_status, content_type, byte_len, truncated
+                        "SELECT url, kind, status, http_status, content_type, byte_len, truncated,
+                                content_encoding, cache_control, etag_present, last_modified_present,
+                                error
                          FROM resources WHERE run_id = ?1 ORDER BY url ASC LIMIT ?2",
                         (run_id, limit),
                     )
@@ -645,12 +655,12 @@ impl EvidenceStore {
                 http_status: optional_u16(&row, 3)?,
                 content_type: row.get::<String>(4).ok(),
                 byte_len: optional_u64(&row, 5)?,
-                content_encoding: None,
-                cache_control: None,
-                etag_present: false,
-                last_modified_present: false,
+                content_encoding: row.get::<String>(7).ok(),
+                cache_control: row.get::<String>(8).ok(),
+                etag_present: optional_flag(&row, 9),
+                last_modified_present: optional_flag(&row, 10),
                 truncated: row.get::<i64>(6)? != 0,
-                error: None,
+                error: row.get::<String>(11).ok(),
             });
         }
         Ok(resources)
@@ -747,12 +757,23 @@ async fn initialise(database: &Database) -> Result<(), StoreError> {
         .execute("PRAGMA foreign_keys = ON", ())
         .await
         .map_err(StoreError::from)?;
+    let mut version = found;
+    if version < 1 {
+        connection
+            .execute_batch(SCHEMA_V1)
+            .await
+            .map_err(StoreError::from)?;
+        version = 1;
+    }
+    if version < 2 {
+        connection
+            .execute_batch(MIGRATION_V2)
+            .await
+            .map_err(StoreError::from)?;
+        version = 2;
+    }
     connection
-        .execute_batch(SCHEMA_V1)
-        .await
-        .map_err(StoreError::from)?;
-    connection
-        .execute(format!("PRAGMA user_version = {SCHEMA_VERSION}"), ())
+        .execute(format!("PRAGMA user_version = {version}"), ())
         .await
         .map_err(StoreError::from)?;
     Ok(())
@@ -832,6 +853,18 @@ CREATE TABLE IF NOT EXISTS systemic_issues (
 CREATE INDEX IF NOT EXISTS systemic_by_rule ON systemic_issues(run_id, rule_id);
 ";
 
+/// Schema v2 adds the resource detail that v1 recorded in memory and then dropped.
+///
+/// The flags are nullable on purpose: a row written by v1 has no stored header observation, and
+/// backfilling `0` would assert an absence nobody verified.
+const MIGRATION_V2: &str = "
+ALTER TABLE resources ADD COLUMN content_encoding TEXT;
+ALTER TABLE resources ADD COLUMN cache_control TEXT;
+ALTER TABLE resources ADD COLUMN etag_present INTEGER;
+ALTER TABLE resources ADD COLUMN last_modified_present INTEGER;
+ALTER TABLE resources ADD COLUMN error TEXT;
+";
+
 fn count(value: usize) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
@@ -856,6 +889,12 @@ fn positive(row: &turso::Row, index: usize) -> Result<usize, StoreError> {
 fn non_negative(row: &turso::Row, index: usize) -> Result<u64, StoreError> {
     let value = row.get::<i64>(index)?;
     u64::try_from(value).map_err(|_| unknown_value("non-negative integer", &value.to_string()))
+}
+
+fn optional_flag(row: &turso::Row, index: usize) -> Option<bool> {
+    // A NULL column means the observation was never stored, which is not the same as a header
+    // verified absent. Returning `None` keeps that distinction visible to callers.
+    row.get::<i64>(index).ok().map(|value| value != 0)
 }
 
 fn optional_u64(row: &turso::Row, index: usize) -> Result<Option<u64>, StoreError> {
@@ -1021,8 +1060,8 @@ mod tests {
             content_encoding: None,
             byte_len: bytes,
             cache_control: Some("max-age=600".to_owned()),
-            etag_present: true,
-            last_modified_present: false,
+            etag_present: Some(true),
+            last_modified_present: Some(false),
             truncated: false,
             error: None,
         }
@@ -1259,6 +1298,122 @@ mod tests {
             store.pages("run-1", None, 10).await.expect("pages").len(),
             3
         );
+    }
+
+    #[tokio::test]
+    async fn resource_detail_survives_the_round_trip() {
+        let store = EvidenceStore::open(&store_path("resource-detail"))
+            .await
+            .expect("open");
+        let mut summary = summary();
+        let mut script = observation(
+            "https://example.org/app.js",
+            ResourceKind::Script,
+            Some(120),
+        );
+        script.content_encoding = Some("br".to_owned());
+        script.cache_control = Some("public, max-age=31536000".to_owned());
+        script.etag_present = Some(true);
+        script.last_modified_present = Some(false);
+        let failed = ResourceObservation {
+            status: ResourceStatus::Failed,
+            http_status: None,
+            content_type: None,
+            byte_len: None,
+            cache_control: None,
+            etag_present: None,
+            last_modified_present: None,
+            error: Some("connection reset".to_owned()),
+            ..observation(
+                "https://example.org/missing.css",
+                ResourceKind::Stylesheet,
+                None,
+            )
+        };
+        summary.resources = vec![script, failed];
+
+        store
+            .record_crawl(CrawlRecord {
+                run_id: "run-1",
+                application: "https://example.org",
+                summary: &summary,
+                recorded_at_unix_secs: 1_700_000_000,
+            })
+            .await
+            .expect("record");
+
+        let stored = store.resources("run-1", None, 10).await.expect("resources");
+        assert_eq!(stored.len(), 2, "both observations must be retained");
+        let app = stored
+            .iter()
+            .find(|resource| resource.url.ends_with("app.js"))
+            .expect("script observation");
+        assert_eq!(app.content_encoding.as_deref(), Some("br"));
+        assert_eq!(
+            app.cache_control.as_deref(),
+            Some("public, max-age=31536000")
+        );
+        assert_eq!(app.etag_present, Some(true));
+        assert_eq!(app.last_modified_present, Some(false));
+
+        let missing = stored
+            .iter()
+            .find(|resource| resource.url.ends_with("missing.css"))
+            .expect("failed observation");
+        assert_eq!(missing.error.as_deref(), Some("connection reset"));
+        assert_eq!(
+            missing.etag_present, None,
+            "a failed acquisition must not claim the header was absent"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_version_one_store_is_migrated_without_inventing_header_observations() {
+        let path = store_path("migrate");
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).expect("create directory");
+        }
+        let location = path.to_str().expect("UTF-8 path");
+        let database = turso::Builder::new_local(location)
+            .build()
+            .await
+            .expect("build legacy store");
+        let connection = database.connect().expect("connection");
+        connection
+            .execute_batch(super::SCHEMA_V1)
+            .await
+            .expect("legacy schema");
+        connection
+            .execute("PRAGMA user_version = 1", ())
+            .await
+            .expect("legacy version");
+        connection
+            .execute(
+                "INSERT INTO resources
+                    (run_id, url, kind, status, http_status, content_type, byte_len, truncated)
+                 VALUES ('legacy', 'https://example.org/legacy.css', 'stylesheet', 'fetched',
+                    200, 'text/css', 10, 0)",
+                (),
+            )
+            .await
+            .expect("legacy row");
+        drop(connection);
+        drop(database);
+
+        let store = EvidenceStore::open(&path).await.expect("migrate");
+        assert_eq!(
+            store.schema_version().await.expect("version"),
+            SCHEMA_VERSION
+        );
+        let resources = store
+            .resources("legacy", None, 10)
+            .await
+            .expect("resources");
+        assert_eq!(resources.len(), 1, "migration must keep existing rows");
+        assert_eq!(resources[0].url, "https://example.org/legacy.css");
+        assert_eq!(resources[0].etag_present, None);
+        assert_eq!(resources[0].last_modified_present, None);
+        assert_eq!(resources[0].content_encoding, None);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

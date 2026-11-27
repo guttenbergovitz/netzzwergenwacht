@@ -88,10 +88,13 @@ pub struct ResourceObservation {
     /// Declared `Cache-Control`, verbatim.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<String>,
-    /// Whether the response carried an `ETag`.
-    pub etag_present: bool,
-    /// Whether the response carried `Last-Modified`.
-    pub last_modified_present: bool,
+    /// Whether the response carried an `ETag`; `None` when no response was received, so an
+    /// unacquired or failed resource never claims the header was absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etag_present: Option<bool>,
+    /// Whether the response carried `Last-Modified`; `None` when no response was received.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_modified_present: Option<bool>,
     /// Whether the read stopped at the byte cap, so `byte_len` is a lower bound.
     pub truncated: bool,
     /// Failure reason, when acquisition failed.
