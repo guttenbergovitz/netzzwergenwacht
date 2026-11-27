@@ -1126,12 +1126,13 @@ fn resource_status_from_label(label: &str) -> Option<ResourceStatus> {
 #[cfg(test)]
 mod tests {
     use super::{CrawlRecord, EvidenceStore, SCHEMA_VERSION, StoreError};
+    use crate::brigade::DwarfId;
     use crate::discovery::{
         CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageResourceEdge, PageType,
         ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus, RobotsOutcome,
         SystemicClassification, SystemicIssue,
     };
-    use crate::domain::{AuditTarget, Confidence, RuleId, TargetPolicy};
+    use crate::domain::{AuditTarget, Confidence, RuleId, Severity, TargetPolicy};
     use std::path::PathBuf;
 
     fn store_path(name: &str) -> PathBuf {
@@ -1222,6 +1223,8 @@ mod tests {
                 summary: "HSTS is absent on both observed page types.".to_owned(),
                 recurrence_confidence: Confidence::High,
                 shared_cause_confidence: Confidence::Medium,
+                severity: Severity::High,
+                dwarf_id: DwarfId::Sicherheits,
             }],
             budget_exhausted: true,
             graph_results: Vec::new(),
@@ -1243,6 +1246,7 @@ mod tests {
                     Some(21),
                 ),
             ],
+            analysis_totals: Vec::new(),
         }
     }
 

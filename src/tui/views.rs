@@ -605,12 +605,20 @@ fn reconnaissance_coverage_lines(state: &AppState) -> Vec<Line<'static>> {
             coverage.robots.label()
         )),
         Line::from(format!(
-            " Resources acquired {} of {} discovered",
-            coverage.resources.fetched_resources, coverage.resources.discovered_resources
+            " Resources acquired {} of {} discovered ({} cross-origin refusals, {} truncated)",
+            coverage.resources.fetched_resources,
+            coverage.resources.discovered_resources,
+            coverage.resources.external_refused,
+            coverage.resources.truncated_resources
         )),
         Line::from(format!(
-            " Systemic clusters: {}",
-            crawl.systemic_issues.len()
+            " Systemic clusters: {}  Dwarf check total: {}",
+            crawl.systemic_issues.len(),
+            crawl
+                .analysis_totals
+                .iter()
+                .map(|total| total.checks_evaluated)
+                .sum::<usize>()
         )),
     ]
 }

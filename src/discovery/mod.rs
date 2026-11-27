@@ -25,11 +25,22 @@ pub use robots::RobotsOutcome;
 use crate::analysis::document::DocumentObservations;
 use crate::analysis::graph::GraphPageInput;
 use crate::analysis::{AuditReport, header_value};
+use crate::brigade::DwarfId;
 use crate::collection;
 use crate::domain::{
     AnalyserResult, AuditTarget, CollectorOutcome, Confidence, ExecutionBudget, Origin, RuleId,
-    TargetPolicy,
+    Severity, TargetPolicy,
 };
+
+/// Severity assumed for systemic clusters deserialised from reports that predate attribution.
+fn legacy_severity() -> Severity {
+    Severity::Info
+}
+
+/// Owning specialist assumed for systemic clusters deserialised from reports that predate attribution.
+fn legacy_dwarf() -> DwarfId {
+    DwarfId::Kommandant
+}
 
 /// Representative page category inferred from URL path and document signals.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -136,6 +147,26 @@ pub struct SystemicIssue {
     pub recurrence_confidence: Confidence,
     /// Confidence that the occurrences share a single underlying cause.
     pub shared_cause_confidence: Confidence,
+    /// Highest severity observed among the clustered occurrences.
+    #[serde(default = "legacy_severity")]
+    pub severity: Severity,
+    /// Specialist that owns the recurring rule.
+    #[serde(default = "legacy_dwarf")]
+    pub dwarf_id: DwarfId,
+}
+
+/// Checks and findings a single specialist contributed to an application crawl.
+///
+/// Counts are accumulated from the per-page analyser results before those reports are discarded, so
+/// the workbench can credit a dwarf with the work it performed without retaining every page report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DwarfAnalysisTotal {
+    /// Specialist identifier.
+    pub dwarf_id: DwarfId,
+    /// Checks the specialist evaluated across every analysed page.
+    pub checks_evaluated: usize,
+    /// Findings the specialist raised across every analysed page.
+    pub findings_count: usize,
 }
 
 /// Explicit acquisition accounting for one crawl.
@@ -242,6 +273,9 @@ pub struct CrawlSummary {
     /// whose document was fully captured.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub page_resources: Vec<PageResourceEdge>,
+    /// Per-specialist totals accumulated before the page reports were released.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub analysis_totals: Vec<DwarfAnalysisTotal>,
 }
 
 /// Extracts normalised, deduplicated, same-origin [`AuditTarget`] links from `obs`.
@@ -519,16 +553,18 @@ pub fn classify_page(url: &AuditTarget, obs: &DocumentObservations) -> PageType 
 pub fn cluster_systemic_issues(
     page_reports: &[(AuditTarget, PageType, AuditReport)],
 ) -> Vec<SystemicIssue> {
-    let mut by_rule: BTreeMap<String, Vec<(&str, PageType)>> = BTreeMap::new();
+    let mut by_rule: BTreeMap<String, Vec<(&str, PageType, Severity, DwarfId)>> = BTreeMap::new();
     for (target, page_type, report) in page_reports {
         let mut seen_rules_on_page = HashSet::new();
         for analyser in &report.analysers {
             for finding in &analyser.findings {
                 if seen_rules_on_page.insert(finding.rule_id.0.as_str()) {
-                    by_rule
-                        .entry(finding.rule_id.0.clone())
-                        .or_default()
-                        .push((target.as_str(), *page_type));
+                    by_rule.entry(finding.rule_id.0.clone()).or_default().push((
+                        target.as_str(),
+                        *page_type,
+                        finding.severity,
+                        analyser.dwarf_id,
+                    ));
                 }
             }
         }
@@ -541,10 +577,26 @@ pub fn cluster_systemic_issues(
         }
         let affected_urls: Vec<String> = occurrences
             .iter()
-            .map(|(url, _)| (*url).to_owned())
+            .map(|(url, _, _, _)| (*url).to_owned())
             .collect();
         let mut affected_page_types: Vec<PageType> =
-            occurrences.iter().map(|(_, pt)| *pt).collect();
+            occurrences.iter().map(|(_, pt, _, _)| *pt).collect();
+        // The cluster is attributed to the highest severity it contains, and to the specialist
+        // responsible for the most occurrences (ties resolved by identifier order) so the
+        // attribution does not depend on completion order.
+        let severity = occurrences
+            .iter()
+            .map(|(_, _, severity, _)| *severity)
+            .max()
+            .unwrap_or(Severity::Info);
+        let mut dwarf_counts: BTreeMap<DwarfId, usize> = BTreeMap::new();
+        for (_, _, _, dwarf) in &occurrences {
+            *dwarf_counts.entry(*dwarf).or_insert(0) += 1;
+        }
+        let dwarf_id = dwarf_counts
+            .iter()
+            .max_by_key(|(dwarf, count)| (**count, std::cmp::Reverse(**dwarf)))
+            .map_or(DwarfId::Kommandant, |(dwarf, _)| *dwarf);
         affected_page_types.sort();
         affected_page_types.dedup();
 
@@ -577,9 +629,37 @@ pub fn cluster_systemic_issues(
             } else {
                 Confidence::Low
             },
+            severity,
+            dwarf_id,
         });
     }
     clusters
+}
+
+/// Aggregates per-specialist work from page reports that the caller is about to release.
+///
+/// The crawl analyses every page and then discards its report, which previously left the
+/// workbench unable to credit any dwarf with the work it had done. The totals are ordinary sums
+/// over observed checks and findings, not estimates.
+#[must_use]
+pub fn aggregate_analysis_totals(
+    page_reports: &[(AuditTarget, PageType, AuditReport)],
+) -> Vec<DwarfAnalysisTotal> {
+    let mut totals: BTreeMap<DwarfId, DwarfAnalysisTotal> = BTreeMap::new();
+    for (_, _, report) in page_reports {
+        for analyser in &report.analysers {
+            let entry = totals
+                .entry(analyser.dwarf_id)
+                .or_insert(DwarfAnalysisTotal {
+                    dwarf_id: analyser.dwarf_id,
+                    checks_evaluated: 0,
+                    findings_count: 0,
+                });
+            entry.checks_evaluated += analyser.checks.len();
+            entry.findings_count += analyser.findings.len();
+        }
+    }
+    totals.into_values().collect()
 }
 
 /// Performs a bounded, concurrent, same-origin crawl starting from `seed`.

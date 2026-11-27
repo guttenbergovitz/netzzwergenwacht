@@ -1036,6 +1036,46 @@ async fn crawl_with_progress(
     .await
 }
 
+/// Reports that the crawl finished, with the limitations it actually reached.
+///
+/// The HTTP collector is closed here because the crawl owns the acquisition phase: leaving it
+/// `Running` after the run completes would claim work that is no longer happening.
+fn emit_crawl_completion(
+    target_str: &str,
+    crawl: &crate::discovery::CrawlSummary,
+    sink: &DiagnosticEventSink,
+) {
+    let mut warnings = Vec::new();
+    if !crawl.coverage.complete {
+        warnings.push(format!(
+            "{} of {} discovered URLs were not acquired within the crawl budget",
+            crawl
+                .coverage
+                .discovered_urls
+                .saturating_sub(crawl.coverage.analysed_urls),
+            crawl.coverage.discovered_urls
+        ));
+    }
+    if crawl.coverage.robots_blocked_urls > 0 {
+        warnings.push(format!(
+            "{} URL(s) excluded by robots.txt",
+            crawl.coverage.robots_blocked_urls
+        ));
+    }
+    for collector in [CollectorId::Http, CollectorId::Discovery] {
+        sink.emit(
+            EventContext::new()
+                .with_target(target_str)
+                .with_collector(collector),
+            DiagnosticEventPayload::CollectionCompleted {
+                collector,
+                partial: !crawl.coverage.complete,
+                warnings: warnings.clone(),
+            },
+        );
+    }
+}
+
 /// Persists a completed crawl, reporting a failed write instead of hiding it.
 async fn store_crawl_evidence(
     store_path: &std::path::Path,
@@ -1145,6 +1185,8 @@ async fn run_reconnaissance_crawl(
             },
         );
     }
+
+    emit_crawl_completion(&target_str, &crawl, sink);
 
     let store_path = evidence_dir.join("evidence.db");
     let run_id = format!(

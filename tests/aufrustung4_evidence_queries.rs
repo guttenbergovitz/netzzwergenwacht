@@ -1077,6 +1077,7 @@ impl DiagnosticBackend for StaticBackend {
                 graph_results: Vec::new(),
                 resources: Vec::new(),
                 page_resources: Vec::new(),
+                analysis_totals: Vec::new(),
             }
         })
     }

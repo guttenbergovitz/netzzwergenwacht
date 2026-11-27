@@ -16,8 +16,9 @@ use super::resources::{self, ResourceCoverage, ResourceObservation, ResourceRef,
 use super::robots;
 use super::{
     CrawlBudget, CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageType,
-    build_captured_graph_input, classify_page, cluster_systemic_issues, discover_same_origin_links,
-    prioritise_representative_urls, seed_sitemap_urls, unreachable_graph_input,
+    aggregate_analysis_totals, build_captured_graph_input, classify_page, cluster_systemic_issues,
+    discover_same_origin_links, prioritise_representative_urls, seed_sitemap_urls,
+    unreachable_graph_input,
 };
 use crate::analysis::AuditReport;
 use crate::analysis::document::DocumentObservations;
@@ -592,6 +593,7 @@ pub(super) async fn crawl_concurrently(
     page_resources.dedup();
 
     let systemic_issues = cluster_systemic_issues(&page_reports);
+    let analysis_totals = aggregate_analysis_totals(&page_reports);
     let graph = ApplicationGraph::from_pages(&graph_inputs, complete);
     let graph_results = crate::analysis::graph::analyse(&graph);
 
@@ -604,6 +606,7 @@ pub(super) async fn crawl_concurrently(
         coverage,
         resources: resource_observations,
         page_resources,
+        analysis_totals,
     }
 }
 

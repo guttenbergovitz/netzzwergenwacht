@@ -1334,6 +1334,9 @@ impl AppState {
                 .http_requests
                 .saturating_add(crawl.coverage.fetched_urls);
             self.populate_targets_from_crawl(&crawl);
+            if self.audit_report.is_none() {
+                self.populate_findings_from_crawl(&crawl);
+            }
             self.crawl_summary = Some(crawl);
         }
 
@@ -1521,6 +1524,64 @@ impl AppState {
             })
             .collect();
         self.selected_target_index = 0;
+    }
+
+    /// Projects a reconnaissance crawl into the brigade and findings surfaces.
+    ///
+    /// A crawl analyses every acquired page but keeps only aggregates, so the workbench can
+    /// show which specialist evaluated what and which rules recurred across the surface.
+    /// Systemic clusters are recurrence evidence, not proven shared causes; their severity and
+    /// owning dwarf come from the findings that produced them.
+    fn populate_findings_from_crawl(&mut self, crawl: &crate::discovery::CrawlSummary) {
+        for total in &crawl.analysis_totals {
+            if let Some(row) = self
+                .brigade_rows
+                .iter_mut()
+                .find(|row| row.dwarf_id == total.dwarf_id)
+            {
+                row.checks_total = total.checks_evaluated;
+                row.findings_count = total.findings_count;
+                row.status = if total.checks_evaluated == 0 {
+                    OperationalStatus::Skipped
+                } else {
+                    OperationalStatus::Done
+                };
+                row.current_activity = format!(
+                    "Evaluated {} checks across the crawled surface ({} findings)",
+                    total.checks_evaluated, total.findings_count
+                );
+            }
+        }
+
+        let mut rows = Vec::new();
+        for issue in &crawl.systemic_issues {
+            let index = rows.len();
+            let affected = issue.affected_urls.len();
+            rows.push(FindingRow {
+                index,
+                dwarf_id: issue.dwarf_id,
+                rule_id: sanitize_line(&issue.rule_id.0, 80),
+                severity: issue.severity,
+                confidence: issue.recurrence_confidence,
+                evidence_level: EvidenceLevel::Source,
+                target_url: sanitize_url_for_display(
+                    issue.affected_urls.first().map_or("", String::as_str),
+                    120,
+                ),
+                title: sanitize_line(
+                    &format!("{} recurs on {affected} page(s)", issue.rule_id.0),
+                    120,
+                ),
+                description: sanitize_multiline(&issue.summary, 360),
+                recommendation: String::from(
+                    "Correct the shared template or component rather than each affected page.",
+                ),
+                evidence_refs: Vec::new(),
+                primary_evidence_category: EvidenceCategory::Http,
+            });
+        }
+        self.findings = rows;
+        self.refresh_visible_findings();
     }
 
     fn populate_targets_from_crawl(&mut self, crawl: &crate::discovery::CrawlSummary) {
@@ -1892,5 +1953,94 @@ pub fn format_rendered_diff_summary(diff: Option<&RenderedTextDiff>) -> String {
             "Compared ({changed_count} changed, {unchanged_count} unchanged, {not_comparable_count} not comparable)"
         ),
         Some(RenderedTextDiff::Unavailable { reason }) => format!("Unavailable ({reason})"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::discovery::{
+        CrawlCoverage, CrawlSummary, DwarfAnalysisTotal, SystemicClassification, SystemicIssue,
+    };
+    use crate::domain::{AuditTarget, Severity};
+
+    fn issue(severity: Severity, dwarf_id: DwarfId) -> SystemicIssue {
+        SystemicIssue {
+            id: String::from("systemic.sec.hsts"),
+            rule_id: crate::domain::RuleId(String::from("sec.header.hsts_missing")),
+            affected_urls: vec![
+                String::from("https://example.org/"),
+                String::from("https://example.org/a"),
+            ],
+            affected_page_types: vec![],
+            classification: SystemicClassification::SuspectedCommonConfiguration,
+            summary: String::from("HSTS is absent on two observed pages."),
+            recurrence_confidence: Confidence::High,
+            shared_cause_confidence: Confidence::Medium,
+            severity,
+            dwarf_id,
+        }
+    }
+
+    #[test]
+    fn a_crawl_credits_the_brigade_and_lists_systemic_clusters_as_findings() {
+        let target =
+            AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).expect("target");
+        let mut state = AppState::default();
+        let artefacts = DiagnosticArtefacts {
+            target: String::from("https://example.org/"),
+            mode: crate::events::DiagnosticRunMode::ReconnaissanceCrawl,
+            snapshot: None,
+            audit_report: None,
+            investigation_report: None,
+            patrol_report: None,
+            crawl_summary: Some(CrawlSummary {
+                seed: target,
+                pages: Vec::new(),
+                systemic_issues: vec![issue(Severity::High, DwarfId::Sicherheits)],
+                budget_exhausted: false,
+                graph_results: Vec::new(),
+                coverage: CrawlCoverage::default(),
+                resources: Vec::new(),
+                page_resources: Vec::new(),
+                analysis_totals: vec![DwarfAnalysisTotal {
+                    dwarf_id: DwarfId::Sicherheits,
+                    checks_evaluated: 12,
+                    findings_count: 1,
+                }],
+            }),
+            history_reports: Vec::new(),
+            regression_report: None,
+            elapsed_ms: 1_000,
+        };
+
+        state.ingest_artefacts(artefacts);
+
+        assert_eq!(
+            state.findings.len(),
+            1,
+            "one systemic cluster becomes one finding"
+        );
+        let finding = &state.findings[0];
+        assert_eq!(finding.severity, Severity::High);
+        assert_eq!(finding.dwarf_id, DwarfId::Sicherheits);
+        assert_eq!(finding.rule_id, "sec.header.hsts_missing");
+
+        let row = state
+            .brigade_rows
+            .iter()
+            .find(|row| row.dwarf_id == DwarfId::Sicherheits)
+            .expect("security row");
+        assert_eq!(row.checks_total, 12);
+        assert_eq!(row.findings_count, 1);
+        assert_eq!(row.status, OperationalStatus::Done);
+
+        let untouched = state
+            .brigade_rows
+            .iter()
+            .find(|row| row.dwarf_id == DwarfId::Leistungs)
+            .expect("performance row");
+        assert_eq!(untouched.checks_total, 0);
+        assert_eq!(untouched.status, OperationalStatus::Waiting);
     }
 }
