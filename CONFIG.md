@@ -1,290 +1,293 @@
-# Configuration Guide
+# Configuration
 
-NetzZwergenWacht supports flexible configuration via TOML files for model routing, patrol behavior, and execution policies.
+NetzZwergenWacht uses one TOML configuration model for the CLI and for Zwergenleitstand. Every
+example in this document is a complete, valid file, and `examples/` contains the same files so they
+can be copied and tested.
 
-## Model Configuration
+```bash
+nzw config show                       # resolved configuration, secrets redacted
+nzw config show --format json         # machine-readable form
+nzw config show --config nzw.toml     # inspect a specific file
+```
 
-### Overview
+## Discovery and precedence
 
-Die Zwergenbrigade supports per-dwarf model routing, allowing you to assign different LLM providers and models to each specialist agent. This enables optimal cost/quality trade-offs and leveraging domain-specific model strengths.
+Configuration is resolved in this order, first match wins:
 
-### Configuration Structure
+1. Per-run command-line overrides (`--timeout-secs`, `--allow-private`, `--browser`, …).
+2. The file given by `--config <path>`.
+3. The file named by `NZW_CONFIG`.
+4. `nzw.toml` in the current working directory.
+5. `$XDG_CONFIG_HOME/netzzwergenwacht/nzw.toml`, or `$HOME/.config/netzzwergenwacht/nzw.toml`.
+6. Built-in defaults.
 
-Create a `config.toml` file with a `[models]` section:
+A file that is *not found* during discovery is normal: the defaults apply and `nzw config show`
+reports `built-in defaults` as the source. A file that exists but cannot be parsed or validated is a
+hard error — NetzZwergenWacht refuses to run with a configuration it does not understand rather than
+silently ignoring an operator's intent.
+
+Unknown keys are rejected. This is deliberate: a typo in `api_key_env` should fail loudly, not
+quietly fall back to an unauthenticated provider.
+
+## Minimal configuration
 
 ```toml
-[models]
-# Default provider configuration (fallback for all agents)
 [models.default]
-kind = "openai"              # Provider: "openai", "anthropic", "ollama"
-model = "gpt-4o-mini"        # Model identifier
-temperature = 0.7            # Optional: sampling temperature (0.0-2.0)
+provider = "openai"
+model = "your-model-id"
+```
 
-# Role-based routing (overrides default for specific roles)
+That is enough for deterministic audits; the model tables only matter for agentic work. `provider`
+must be one of `openai`, `anthropic` or `ollama` (the historical `kind` spelling is still accepted).
+
+## Providers
+
+```toml
+# OpenAI or an OpenAI-compatible gateway
+[models.default]
+provider = "openai"
+model = "gpt-4.1-mini"
+api_key_env = "OPENAI_API_KEY"
+
+# Anthropic Messages API
 [models.kommandant]
-kind = "anthropic"
-model = "claude-3-5-sonnet-20241022"
-temperature = 0.3
+provider = "anthropic"
+model = "claude-sonnet-4-5"
+api_key_env = "ANTHROPIC_API_KEY"
 
-[models.specialist]
-kind = "openai"
-model = "gpt-4o-mini"
-
+# Local Ollama; loopback HTTP is allowed
 [models.dokumentation]
-kind = "anthropic"
-model = "claude-3-5-haiku-20241022"
-
-# Per-dwarf routing (highest priority, overrides role defaults)
-[models.dwarfs.Leistungs]
-kind = "openai"
-model = "gpt-4o"             # More capable model for performance analysis
-
-[models.dwarfs.Sicherheits]
-kind = "anthropic"
-model = "claude-3-5-sonnet-20241022"  # Security-focused model
-
-[models.dwarfs.Browser]
-kind = "anthropic"
-model = "claude-3-5-haiku-20241022"   # Fast model for console log analysis
+provider = "ollama"
+model = "llama3.1:8b"
+base_url = "http://127.0.0.1:11434"
 ```
 
-### Provider Resolution Order
+OpenRouter is an OpenAI-compatible endpoint rather than a distinct provider:
 
-1. **Per-dwarf override** (`models.dwarfs.<DwarfId>`) — highest priority
-2. **Role-based routing** (`models.kommandant`, `models.specialist`, `models.dokumentation`)
-3. **Default provider** (`models.default`) — fallback
-
-Example resolution:
-- `LeistungsZwerg` → Check `models.dwarfs.Leistungs` → Check `models.specialist` → Fallback to `models.default`
-- `KommandantZwerg` → Check `models.kommandant` → Fallback to `models.default`
-
-### Supported Providers
-
-#### OpenAI
 ```toml
 [models.default]
-kind = "openai"
-model = "gpt-4o"             # or "gpt-4o-mini", "gpt-4-turbo", etc.
-```
-
-Requires `OPENAI_API_KEY` environment variable.
-
-#### Anthropic
-```toml
-[models.default]
-kind = "anthropic"
-model = "claude-3-5-sonnet-20241022"  # or "claude-3-5-haiku-20241022", "claude-opus-4-5-20251101"
-```
-
-Requires `ANTHROPIC_API_KEY` environment variable.
-
-#### Ollama (Local)
-```toml
-[models.default]
-kind = "ollama"
-model = "llama3.2:3b"
-base_url = "http://localhost:11434"  # Optional: custom Ollama endpoint
-```
-
-Requires running Ollama server locally.
-
-#### OpenAI-Compatible Providers
-
-Any provider with OpenAI-compatible API works via `kind = "openai"` with custom `base_url`:
-
-**OpenRouter** (access 100+ models):
-```toml
-[models.default]
-kind = "openai"
-model = "anthropic/claude-3.5-sonnet"  # or any OpenRouter model
+provider = "openai"
+model = "your-openrouter-model-id"
 base_url = "https://openrouter.ai/api/v1"
-api_key_env = "OPENROUTER_API_KEY"    # Optional: custom env var
+api_key_env = "OPENROUTER_API_KEY"
 ```
 
-**DeepSeek**:
-```toml
-[models.specialist]
-kind = "openai"
-model = "deepseek-chat"
-base_url = "https://api.deepseek.com"
-api_key_env = "DEEPSEEK_API_KEY"
-```
+`base_url` must use `https`, except for loopback hosts (`localhost`, `127.0.0.1`, `::1`), where
+plain `http` is accepted for local model servers. Embedded credentials in a URL are rejected, and
+the endpoint is part of the credential scope, so a key entered for one endpoint is never silently
+reused against another.
 
-**Kimi** (Moonshot AI):
-```toml
-[models.specialist]
-kind = "openai"
-model = "moonshot-v1-8k"
-base_url = "https://api.moonshot.cn/v1"
-api_key_env = "MOONSHOT_API_KEY"
-```
+## Model routing
 
-**vLLM / LiteLLM** (self-hosted):
+Routing resolves at three levels, most specific first:
+
+| Level | Table | Applies to |
+| --- | --- | --- |
+| Per dwarf | `[models.dwarfs.<key>]` | One named member of the brigade |
+| Role | `[models.kommandant]`, `[models.specialist]`, `[models.dokumentation]` | Coordinator, analysts, report writer |
+| Default | `[models.default]` | Everything else |
+
+Dwarf keys are the ASCII forms of the registry names:
+
+`netz`, `sicherheits`, `leistungs`, `struktur`, `zugaenglichkeits`, `such`, `inhalts`,
+`gestaltungs`, `browser`, `dokumentations`, `kommandant`.
+
 ```toml
 [models.default]
-kind = "openai"
-model = "meta-llama/Llama-3.1-8B-Instruct"
-base_url = "http://your-server:8000/v1"
-# No API key needed for self-hosted
+provider = "openai"
+model = "your-default-model-id"
+
+[models.kommandant]
+provider = "anthropic"
+model = "your-coordinator-model-id"
+api_key_env = "ANTHROPIC_API_KEY"
+
+[models.dwarfs.sicherheits]
+provider = "openai"
+model = "your-security-model-id"
 ```
 
-### Die Zwergenbrigade Agent Roles
+`nzw config show` lists the resolved route, its origin table and the credential *source* for every
+dwarf. The Mission Review in the workbench shows the same resolution before a mission starts.
 
-**Specialist Agents** (default: `models.specialist`):
-- `Netz` — Network/HTTP diagnostics
-- `Sicherheits` — Security analysis
-- `Leistungs` — Performance/Core Web Vitals
-- `Struktur` — Semantic HTML structure
-- `Zugaenglichkeits` — Accessibility/WCAG
-- `Such` — SEO metadata
-- `Inhalts` — Content quality
-- `Gestaltungs` — Visual integrity
-- `Browser` — JavaScript runtime/console
+## Credential sources
 
-**Coordination Agent** (default: `models.kommandant`):
-- `Kommandant` — Hypothesis planning and evidence synthesis
+Credentials are resolved in this order:
 
-**Reporting Agent** (default: `models.dokumentation`):
-- `Dokumentations` — Stakeholder report generation
+1. The session credential store (workbench only): keyed by `provider @ endpoint`, entered in Mission
+   Control, masked, cleared when the session ends.
+2. The environment variable named by `api_key_env` in the matching model table.
+3. The provider's conventional variable.
 
-### Usage
+| Provider | Conventional variables, in order |
+| --- | --- |
+| OpenAI-compatible | `NZW_LLM_API_KEY`, `OPENCODE_API_KEY`, `OPENAI_API_KEY` |
+| Anthropic | `ANTHROPIC_API_KEY` |
+| Ollama | none required |
 
-#### Patrol Mode
+`api_key_env` is a variable *name*, never a secret:
+
+```toml
+[models.default]
+provider = "openai"
+model = "your-model-id"
+api_key_env = "TEAM_GATEWAY_KEY"
+```
+
+## Session credentials
+
+The workbench never writes a credential to disk. A key typed into Mission Control goes into a
+session store scoped to the provider and endpoint, is displayed only as asterisks, is excluded from
+`Debug` output, reports, events, history and subprocess environments, and is discarded when the
+process exits.
+
+Consequences worth knowing:
+
+- Starting a new session means entering the key again. That is the intended trade-off.
+- Changing the endpoint invalidates the stored credential, because the scope no longer matches.
+- Clearing a credential affects the next mission; a client that is already running keeps the
+  credential it was constructed with, so cancel the run if you need the key gone immediately.
+
+## Budgets
+
+```toml
+[budget]
+audit_timeout_secs = 60
+http_timeout_secs = 20
+max_redirects = 5
+max_response_bytes = 10485760
+max_concurrency = 4
+```
+
+| Key | Meaning | Bounds |
+| --- | --- | --- |
+| `audit_timeout_secs` | End-to-end deadline for a collection run | 1–3600 |
+| `http_timeout_secs` | Per-request timeout | 1–3600 |
+| `max_redirects` | Redirects followed before giving up | 0–100 |
+| `max_response_bytes` | Body size cap | ≥ 1 |
+| `max_concurrency` | Concurrent requests in batch and crawl | 1–64 |
+
+A budget is a hard bound, not a target. When it is exhausted the run reports that it was truncated
+rather than pretending the observation set is complete.
+
+## Diagnostic instruments
+
+```toml
+[policy]
+require_collectors = ["browser", "axe"]
+```
+
+`require_collectors` names Level 2 collectors (`browser`, `lighthouse`, `axe`) that must have
+produced evidence for the quality gate to pass. An unavailable collector then fails the gate
+explicitly instead of being silently absent.
+
+Level 2 collection is still requested per run: `--browser`, `--axe`, `--lighthouse` for the CLI and
+the corresponding toggles in Mission Control.
+
+## Target policy
+
+```toml
+[policy]
+allow_private = false
+fail_on_severity = "high"
+max_critical = 0
+max_high = 2
+```
+
+`allow_private` (or `--allow-private`) permits loopback and private-network targets for local
+testing. It is off by default because the engine is designed for external auditing. Enabling it does
+not disable the remaining target validation, and it is never enabled implicitly by a configuration
+file you did not intend to use.
+
+## DNS and TLS
+
+```toml
+[dns]
+caa_doh_endpoint = "https://cloudflare-dns.com/dns-query"
+```
+
+DNS CAA records are only queried when an endpoint is configured. Without `[dns]` no external
+resolver is contacted at all — a local-first default, because a CAA lookup discloses the hostname to
+the resolver. The endpoint must use `https` (loopback is exempt for a local resolver) and the lookup
+is bounded by the remaining audit deadline, a 3-second ceiling and a 64 KiB response limit.
+
+The observation is recorded as *direct CAA records observed for the queried hostname*. Absence of a
+record at that name is not a statement about inherited policy up the DNS tree.
+
+## Patrol memory
+
+```toml
+# no configuration keys; pass the directory instead
+```
+
 ```bash
-# Use config file for model routing
-nzw patrol https://example.com --config config.toml
-
-# Portfolio patrol with model routing
-nzw patrol --portfolio portfolio.toml --config config.toml
+nzw patrol https://example.org --memory-dir .nzw/memory
+nzw tui --memory-dir .nzw/memory
 ```
 
-#### Investigation Mode
-```bash
-# Agentic investigation with specialist model routing
-nzw investigate https://example.com \
-  --objective "Diagnose LCP regression" \
-  --config config.toml
-```
+`.nzw/memory` is the shared default. Patrols read application identity, previously discovered pages,
+anomaly history and stale-page metadata from it, then write the new run back. The workbench uses the
+same directory, so a patrol started from the TUI continues the application's history instead of
+starting from nothing. A missing or unwritable memory directory is reported as a warning, never
+treated as an empty first patrol.
 
-### Cost Optimization Strategies
+## Report retention
 
-**Strategy 1: Fast specialists, capable coordinator**
-```toml
-[models.specialist]
-kind = "openai"
-model = "gpt-4o-mini"      # Low-cost for routine diagnostics
+Investigation and patrol reports keep the evidence snapshot they were derived from, so
+`nzw tui --report <file>` can re-query the same observations offline. When a report deliberately
+omits the snapshot, the workbench shows the evidence as unavailable rather than as an empty capture.
 
-[models.kommandant]
-kind = "anthropic"
-model = "claude-3-5-sonnet-20241022"  # Higher capability for synthesis
-```
+Raw page text is bounded by `max_response_bytes` and only retained as part of that snapshot; delete
+stored reports when the audited content is sensitive.
 
-**Strategy 2: Per-domain specialization**
-```toml
-[models.dwarfs.Leistungs]
-kind = "openai"
-model = "gpt-4o"           # GPT-4o excels at numerical analysis
+## Interaction policies
 
-[models.dwarfs.Sicherheits]
-kind = "anthropic"
-model = "claude-3-5-sonnet-20241022"  # Claude strong on security
+Behavioural probing is passive by default. The browser collectors never click controls unless the
+restricted behavioural probe is enabled for that collection, and those probes are limited to native
+disclosure controls outside forms and links. A probe records an observation window, the requests and
+runtime errors observed inside it, and whether local state restoration succeeded. Those are
+associations, not causal attributions, and the report says so.
 
-[models.dwarfs.Browser]
-kind = "openai"
-model = "gpt-4o-mini"      # Simple console log parsing
-```
+## Environment variables
 
-**Strategy 3: Local development**
-```toml
-[models.default]
-kind = "ollama"
-model = "llama3.2:3b"      # Free local inference
+These are the variables the implementation actually reads.
 
-[models.kommandant]
-kind = "anthropic"
-model = "claude-3-5-haiku-20241022"  # Paid only for complex coordination
-```
+| Variable | Used for |
+| --- | --- |
+| `NZW_CONFIG` | Configuration file path, part of discovery |
+| `NZW_LLM_API_KEY` | Credential for OpenAI-compatible providers |
+| `NZW_LLM_MODEL` | Model override for the default provider |
+| `NZW_LLM_BASE_URL` | Endpoint override for the default provider |
+| `OPENCODE_API_KEY`, `OPENCODE_BASE_URL`, `OPENCODE_MODEL`, `OPENCODE_SESSION_ID` | OpenCode-compatible fallbacks |
+| `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_API_KEY` | Provider credentials |
+| `NZW_CHROMIUM_BIN` | Explicit Chromium/Chrome binary for the CDP harness |
+| `NZW_AXE_BIN` | Explicit `axe` binary |
+| `NZW_BROWSER_POLICY` | Browser policy override |
+| `NZW_ALLOW_UNSAFE_BROWSER_SANDBOX` | Disables the browser sandbox; CI containers only |
+| `NZW_LOAD_TIMEOUT_MS`, `NZW_TIMEOUT_MS` | Browser observation timeout overrides |
+| `NO_COLOR`, `TERM` | Terminal colour and glyph detection |
 
-### Environment Variables
+## Troubleshooting
 
-Required authentication:
-- `OPENAI_API_KEY` — For OpenAI providers
-- `ANTHROPIC_API_KEY` — For Anthropic providers
+**`invalid configuration at models.default.base_url: plain http is only permitted for loopback
+endpoints`** — remote providers must use `https`. Only `localhost` and loopback IPs may use plain
+`http`.
 
-Optional Ollama configuration:
-- `OLLAMA_ENDPOINT` — Custom Ollama server URL (default: `http://localhost:11434`)
+**`unknown dwarf key`** — check the key list above; `models.dwarfs.kommandantzwerg` is not a key,
+`models.dwarfs.kommandant` is.
 
-### Limitations & Known Issues
+**`agentic investigation needs a model configured for KommandantZwerg`** — the coordinator has no
+resolvable route. Enter a model in Mission Control, or add `[models.kommandant]` /
+`[models.default]` to a configuration file and pass `--config`.
 
-**Current Limitations:**
-- Specialist re-consultation during investigation currently uses Kommandant's model (P1: should resolve per-specialist)
-- Temperature parameter applies globally, not per-turn
+**Connection test reports `authentication rejected`** — the endpoint answered but refused the
+credential. Check the variable named by `api_key_env`, or re-enter the session credential.
 
-**Validation:**
-- Invalid `kind` values fall back to default provider
-- Missing models fail gracefully with error message
-- Unrecognized dwarf IDs in `models.dwarfs.*` are ignored
+**Connection test reports `model unavailable`** — the credential was accepted but the model name is
+not served at that endpoint. Use model discovery or enter the provider's exact identifier.
 
-### Examples
+**Browser collectors report `unsupported`** — Node.js 22 or newer is required for the built-in
+`WebSocket` client. Run `nzw doctor`.
 
-**Minimal configuration** (single provider):
-```toml
-[models.default]
-kind = "openai"
-model = "gpt-4o-mini"
-```
-
-**Production configuration** (hybrid providers):
-```toml
-[models.default]
-kind = "openai"
-model = "gpt-4o-mini"
-
-[models.kommandant]
-kind = "anthropic"
-model = "claude-3-5-sonnet-20241022"
-
-[models.dwarfs.Leistungs]
-kind = "openai"
-model = "gpt-4o"
-
-[models.dwarfs.Sicherheits]
-kind = "anthropic"
-model = "claude-3-5-sonnet-20241022"
-```
-
-**Local development** (minimize costs):
-```toml
-[models.default]
-kind = "ollama"
-model = "llama3.2:3b"
-```
-
-**OpenRouter** (access many providers via one API):
-```toml
-[models.default]
-kind = "openai"
-model = "anthropic/claude-3.5-haiku"  # Cheap default
-base_url = "https://openrouter.ai/api/v1"
-
-[models.kommandant]
-kind = "openai"
-model = "anthropic/claude-3.5-sonnet"  # More capable
-base_url = "https://openrouter.ai/api/v1"
-```
-
-**DeepSeek** (cost-effective Chinese provider):
-```toml
-[models.default]
-kind = "openai"
-model = "deepseek-chat"
-base_url = "https://api.deepseek.com"
-```
-
-## Patrol Configuration
-
-See `examples/patrol-budget.toml` for patrol-specific configuration (sampling, budgets, freshness TTL).
-
-## Policy Configuration
-
-See `examples/policy-gates.toml` for failure thresholds and severity-based gates.
+**CAA outcome `not attempted`** — no `[dns] caa_doh_endpoint` is configured. This is the default and
+not an error.

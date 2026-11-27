@@ -1,110 +1,332 @@
 # NetzZwergenWacht
 
-[![Rust](https://img.shields.io/badge/rust-stable-orange.svg)](https://www.rust-lang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+**Kleine Zwerge. Große Sorgfalt.**
 
-> **Open-source, agentic web quality investigation system.** A brigade of specialised diagnostic agents collaboratively investigates, measures and explains the reliability, security, accessibility, performance and overall quality of web applications.
->
-> **Die Zwergenbrigade** — *Kleine Zwerge. Große Sorgfalt.* (*Small dwarfs. Great diligence.*)
+NetzZwergenWacht is an evidence-driven external web quality and reliability auditing engine with
+optional AI-assisted analysis. It collects typed observations about a web application, evaluates
+them with deterministic analysers, and lets an operator — or, optionally, a language model
+coordinator — investigate the results without ever inventing a measurement.
 
-NetzZwergenWacht (NZW) is being redesigned and rewritten in Rust on `develop` / `rewrite/rust`. The original Python prototype is preserved on `main` and in [`legacy/`](legacy/README.md) as a frozen historical reference.
+The brigade consists of eleven dwarfs (`Die Zwergenbrigade`). Each one owns one competency, and
+every finding they publish points back to the evidence it was derived from.
 
-## Current Status (`Milestone A & B In Progress`)
+## What is NetzZwergenWacht?
 
-- **Implemented**:
-  - Validated `AuditTarget` with SSRF/IP guardrails (`TargetPolicy::PublicOnly` / `AllowPrivate`) and deserialisation validation.
-  - Bounded HTTP + `rustls` TLS collector (`reqwest`, `.no_proxy()`, DNS pinning, redirect hop validation, end-to-end `audit_timeout`, streaming `max_response_bytes`, `x509-parser` certificate metadata).
-  - Central **Die Zwergenbrigade** registry (`src/brigade.rs`) and 3-level evidence capability model (`Source`, `Rendered`, `Behavioural`).
-  - Shared single-parse HTML5 `DocumentObservations` (`analysis::document`) with truncated-body guardrails.
-  - Nine deterministic analysers:
-    - **NetzZwerg** (`analysis::network`): HTTP status & redirect chain reliability.
-    - **SicherheitsZwerg** (`analysis::security`): HTTPS, TLS certificate expiry, HSTS (`max-age > 0`), CSP, `X-Content-Type-Options`, `X-Frame-Options` / `frame-ancestors`, `Referrer-Policy`.
-    - **LeistungsZwerg** (`analysis::performance`): HTTP exchange duration, payload size, compression, cache headers, and Level 2 Core Web Vitals via `--lighthouse`.
-    - **StrukturZwerg** (`analysis::semantics`): duplicate IDs, heading hierarchy, landmarks, native interactive semantics.
-    - **ZugänglichkeitsZwerg** (`analysis::accessibility`): source-level `<html lang>`, `img[alt]`, form labels, broken ARIA refs, accessible names, and Level 2 `axe-core` evaluation (explicitly marks Level 3 checks unavailable).
-    - **SuchZwerg** (`analysis::seo`): `<title>`, meta description, canonical URL, `robots` / `X-Robots-Tag` `noindex`.
-    - **InhaltsZwerg** (`analysis::content`): word count, text-to-HTML ratio, reading ease.
-    - **BrowserZwerg** (`analysis::browser`): Level 2 console errors and failed subresource requests.
-    - **GestaltungsZwerg** (`analysis::visual`): Level 2 viewport horizontal overflow and broken rendered images.
-  - Bounded Level 2 subprocess adapters (`src/adapters/`: Lighthouse `--lighthouse`, headless Chromium CDP `--browser`, `axe-core` `--axe`).
-  - **Agentic Investigation (`nzw investigate`, `nzw verify`)**: `rig-core` (`0.42.0`) `PortableTool` catalogue (`inspect_browser_runtime`, `inspect_rendered_accessibility`, `inspect_page_performance`, `inspect_document_structure`, `inspect_security_posture`, `crawl_and_cluster_site`), multi-turn `KommandantZwerg` hypothesis loop, `InvestigationScope` origin enforcement, `ExecutiveBrief`, `ReleaseReadinessAssessment`, `RemediationTask`s, and `--audience pm|po|cto|technical` Markdown/JSON reports.
-  - **Zwergenprüfstand** (`fixtures/zwergenpruefstand/`, `tests/zwergenpruefstand_eval.rs`): Controlled benchmark fixtures and comparative Mode A vs Mode C evaluation suite.
-  - **Zwergenleitstand TUI (`nzw tui`, `--tui`)**: Ratatui + Crossterm interactive investigation workbench with nine keyboard-driven views (`1:Overview`, `2:Brigade`, `3:Targets`, `4:Findings`, `5:Evidence`, `6:Investigation`, `7:Topology`, `8:History`, `9:System`), live `DiagnosticEvent` streaming over bounded channels, offline Evidence Query Engine exploration, terminal escape/BiDi sanitisation, and `StandardDark` / `HighContrast` / `Monochrome` (`--monochrome`, `--ascii`) themes.
-  - **Sensory expansion & evidence integrity (Operation Aufrüstung IV)**: element-level inventories captured inside the existing Chromium session — interactive elements, application state, bounded interaction probes, visual geometry, accessibility nodes, cookies and storage, third-party origins, security posture and challenge evidence, performance attribution, media and fonts, indexability, structured data, responsive comparison, link graph, visual artefacts, service worker lifecycle, and TLS/CAA diagnostics — each queryable offline through 21 typed Evidence Query Engine tools with explicit `EvidenceQueryStatus`. Measurement semantics follow [ADR 0016](docs/adr/0016-measurement-honesty-invariant.md): absent observations stay absent instead of becoming `0`, `false`, or an empty inventory.
-  - **DokumentationsZwerg** CLI (`nzw check`, `nzw batch`, `nzw diff`, `nzw validate`, `nzw report`, `nzw tui`) with plain-text, Markdown, versioned JSON output, and interactive TUI mode (`--tui`), TOML config/policy gates (`--config`, `--fail-on`), JSONL history (`--history`), `tracing` diagnostics (`RUST_LOG`), and exit codes (`0` clean, `1` findings/partial, `2` input/collection failure).
-  - Production hardening: chaos/cancellation integration tests (`tests/chaos_and_cancellation.rs`), `cargo-audit` CI check, LTO-optimised release profile, and automated tag release packaging (`.github/workflows/release.yml`).
+NetzZwergenWacht answers one question honestly: *what can we actually observe about this web
+application from the outside, and what does that observation justify us saying?*
 
-See [docs/roadmap.md](docs/roadmap.md) for the full roadmap.
+The deterministic core runs with no API key and no network dependency beyond the target itself.
+It collects:
 
-### Known limitations
+- HTTP response metadata, headers, redirect chains and bounded body text.
+- TLS certificate metadata, including DNS CAA records when a resolver is explicitly configured.
+- Headless Chromium observations: rendered DOM segmentation, resource timings, browser timeline,
+  console errors, accessibility tree, geometry, cookies, storage, security posture, performance
+  entries, structured data, responsive comparison, service workers and visual artefacts.
+- Optional `axe-core` and Lighthouse results when those instruments are installed.
 
-- No capability has been empirically validated against real applications yet; validation, comparison, and effectiveness studies are a separate operation.
-- Deferred capabilities (multi-scenario consent, Event Timing/INP, CSS token inventory, media binary inspection, PDF intelligence, multi-engine compatibility, field telemetry, historical comparison queries, full certificate-chain verification) are listed explicitly in the roadmap and must not be treated as available.
-- Interactive probes are restricted behavioural probes: they observe real application behaviour without network isolation, and are labelled as such in the captured evidence.
+The default verdict is conservative on purpose. When a collector is skipped, failed or could not
+observe a field, the report says so. A missing measurement is never rendered as `0`, `false` or an
+empty list.
 
-## Usage
+## What can it investigate?
+
+| Area | Deterministic | Requires a browser | Requires a language model |
+| --- | --- | --- | --- |
+| HTTP status, headers, redirects, body text | Yes | No | No |
+| TLS certificate metadata | Yes | No | No |
+| DNS CAA (opt-in resolver) | Yes | No | No |
+| Rendered DOM content and text fingerprints | No | Yes | No |
+| Request timeline, chains and failed dependencies | No | Yes | No |
+| Interactive element inventory and application state | No | Yes | No |
+| Accessibility tree and geometry | No | Yes | No |
+| Cookies, storage, third-party origins, security posture | No | Yes | No |
+| Core Web Vitals observations (LCP, CLS, long tasks) | No | Yes | No |
+| Structured data, indexability signals, link graph | No | Yes | No |
+| Responsive comparison across viewports | No | Yes | No |
+| `axe-core` accessibility rule results | No | No (`axe` binary) | No |
+| Lighthouse Web Vitals report | No | No (`lighthouse` binary) | No |
+| Hypothesis-driven investigation and specialist consultation | No | No | Yes |
+| Autonomous patrol with written executive summary | No | Optional | Optional |
+
+Measured zero, measured `false` and genuinely unobservable evidence are different states, and the
+reports, queries and the workbench keep them different.
+
+## Quick start
 
 ```bash
-# Run deterministic audit (text output)
-cargo run --locked -- check https://example.org
-
-# Run deterministic audit (versioned JSON output)
-cargo run --locked -- check https://example.org --format json
-
-# Validate target URL and SSRF policy without fetching
-cargo run --locked -- validate https://example.org
-
-# Launch Zwergenleitstand interactive TUI workbench
-cargo run --locked -- tui
-cargo run --locked -- tui https://example.org --level2
-cargo run --locked -- tui --report report.json
-cargo run --locked -- tui --history history.jsonl
-cargo run --locked -- check https://example.org --tui
+git clone https://github.com/guttenbergovitz/netzzwergenwacht.git
+cd netzzwergenwacht
+task setup      # fetch and build the crate, print toolchain versions
+task doctor     # report which instruments and configuration are available
+task tui        # launch the Zwergenleitstand workbench
 ```
 
-## Quality Gates
+The same flow without Task:
 
 ```bash
-task check
-# or:
+git clone https://github.com/guttenbergovitz/netzzwergenwacht.git
+cd netzzwergenwacht
+cargo build --locked
+cargo run --locked -- doctor
+cargo run --locked -- tui
+```
+
+A deterministic audit needs nothing else:
+
+```bash
+cargo run --locked -- check https://example.org
+```
+
+## Installation
+
+`cargo install --path . --locked` installs the `nzw` binary into `~/.cargo/bin`
+(`task install` runs exactly that). `task uninstall` removes it again.
+
+Requirements:
+
+- Rust 1.88 or newer (the crate uses edition 2024).
+- Node.js 22 or newer **only** for browser-backed collectors. Node 22 provides the built-in
+  `WebSocket` and `fetch` used by the Chrome DevTools Protocol harness, so no npm packages are
+  required.
+- Chromium, Google Chrome or a compatible binary for browser-backed collectors. Set
+  `NZW_CHROMIUM_BIN` if it is not discoverable on `PATH`.
+- Optional: `axe` for `axe-core` checks and `lighthouse` for Lighthouse metrics.
+
+`nzw doctor` reports each of these as `ready`, `optional`, `missing` or `unsupported`, with a hint
+for anything that blocks the modes you intend to use.
+
+## Diagnostic instruments
+
+| Instrument | Used by | Availability |
+| --- | --- | --- |
+| Built-in HTTP/TLS collector | `check`, `diff`, `verify`, `patrol`, `investigate`, `tui` | Always |
+| DNS-over-HTTPS CAA lookup | `check`, `tui` (when `[dns]` is configured) | Opt-in |
+| Chromium via CDP harness | `--browser` collectors, browser evidence queries | Needs Node 22+ and Chromium |
+| `axe-core` | `--axe` | Needs the `axe` binary |
+| Lighthouse | `--lighthouse` | Needs the `lighthouse` binary |
+| Language model provider | `investigate --ai`, `patrol`, agentic TUI missions | Needs a configured provider |
+
+## Starting Zwergenleitstand
+
+```bash
+nzw tui
+nzw tui https://example.org --mode investigate --config nzw.toml
+nzw tui --report saved-audit.json
+```
+
+The launcher (`Mission Control`) collects the target, the run mode, the provider and model, a
+session-only credential, the Level 2 instruments, and the target policy. `r` opens the Mission
+Review, which shows the resolved routing, budget and configuration source before anything runs.
+See `docs/user-guide/zwergenleitstand.md` for the full keymap.
+
+## Deterministic audits
+
+```bash
+nzw check https://example.org --browser --axe --lighthouse
+nzw check https://example.org --format markdown --audience cto
+nzw batch targets.txt --max-concurrency 4 --history audit-history.jsonl
+nzw check https://example.org --fail-on high
+```
+
+`check` returns a non-zero exit code when the quality gate fails, which makes it usable directly in
+CI. `batch` reads one URL per line and ignores `#` comments.
+
+## Agentic investigations
+
+```bash
+export NZW_LLM_API_KEY=...        # or OPENAI_API_KEY / ANTHROPIC_API_KEY
+nzw investigate https://example.org --objective "Assess release readiness"
+nzw investigate https://example.org --format markdown --audience po
+```
+
+`KommandantZwerg` proposes hypotheses, calls the offline evidence query tools, and must cite the
+observation it relied on. A hypothesis that requests evidence without citing any is recorded as
+`inconclusive` rather than accepted. If no model is configured for the coordinator, the run stops
+with an explicit message instead of substituting another provider.
+
+## Autonomous patrols
+
+```bash
+nzw patrol https://example.org --max-pages 10
+nzw patrol --targets applications.toml --browser
+```
+
+Patrols keep persistent application memory in `.nzw/memory` (shared with the workbench), so later
+runs compare against earlier observations, reuse unchanged pages and report anomalies against
+history.
+
+## Provider and model configuration
+
+Configuration is one TOML model shared by the CLI and the workbench:
+
+```toml
+[models.default]
+provider = "openai"          # openai | anthropic | ollama
+model = "your-model-id"
+api_key_env = "OPENAI_API_KEY"
+```
+
+```toml
+[models.kommandant]
+provider = "anthropic"
+model = "your-coordinator-model-id"
+
+[models.specialist]
+provider = "openai"
+model = "your-specialist-model-id"
+
+[models.dwarfs.sicherheits]
+provider = "openai"
+model = "your-security-model-id"
+```
+
+Resolution order is per-dwarf table, then role table, then `models.default`. Inspect the result
+without starting a run:
+
+```bash
+nzw config show
+nzw config show --config examples/config-hybrid-routing.toml --format json
+```
+
+Credentials are never written to disk by NetzZwergenWacht. The workbench holds a entered credential
+in a session-scoped store keyed by provider and endpoint, masks it in the interface, excludes it
+from reports, events and subprocess environments, and discards it when the session ends. The CLI
+reads credentials from the environment variables named in configuration. Full details are in
+[CONFIG.md](CONFIG.md).
+
+## Reports and historical comparison
+
+```bash
+nzw check https://example.org --format json > audit.json
+nzw check https://example.org --history audit-history.jsonl
+nzw diff audit-baseline.json audit-current.json
+nzw verify https://example.org --baseline audit-history.jsonl
+nzw report audit.json --format markdown --audience pm
+```
+
+Investigation and patrol reports retain the evidence snapshot they were derived from, so the
+workbench can re-query the same observations offline (`nzw tui --report investigation.json`) without
+contacting the target again. When a report deliberately omits the snapshot, the interface says the
+evidence is unavailable instead of showing an empty capture.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Collect["Collection"]
+        HTTP["HTTP / TLS collector"]
+        BROWSER["Chromium CDP harness"]
+        TOOLS["axe-core / Lighthouse"]
+    end
+
+    subgraph Evidence["Typed evidence"]
+        SNAP["EvidenceSnapshot"]
+        QUERY["Offline evidence query engine"]
+    end
+
+    subgraph Reason["Reasoning"]
+        ANALYSERS["Deterministic analysers (Zwerge)"]
+        AGENTS["KommandantZwerg + specialists"]
+    end
+
+    subgraph Output["Output"]
+        FINDINGS["Findings and checks"]
+        REPORT["Audit / Investigation / Patrol report"]
+        MEMORY["Patrol memory and history"]
+    end
+
+    subgraph Present["Presentation"]
+        TUI["Zwergenleitstand (Ratatui)"]
+        CLI["nzw CLI and stored reports"]
+    end
+
+    HTTP --> SNAP
+    BROWSER --> SNAP
+    TOOLS --> SNAP
+    SNAP --> QUERY
+    SNAP --> ANALYSERS
+    SNAP --> AGENTS
+    QUERY --> AGENTS
+    ANALYSERS --> FINDINGS
+    AGENTS --> FINDINGS
+    FINDINGS --> REPORT
+    REPORT --> MEMORY
+    REPORT --> TUI
+    REPORT --> CLI
+    SNAP --> TUI
+```
+
+The evidence snapshot is authoritative. Analysis, investigation, offline exploration and the
+workbench all read from it; nothing re-derives a measurement from a different source.
+
+## Security and privacy
+
+- Target validation runs before any request. Private and loopback targets are rejected unless
+  `--allow-private` (or `[policy] allow_private = true`) is set deliberately.
+- A configured language model provider receives diagnostic content: page text excerpts, findings,
+  headers, URLs and citations that the coordinator is asked to reason about. Do not configure an
+  external provider for targets whose content may not leave your network.
+- Credentials are session-scoped in the workbench, read from the environment in the CLI, masked in
+  the interface, and never serialised into reports, history, memory or events.
+- Browser, Lighthouse and `axe` subprocesses run with a restricted environment allow-list, so a
+  credential present in the parent shell is not inherited by a child process.
+- HTML, page text, selector names and URLs are treated as untrusted input: control characters and
+  terminal escape sequences are stripped before anything reaches the terminal.
+- The browser sandbox is enabled by default. `NZW_ALLOW_UNSAFE_BROWSER_SANDBOX` exists for
+  containerised CI only and must not be set in normal operation.
+
+## Known limitations
+
+- Automated accessibility checks are not proof of WCAG or European Accessibility Act compliance.
+  They detect a bounded set of machine-detectable conditions.
+- Core Web Vitals observations are laboratory observations from a single instrumented page load, not
+  field data. There is no CrUX or RUM integration.
+- Behavioural interaction probes are restricted to passive or narrowly scoped disclosure controls
+  and are not full user-journey simulations; requests observed during a probe window are
+  associations, not proof of causation.
+- The DNS CAA lookup requires an explicitly configured DoH endpoint, reports direct records for the
+  queried hostname only, and does not model full CAA inheritance.
+- No empirical validation of detection quality has been published. The reports describe what was
+  observed; they do not claim measured accuracy against a real-world corpus.
+- Not yet implemented: initiator stack frames, INP and full Event Timing, long animation frames,
+  main-thread breakdowns, media binary inspection, PDF reports, multi-engine browser coverage and
+  historical query surfaces beyond the patrol catalogue.
+
+## Development
+
+```bash
+task setup        # fetch and build
+task check        # fmt:check, clippy -D warnings, rustdoc -D warnings, tests
+task check:all    # the above plus a release build
+task test:browser # ignored live Chromium suites (needs Chromium and Node 22+)
+task audit        # cargo audit
+```
+
+`task check` is an engineering gate; `nzw check <url>` is a diagnostic audit. The required gates are:
+
+```bash
 cargo fmt --all -- --check
 cargo clippy --all-targets --locked -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 cargo test --all-targets --locked
+cargo build --release --locked
 ```
+
+Architectural decisions live in `docs/adr/`. Temporary design notes belong in `.specs/`, which is
+not committed.
 
 ## Documentation
 
-- **[Configuration Guide](CONFIG.md)** — Model routing, provider setup, cost optimization strategies
-- [ADR 0001: Rewrite NetzZwergenWacht in Rust](docs/adr/0001-rewrite-netzzwergenwacht-in-rust.md)
-- [ADR 0002: Zwergenbrigade Domains, Shared Document Observations, and Evidence Levels](docs/adr/0002-zwergenbrigade-domains-shared-document-and-evidence-levels.md)
-- [ADR 0010: Terminal User Interface and Presentation Architecture](docs/adr/0010-terminal-user-interface-and-presentation-architecture.md)
-- [ADR 0011: Diagnostic Event Model and Event Transport](docs/adr/0011-diagnostic-event-model-and-event-transport.md)
-- [ADR 0012: TUI Application State and Asynchronous Execution](docs/adr/0012-tui-application-state-and-asynchronous-execution.md)
-- [ADR 0013: Investigation Workbench Information Architecture](docs/adr/0013-investigation-workbench-information-architecture.md)
-- [ADR 0014: Evidence Presentation and Epistemic Integrity](docs/adr/0014-evidence-presentation-and-epistemic-integrity.md)
-- [ADR 0015: TUI Visual Language and Terminal Accessibility](docs/adr/0015-tui-visual-language-and-terminal-accessibility.md)
-- [Die Zwergenbrigade](docs/architecture/zwergenbrigade.md)
-- [Shared Document Analysis](docs/architecture/document-analysis.md)
-- [Engineering & Git Conventions](docs/conventions.md)
-- [Agent Guidelines](AGENTS.md)
+| Document | Purpose |
+| --- | --- |
+| [CONFIG.md](CONFIG.md) | Configuration discovery, schema, routing, credentials and troubleshooting |
+| `docs/user-guide/zwergenleitstand.md` | Workbench views, launcher and keymap |
+| `docs/architecture/collection-engine.md` | Collector design, bounds and evidence semantics |
+| `docs/research/collector-capability-matrix.md` | What each collector observes and with what limits |
+| `docs/roadmap.md` | Honest status per observation family |
+| `docs/adr/` | Architecture decision records |
 
-## License
+## Licence
 
-MIT — see [LICENSE](LICENSE).
-
-### Compare rendered text across saved audits
-
-Run two browser-enabled checks against the same page and save each result.
-`diff` accepts JSON reports or the latest entry from each JSONL history file.
-
-```sh
-nzw check https://example.org/ --browser --history baseline.jsonl
-nzw check https://example.org/ --browser --history current.jsonl
-nzw diff baseline.jsonl current.jsonl
-nzw diff baseline.jsonl current.jsonl --format json
-```
-
-The comparison reports changed, unchanged and incomparable baseline blocks.
-Older reports without rendered comparison evidence give an unavailable result.
-The diff reads the saved files locally.
+See `LICENSE` in the repository root.
