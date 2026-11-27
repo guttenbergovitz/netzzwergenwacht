@@ -452,3 +452,95 @@ async fn live_cli_diffs_saved_rendered_fingerprints_without_acquisition() {
     );
     std::fs::remove_dir_all(files).unwrap();
 }
+
+#[ignore = "requires local Chromium/Chrome and Node.js with ws"]
+#[tokio::test]
+async fn live_crawl_with_browser_sample_detects_runtime_errors_and_shared_dependency_failure() {
+    use netzzwergenwacht::analysis::assessment::{DomainVerdict, assess_crawl_summary};
+    use netzzwergenwacht::discovery::{CrawlBudget, crawl_and_cluster, sample_browser_on_crawl};
+    use netzzwergenwacht::domain::ExecutionBudget;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 2048];
+                let n = socket.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("/");
+                let (status, ct, body) = match path {
+                    "/" => (
+                        "200 OK",
+                        "text/html; charset=utf-8",
+                        "<!doctype html><html lang='en'><head><title>Home</title></head><body><main><h1>Home</h1><a href='/broken'>Broken</a><script src='/assets/broken.js'></script></main></body></html>",
+                    ),
+                    "/broken" => (
+                        "200 OK",
+                        "text/html; charset=utf-8",
+                        "<!doctype html><html lang='en'><head><title>Broken</title></head><body><main><h1>Broken</h1><script src='/assets/broken.js'></script><script>throw new Error('boom-runtime');</script></main></body></html>",
+                    ),
+                    "/assets/broken.js" => (
+                        "500 Internal Server Error",
+                        "application/javascript",
+                        "/* broken */",
+                    ),
+                    _ => ("404 Not Found", "text/plain", "not found"),
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: {ct}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+    let base = format!("http://{addr}");
+
+    let seed = AuditTarget::parse(&format!("{base}/"), TargetPolicy::AllowPrivate).unwrap();
+    let crawl_budget = CrawlBudget {
+        max_pages: 5,
+        max_depth: 2,
+        max_duration: Duration::from_secs(30),
+    };
+    let exec_budget = ExecutionBudget {
+        audit_timeout: Duration::from_secs(45),
+        ..ExecutionBudget::default()
+    };
+
+    let mut summary =
+        crawl_and_cluster(seed, crawl_budget, exec_budget, TargetPolicy::AllowPrivate).await;
+    sample_browser_on_crawl(&mut summary, 2, exec_budget, TargetPolicy::AllowPrivate).await;
+
+    assert!(
+        summary
+            .systemic_issues
+            .iter()
+            .any(|s| s.rule_id.0 == "netz.dependency.shared_resource_failure"),
+        "expected shared dependency failure systemic issue, got: {:?}",
+        summary.systemic_issues
+    );
+
+    let all_rules: Vec<&str> = summary
+        .page_diagnostics
+        .iter()
+        .flat_map(|p| p.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+    assert!(
+        all_rules.iter().any(|r| r.starts_with("browser.")),
+        "expected browser runtime findings from sampled pages, got: {all_rules:?}"
+    );
+
+    let assessment = assess_crawl_summary(&summary);
+    assert_eq!(assessment.overall_verdict, DomainVerdict::Fail);
+    server.abort();
+}

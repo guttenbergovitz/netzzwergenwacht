@@ -639,6 +639,180 @@ pub(super) async fn crawl_concurrently(
     }
 }
 
+/// Runs headless browser collection on up to `sample_limit` investigated pages
+/// from `summary`, prioritising distinct [`PageType`] templates, and merges
+/// runtime and functional findings into `summary`.
+pub async fn sample_browser_on_crawl(
+    summary: &mut CrawlSummary,
+    sample_limit: usize,
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+) {
+    if sample_limit == 0 {
+        return;
+    }
+
+    let selected = select_browser_sample_pages(&summary.pages, sample_limit);
+    let started = Instant::now();
+    let mut browser_reports: Vec<(AuditTarget, PageType, AuditReport)> = Vec::new();
+
+    for page in selected {
+        let remaining = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        let outcome = crate::adapters::browser::run_browser_with_policy(
+            &page.url,
+            remaining.min(std::time::Duration::from_secs(25)),
+            policy,
+        )
+        .await;
+        let snapshot = crate::domain::EvidenceSnapshot {
+            target: page.url.clone(),
+            captured_at_unix_secs: 0,
+            http: CollectorOutcome::Skipped {
+                reason: "already acquired during crawl".to_owned(),
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "not collected in browser sample pass".to_owned(),
+            },
+            browser: outcome,
+            lighthouse: CollectorOutcome::Skipped {
+                reason: "not collected in browser sample pass".to_owned(),
+            },
+            axe: CollectorOutcome::Skipped {
+                reason: "not collected in browser sample pass".to_owned(),
+            },
+        };
+        let browser_res = crate::analysis::browser::analyse(&snapshot);
+        let func_res = crate::analysis::journeys::analyse_functional_behaviour(&snapshot);
+        let merged = merge_browser_analyser_results(&page.url, browser_res, func_res);
+        merge_into_crawl_summary(summary, &page.url, &merged);
+        browser_reports.push((
+            page.url.clone(),
+            page.page_type,
+            AuditReport {
+                schema_version: crate::analysis::REPORT_SCHEMA_VERSION.to_owned(),
+                target: page.url,
+                captured_at_unix_secs: 0,
+                http: snapshot.http,
+                level2_collectors: Vec::new(),
+                analysers: vec![merged],
+                summary: crate::analysis::AuditSummary::default(),
+                rendered_history: None,
+                ai_synthesis: None,
+            },
+        ));
+    }
+
+    if browser_reports.len() >= 2 {
+        summary
+            .systemic_issues
+            .extend(cluster_systemic_issues(&browser_reports));
+    }
+}
+
+fn select_browser_sample_pages(pages: &[DiscoveredPage], limit: usize) -> Vec<DiscoveredPage> {
+    let eligible: Vec<&DiscoveredPage> = pages
+        .iter()
+        .filter(|p| {
+            matches!(
+                p.status,
+                PageCrawlStatus::Investigated | PageCrawlStatus::PartiallyInvestigated
+            )
+        })
+        .collect();
+    let mut selected = Vec::new();
+    let mut seen_types = HashSet::new();
+    for page in &eligible {
+        if selected.len() >= limit {
+            break;
+        }
+        if seen_types.insert(page.page_type) {
+            selected.push((*page).clone());
+        }
+    }
+    for page in eligible {
+        if selected.len() >= limit {
+            break;
+        }
+        if !selected.iter().any(|s| s.url == page.url) {
+            selected.push(page.clone());
+        }
+    }
+    selected
+}
+
+fn merge_browser_analyser_results(
+    _url: &AuditTarget,
+    mut a: crate::domain::AnalyserResult,
+    b: crate::domain::AnalyserResult,
+) -> crate::domain::AnalyserResult {
+    a.findings.extend(b.findings);
+    a.checks.extend(b.checks);
+    a
+}
+
+fn merge_into_crawl_summary(
+    summary: &mut CrawlSummary,
+    url: &AuditTarget,
+    res: &crate::domain::AnalyserResult,
+) {
+    let (mut passed, mut failed, mut skipped, mut unavailable) = (0usize, 0usize, 0usize, 0usize);
+    for check in &res.checks {
+        match check {
+            crate::domain::CheckStatus::Passed { .. } => passed += 1,
+            crate::domain::CheckStatus::Failed { .. } => failed += 1,
+            crate::domain::CheckStatus::Skipped { .. } => skipped += 1,
+            crate::domain::CheckStatus::Unavailable { .. } => unavailable += 1,
+        }
+    }
+    if let Some(diag) = summary
+        .page_diagnostics
+        .iter_mut()
+        .find(|d| d.url == url.as_str())
+    {
+        diag.checks_passed = diag.checks_passed.saturating_add(passed);
+        diag.checks_failed = diag.checks_failed.saturating_add(failed);
+        diag.checks_skipped = diag.checks_skipped.saturating_add(skipped);
+        diag.checks_unavailable = diag.checks_unavailable.saturating_add(unavailable);
+        for f in &res.findings {
+            diag.findings.push(super::PageFinding {
+                rule_id: f.rule_id.clone(),
+                dwarf_id: res.dwarf_id,
+                severity: f.severity,
+                confidence: f.confidence,
+                title: f.title.clone(),
+                summary: f.summary.clone(),
+                remediation: f.remediation.clone(),
+                evidence_refs: f.evidence_refs.clone(),
+            });
+        }
+    }
+    if let Some(total) = summary
+        .analysis_totals
+        .iter_mut()
+        .find(|t| t.dwarf_id == res.dwarf_id)
+    {
+        total.checks_evaluated = total.checks_evaluated.saturating_add(passed + failed);
+        total.checks_passed = total.checks_passed.saturating_add(passed);
+        total.checks_failed = total.checks_failed.saturating_add(failed);
+        total.checks_skipped = total.checks_skipped.saturating_add(skipped);
+        total.checks_unavailable = total.checks_unavailable.saturating_add(unavailable);
+        total.findings_count = total.findings_count.saturating_add(res.findings.len());
+    } else {
+        summary.analysis_totals.push(super::DwarfAnalysisTotal {
+            dwarf_id: res.dwarf_id,
+            checks_evaluated: passed + failed,
+            checks_passed: passed,
+            checks_failed: failed,
+            checks_skipped: skipped,
+            checks_unavailable: unavailable,
+            findings_count: res.findings.len(),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;

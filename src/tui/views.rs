@@ -409,8 +409,17 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             Span::styled(sanitize_line(detail, 28), state.theme.muted_style()),
         ]));
     }
-    if let Some(report) = &state.audit_report {
-        let assessment = crate::analysis::assessment::assess_audit_report(report);
+    let overview_assessment = state
+        .audit_report
+        .as_ref()
+        .map(crate::analysis::assessment::assess_audit_report)
+        .or_else(|| {
+            state
+                .crawl_summary
+                .as_ref()
+                .map(crate::analysis::assessment::assess_crawl_summary)
+        });
+    if let Some(assessment) = overview_assessment {
         right_lines.push(Line::from(""));
         right_lines.push(Line::from(Span::styled(
             " Quality Domains:",

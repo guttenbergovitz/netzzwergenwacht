@@ -16,6 +16,7 @@ pub mod frontier;
 pub mod resources;
 pub mod robots;
 
+pub use crawl::sample_browser_on_crawl;
 pub use frontier::DiscoverySource;
 pub use resources::{
     PageResourceEdge, ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus,
@@ -788,7 +789,9 @@ pub fn cluster_failed_resource_dependencies(
 
     let mut clusters = Vec::new();
     for res in resources {
-        if res.status != ResourceStatus::Failed {
+        let is_failed =
+            res.status == ResourceStatus::Failed || res.http_status.is_some_and(|s| s >= 400);
+        if !is_failed {
             continue;
         }
         let mut affected_urls: Vec<String> = page_resources

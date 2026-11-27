@@ -1290,6 +1290,18 @@ impl AppState {
             return (assessment.overall_verdict.badge(), detail);
         }
 
+        if let Some(crawl) = &self.crawl_summary {
+            let assessment = crate::analysis::assessment::assess_crawl_summary(crawl);
+            let detail = if !assessment.blockers.is_empty() {
+                assessment.blockers.join("; ")
+            } else if !assessment.limitations.is_empty() {
+                assessment.limitations[0].clone()
+            } else {
+                "Evaluated crawl checks within scope passed.".to_owned()
+            };
+            return (assessment.overall_verdict.badge(), detail);
+        }
+
         if self.findings.is_empty() && self.target_rows.is_empty() {
             return ("NOT RUN", "No inspection has been executed yet.".to_owned());
         }

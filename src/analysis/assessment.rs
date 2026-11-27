@@ -196,15 +196,94 @@ pub fn assess_audit_report(report: &AuditReport) -> QualityAssessment {
     assess_from_analysers(&report.analysers, http_complete, limitations)
 }
 
+/// Computes a multi-dimensional [`QualityAssessment`] from an application-wide
+/// [`crate::discovery::CrawlSummary`].
+#[must_use]
+pub fn assess_crawl_summary(summary: &crate::discovery::CrawlSummary) -> QualityAssessment {
+    let mut limitations = Vec::new();
+    if !summary.coverage.complete {
+        limitations.push(format!(
+            "Bounded crawl covered {}/{} discovered URL(s).",
+            summary.coverage.analysed_urls, summary.coverage.discovered_urls
+        ));
+    }
+    if summary.budget_exhausted {
+        limitations.push("Crawl terminated early due to execution budget.".to_owned());
+    }
+
+    let mut accs = [
+        (
+            QualityDomain::FunctionalIntegrity,
+            DomainAccumulator::default(),
+        ),
+        (
+            QualityDomain::RuntimeStability,
+            DomainAccumulator::default(),
+        ),
+        (QualityDomain::Performance, DomainAccumulator::default()),
+        (QualityDomain::Accessibility, DomainAccumulator::default()),
+        (QualityDomain::VisualQuality, DomainAccumulator::default()),
+        (QualityDomain::SurfaceSecurity, DomainAccumulator::default()),
+        (QualityDomain::Privacy, DomainAccumulator::default()),
+        (
+            QualityDomain::ContentIntegrity,
+            DomainAccumulator::default(),
+        ),
+        (QualityDomain::Discoverability, DomainAccumulator::default()),
+        (QualityDomain::Reliability, DomainAccumulator::default()),
+        (
+            QualityDomain::EvidenceCoverage,
+            DomainAccumulator::default(),
+        ),
+    ];
+
+    for total in &summary.analysis_totals {
+        let domain = domain_for_rule(total.dwarf_id, "");
+        if let Some((_, acc)) = accs.iter_mut().find(|(d, _)| *d == domain) {
+            acc.passed_checks = acc.passed_checks.saturating_add(total.checks_passed);
+            acc.skipped_or_unavailable = acc
+                .skipped_or_unavailable
+                .saturating_add(total.checks_skipped + total.checks_unavailable);
+        }
+    }
+    for page in &summary.page_diagnostics {
+        for f in &page.findings {
+            let domain = domain_for_rule(f.dwarf_id, &f.rule_id.0);
+            if let Some((_, acc)) = accs.iter_mut().find(|(d, _)| *d == domain) {
+                match f.severity {
+                    Severity::Critical | Severity::High => {
+                        acc.critical_high = acc.critical_high.saturating_add(1);
+                    }
+                    Severity::Medium => acc.medium = acc.medium.saturating_add(1),
+                    Severity::Low | Severity::Info => {
+                        acc.low_info = acc.low_info.saturating_add(1);
+                    }
+                }
+            }
+        }
+    }
+
+    let http_complete = summary.coverage.analysed_urls > 0 && !summary.budget_exhausted;
+    finalise_assessment(accs, http_complete, limitations)
+}
+
 /// Computes a multi-dimensional [`QualityAssessment`] from raw analyser results
 /// and HTTP completeness.
 #[must_use]
 pub fn assess_from_analysers(
     analysers: &[AnalyserResult],
     http_complete: bool,
-    mut limitations: Vec<String>,
+    limitations: Vec<String>,
 ) -> QualityAssessment {
     let accs = accumulate_domains(analysers);
+    finalise_assessment(accs, http_complete, limitations)
+}
+
+fn finalise_assessment(
+    accs: [(QualityDomain, DomainAccumulator); 11],
+    http_complete: bool,
+    mut limitations: Vec<String>,
+) -> QualityAssessment {
     let mut domains = Vec::with_capacity(accs.len());
     let mut blockers = Vec::new();
     let mut any_fail = false;

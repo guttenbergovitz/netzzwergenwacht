@@ -155,6 +155,9 @@ enum Command {
         /// End-to-end crawl deadline in seconds.
         #[arg(long)]
         audit_timeout_secs: Option<u64>,
+        /// Run headless browser checks on up to N sampled pages from the crawl.
+        #[arg(long, default_value_t = 0)]
+        browser_sample: usize,
         /// Directory for retained evidence (defaults to `.nzw/evidence`).
         #[arg(long)]
         evidence_dir: Option<PathBuf>,
@@ -419,6 +422,7 @@ struct ScanReport {
     coverage: netzzwergenwacht::discovery::CrawlCoverage,
     resources: Vec<netzzwergenwacht::discovery::ResourceObservation>,
     systemic_issues: Vec<netzzwergenwacht::discovery::SystemicIssue>,
+    quality_assessment: netzzwergenwacht::analysis::assessment::QualityAssessment,
     stored_at: Option<String>,
     store_error: Option<String>,
 }
@@ -468,6 +472,21 @@ impl ScanReport {
                 issue.rule_id.0,
                 issue.affected_urls.len()
             ));
+        }
+        lines.push(String::new());
+        lines.push(format!(
+            "QUALITY ASSESSMENT: {}",
+            self.quality_assessment.overall_verdict.badge()
+        ));
+        for dom in &self.quality_assessment.domains {
+            if dom.verdict != netzzwergenwacht::analysis::assessment::DomainVerdict::NotApplicable {
+                lines.push(format!(
+                    "  {:<20} {:<6} {}",
+                    dom.domain.label(),
+                    dom.verdict.badge(),
+                    dom.rationale
+                ));
+            }
         }
         lines.push(String::new());
         match (&self.stored_at, &self.store_error) {
@@ -567,6 +586,7 @@ async fn main() -> ExitCode {
             max_pages,
             max_depth,
             audit_timeout_secs,
+            browser_sample,
             evidence_dir,
         } => {
             let discovery = config::ConfigDiscovery {
@@ -594,13 +614,24 @@ async fn main() -> ExitCode {
                 max_depth,
                 max_duration: exec_budget.audit_timeout,
             };
-            let summary = netzzwergenwacht::discovery::crawl_and_cluster(
+            let mut summary = netzzwergenwacht::discovery::crawl_and_cluster(
                 target.clone(),
                 crawl_budget,
                 exec_budget,
                 policy,
             )
             .await;
+            if browser_sample > 0 {
+                netzzwergenwacht::discovery::sample_browser_on_crawl(
+                    &mut summary,
+                    browser_sample,
+                    exec_budget,
+                    policy,
+                )
+                .await;
+            }
+            let quality_assessment =
+                netzzwergenwacht::analysis::assessment::assess_crawl_summary(&summary);
 
             let run_id = scan_run_id(&target);
             let directory = evidence_dir.unwrap_or_else(|| PathBuf::from(".nzw/evidence"));
@@ -627,6 +658,7 @@ async fn main() -> ExitCode {
                 coverage: summary.coverage,
                 resources: summary.resources.clone(),
                 systemic_issues: summary.systemic_issues.clone(),
+                quality_assessment,
                 stored_at,
                 store_error,
             };
