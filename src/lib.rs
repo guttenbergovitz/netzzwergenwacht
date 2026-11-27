@@ -15,6 +15,7 @@ pub mod discovery;
 pub mod doctor;
 pub mod domain;
 pub mod events;
+pub mod evidence_store;
 pub mod intelligence;
 pub mod investigation;
 pub mod patrol;
