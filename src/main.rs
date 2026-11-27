@@ -469,10 +469,33 @@ impl ScanReport {
             format!("  Skipped (budget):    {}", resources.skipped_resources),
             format!("  Truncated:           {}", resources.truncated_resources),
             format!("  External refused:    {}", resources.external_refused),
-            String::new(),
-            "DIAGNOSTICS".to_owned(),
-            format!("  Systemic issues:     {}", self.systemic_issues.len()),
         ];
+        let payload = netzzwergenwacht::report_html::summarise_resources(&self.resources);
+        if payload.measured_count > 0 {
+            lines.push(format!(
+                "  Measured payload:    {} (JS: {}, CSS: {}, Img: {})",
+                netzzwergenwacht::report_html::format_bytes(payload.total_bytes),
+                netzzwergenwacht::report_html::format_bytes(payload.script_bytes),
+                netzzwergenwacht::report_html::format_bytes(payload.stylesheet_bytes),
+                netzzwergenwacht::report_html::format_bytes(payload.image_bytes),
+            ));
+        }
+        for res in netzzwergenwacht::report_html::prioritise_resources(&self.resources)
+            .into_iter()
+            .take(3)
+        {
+            let detail = res.byte_len.map_or_else(
+                || res.error.as_deref().unwrap_or("—").to_owned(),
+                netzzwergenwacht::report_html::format_bytes,
+            );
+            lines.push(format!("    [{:?}] {} ({detail})", res.status, res.url));
+        }
+        lines.push(String::new());
+        lines.push("DIAGNOSTICS".to_owned());
+        lines.push(format!(
+            "  Systemic issues:     {}",
+            self.systemic_issues.len()
+        ));
         for issue in self.systemic_issues.iter().take(10) {
             lines.push(format!(
                 "    {} on {} page(s)",

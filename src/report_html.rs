@@ -9,8 +9,97 @@ use std::fmt::Write as _;
 use crate::analysis::AuditReport;
 use crate::analysis::assessment::{DomainVerdict, QualityAssessment};
 use crate::brigade::{MOTTO, profile};
-use crate::discovery::{CrawlCoverage, ResourceObservation, ResourceStatus, SystemicIssue};
+use crate::discovery::{
+    CrawlCoverage, ResourceKind, ResourceObservation, ResourceStatus, SystemicIssue,
+};
 use crate::domain::{CollectorOutcome, Finding, Severity};
+
+const HEAVY_UNCOMPRESSED_THRESHOLD_BYTES: u64 = 20 * 1024;
+
+/// Aggregated measured byte sizes across discovered subresources.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourcePayloadSummary {
+    /// Sum of measured `byte_len` values across all resources.
+    pub total_bytes: u64,
+    /// Sum of measured `byte_len` values for scripts.
+    pub script_bytes: u64,
+    /// Sum of measured `byte_len` values for stylesheets.
+    pub stylesheet_bytes: u64,
+    /// Sum of measured `byte_len` values for images.
+    pub image_bytes: u64,
+    /// Number of resources with an observed `byte_len`.
+    pub measured_count: usize,
+    /// Count of fetched `Script`/`Stylesheet` resources >= 20 KB without `Content-Encoding`.
+    pub uncompressed_heavy_count: usize,
+}
+
+/// Computes measured payload totals and heavy-uncompressed counts over `resources`.
+#[must_use]
+pub fn summarise_resources(resources: &[ResourceObservation]) -> ResourcePayloadSummary {
+    let mut summary = ResourcePayloadSummary::default();
+    for res in resources {
+        if let Some(bytes) = res.byte_len {
+            summary.measured_count += 1;
+            summary.total_bytes = summary.total_bytes.saturating_add(bytes);
+            match res.kind {
+                ResourceKind::Script => {
+                    summary.script_bytes = summary.script_bytes.saturating_add(bytes);
+                }
+                ResourceKind::Stylesheet => {
+                    summary.stylesheet_bytes = summary.stylesheet_bytes.saturating_add(bytes);
+                }
+                ResourceKind::Image => {
+                    summary.image_bytes = summary.image_bytes.saturating_add(bytes);
+                }
+            }
+            if res.status == ResourceStatus::Fetched
+                && matches!(res.kind, ResourceKind::Script | ResourceKind::Stylesheet)
+                && bytes >= HEAVY_UNCOMPRESSED_THRESHOLD_BYTES
+                && res.content_encoding.is_none()
+            {
+                summary.uncompressed_heavy_count += 1;
+            }
+        }
+    }
+    summary
+}
+
+/// Returns borrowed references to `resources` sorted with failures first, then
+/// heaviest measured payloads first, then lexicographically by URL.
+#[must_use]
+pub fn prioritise_resources(resources: &[ResourceObservation]) -> Vec<&ResourceObservation> {
+    let mut refs: Vec<&ResourceObservation> = resources.iter().collect();
+    refs.sort_by(|a, b| {
+        let rank = |s: ResourceStatus| match s {
+            ResourceStatus::Failed => 0_u8,
+            ResourceStatus::Fetched => 1_u8,
+            ResourceStatus::SkippedBudget => 2_u8,
+        };
+        rank(a.status)
+            .cmp(&rank(b.status))
+            .then_with(|| b.byte_len.unwrap_or(0).cmp(&a.byte_len.unwrap_or(0)))
+            .then_with(|| a.url.cmp(&b.url))
+    });
+    refs
+}
+
+/// Formats a byte count into a human-readable ASCII size (`B`, `KB`, `MB`).
+#[must_use]
+pub fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1_024;
+    const MB: u64 = 1_024 * 1_024;
+    if bytes >= MB {
+        let whole = bytes / MB;
+        let frac = ((bytes % MB) * 100) / MB;
+        format!("{whole}.{frac:02} MB")
+    } else if bytes >= KB {
+        let whole = bytes / KB;
+        let frac = ((bytes % KB) * 10) / KB;
+        format!("{whole}.{frac} KB")
+    } else {
+        format!("{bytes} B")
+    }
+}
 
 /// Borrowed inputs required to render a multi-page reconnaissance HTML report.
 pub struct ScanHtmlInput<'a> {
@@ -428,11 +517,31 @@ fn render_resources_section(
         );
         return;
     }
+    let summary = summarise_resources(resources);
+    if summary.measured_count > 0 {
+        let _ = writeln!(
+            out,
+            "<p class=\"meta\" style=\"margin-bottom:10px;\">Measured payload ({} resource(s)): <strong>{}</strong> &middot; Scripts: {} &middot; Stylesheets: {} &middot; Images: {}{}</p>",
+            summary.measured_count,
+            format_bytes(summary.total_bytes),
+            format_bytes(summary.script_bytes),
+            format_bytes(summary.stylesheet_bytes),
+            format_bytes(summary.image_bytes),
+            if summary.uncompressed_heavy_count > 0 {
+                format!(
+                    " &middot; <span class=\"badge sev-high\">{} uncompressed &ge; 20 KB</span>",
+                    summary.uncompressed_heavy_count
+                )
+            } else {
+                String::new()
+            },
+        );
+    }
     let _ = writeln!(
         out,
-        "<table><thead><tr><th>Resource</th><th>Kind</th><th>Status</th><th>HTTP</th><th>Detail</th></tr></thead><tbody>"
+        "<table><thead><tr><th>Resource</th><th>Kind</th><th>Status</th><th>HTTP</th><th>Size</th><th>Encoding</th><th>Detail</th></tr></thead><tbody>"
     );
-    for res in resources.iter().take(40) {
+    for res in prioritise_resources(resources).into_iter().take(40) {
         let state_badge = match res.status {
             ResourceStatus::Failed => "sev-high",
             ResourceStatus::Fetched => "sev-pass",
@@ -441,15 +550,42 @@ fn render_resources_section(
         let status = res
             .http_status
             .map_or_else(|| "—".to_owned(), |c| c.to_string());
+        let size = res.byte_len.map_or_else(
+            || "—".to_owned(),
+            |b| {
+                if res.truncated {
+                    format!("{}+", format_bytes(b))
+                } else {
+                    format_bytes(b)
+                }
+            },
+        );
+        let encoding = match res.status {
+            ResourceStatus::Fetched => res.content_encoding.as_deref().unwrap_or("none"),
+            _ => "—",
+        };
+        let encoding_html = if res.status == ResourceStatus::Fetched
+            && matches!(res.kind, ResourceKind::Script | ResourceKind::Stylesheet)
+            && res
+                .byte_len
+                .is_some_and(|b| b >= HEAVY_UNCOMPRESSED_THRESHOLD_BYTES)
+            && res.content_encoding.is_none()
+        {
+            "<span class=\"badge sev-high\">uncompressed</span>".to_owned()
+        } else {
+            escape_html(encoding)
+        };
         let detail = res.error.as_deref().unwrap_or("—");
         let _ = writeln!(
             out,
-            "<tr><td><code>{}</code></td><td>{:?}</td><td><span class=\"badge {}\">{:?}</span></td><td>{}</td><td>{}</td></tr>",
+            "<tr><td><code>{}</code></td><td>{:?}</td><td><span class=\"badge {}\">{:?}</span></td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             escape_html(&res.url),
             res.kind,
             state_badge,
             res.status,
             escape_html(&status),
+            escape_html(&size),
+            encoding_html,
             escape_html(detail),
         );
     }
@@ -690,5 +826,74 @@ mod tests {
         assert!(html.contains("https://cdn.example.com/app.js"));
         assert!(!html.contains("<script> analytics"));
         assert!(html.contains("&lt;script&gt; analytics"));
+    }
+
+    #[test]
+    fn scan_html_prioritises_failed_and_heaviest_resources_and_summarises_payload() {
+        let coverage = CrawlCoverage {
+            discovered_urls: 2,
+            fetched_urls: 2,
+            analysed_urls: 2,
+            resources: ResourceCoverage {
+                discovered_resources: 3,
+                fetched_resources: 2,
+                failed_resources: 1,
+                ..ResourceCoverage::default()
+            },
+            ..CrawlCoverage::default()
+        };
+        let resources = vec![
+            ResourceObservation {
+                url: "https://example.com/small.css".to_owned(),
+                kind: ResourceKind::Stylesheet,
+                status: ResourceStatus::Fetched,
+                http_status: Some(200),
+                byte_len: Some(2_048),
+                content_encoding: Some("gzip".to_owned()),
+                ..ResourceObservation::default()
+            },
+            ResourceObservation {
+                url: "https://example.com/heavy.js".to_owned(),
+                kind: ResourceKind::Script,
+                status: ResourceStatus::Fetched,
+                http_status: Some(200),
+                byte_len: Some(150_000),
+                content_encoding: None,
+                ..ResourceObservation::default()
+            },
+            ResourceObservation {
+                url: "https://example.com/broken.js".to_owned(),
+                kind: ResourceKind::Script,
+                status: ResourceStatus::Failed,
+                http_status: Some(503),
+                error: Some("HTTP 503".to_owned()),
+                ..ResourceObservation::default()
+            },
+        ];
+        let assessment = QualityAssessment {
+            domains: vec![],
+            overall_verdict: DomainVerdict::Fail,
+            blockers: vec![],
+            limitations: vec![],
+        };
+
+        let html = render_scan_html(&ScanHtmlInput {
+            run_id: "run-prio",
+            application: "https://example.com/",
+            seed_url: "https://example.com/",
+            coverage: &coverage,
+            resources: &resources,
+            systemic_issues: &[],
+            quality_assessment: &assessment,
+            stored_at: None,
+        });
+
+        let broken_pos = html.find("https://example.com/broken.js").unwrap();
+        let heavy_pos = html.find("https://example.com/heavy.js").unwrap();
+        let small_pos = html.find("https://example.com/small.css").unwrap();
+        assert!(broken_pos < heavy_pos);
+        assert!(heavy_pos < small_pos);
+        assert!(html.contains("uncompressed"));
+        assert!(html.contains("Measured payload"));
     }
 }
