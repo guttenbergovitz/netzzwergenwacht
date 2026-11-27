@@ -995,6 +995,8 @@ pub struct AppState {
     pub config_source: Option<String>,
     /// Whether the Mission Review overlay is open.
     pub review_open: bool,
+    /// Whether the Executive Domain Brief overlay is open on `1:Overview`.
+    pub overview_brief_open: bool,
     /// Detected runtime instrument availability.
     pub instruments: InstrumentAvailability,
     /// Visual theme and glyph configuration.
@@ -1094,6 +1096,28 @@ impl Default for AppState {
     }
 }
 
+/// Honest automated signal status for a WCAG 2.1 AA / EN 301 549 (EAA) criterion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EaaSignalStatus {
+    /// One or more automated findings mapped to this criterion.
+    AutomatedFailure(usize),
+    /// Automated accessibility checks ran without failures in this criterion (not legal proof).
+    NoAutomatedFailures,
+    /// Automated checks were skipped/unavailable or manual audit is required.
+    ManualOrUnverified,
+}
+
+/// Single WCAG 2.1 AA / EN 301 549 technical criterion summarised for the dashboard.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EaaWcagSignal {
+    /// WCAG success criterion identifier (for example `SC 1.1.1`).
+    pub criterion: &'static str,
+    /// Short human-readable title.
+    pub title: &'static str,
+    /// Honest automated observation status.
+    pub status: EaaSignalStatus,
+}
+
 impl AppState {
     /// Initialises a clean workbench state with the detected theme and brigade registry.
     #[must_use]
@@ -1109,6 +1133,7 @@ impl AppState {
             config: None,
             config_source: None,
             review_open: false,
+            overview_brief_open: false,
             instruments: InstrumentAvailability::detect(),
             theme: Theme::new(theme_mode, glyphs),
             help_open: false,
@@ -1195,6 +1220,86 @@ impl AppState {
         let clean = sanitize_line(message, 140);
         self.recent_activity
             .push_back(format!("{mins:02}:{rem_secs:02}  {clean}"));
+    }
+
+    /// Returns the measured Lighthouse performance score (`0..=100`), when captured.
+    #[must_use]
+    pub fn lighthouse_performance_score(&self) -> Option<u8> {
+        let snap = self.snapshot.as_ref()?;
+        match &snap.lighthouse {
+            crate::domain::CollectorOutcome::Captured { data }
+            | crate::domain::CollectorOutcome::Partial { data, .. } => data.performance_score,
+            crate::domain::CollectorOutcome::Failed { .. }
+            | crate::domain::CollectorOutcome::Skipped { .. } => None,
+        }
+    }
+
+    /// Summarises automated WCAG 2.1 AA / EN 301 549 (EAA) technical signals.
+    ///
+    /// Automated checks never establish legal compliance; criteria without failures
+    /// are explicitly labelled `NoAutomatedFailures` rather than compliant.
+    #[must_use]
+    pub fn eaa_wcag_signals(&self) -> Vec<EaaWcagSignal> {
+        let a11y_row = self
+            .brigade_rows
+            .iter()
+            .find(|r| r.dwarf_id == DwarfId::Zugaenglichkeits);
+        let checks_evaluated = a11y_row.map_or(0, |r| r.checks_passed + r.checks_failed);
+
+        let criteria: &[(&'static str, &'static str, &[&str])] = &[
+            (
+                "SC 1.1.1",
+                "Non-text Content",
+                &["alt", "img", "image-alt", "caption"],
+            ),
+            (
+                "SC 1.4.3",
+                "Contrast (Min)",
+                &["contrast", "color-contrast"],
+            ),
+            (
+                "SC 2.1.1",
+                "Keyboard & Focus",
+                &["keyboard", "focus", "tabindex"],
+            ),
+            ("SC 2.4.2", "Page Titled", &["title"]),
+            ("SC 3.1.1", "Language of Page", &["lang", "language"]),
+            (
+                "SC 4.1.2",
+                "Name, Role, Value",
+                &["aria", "label", "button", "name", "role"],
+            ),
+        ];
+
+        criteria
+            .iter()
+            .map(|&(criterion, title, keywords)| {
+                let failure_count = self
+                    .findings
+                    .iter()
+                    .filter(|f| f.dwarf_id == DwarfId::Zugaenglichkeits)
+                    .filter(|f| {
+                        let rule_lower = f.rule_id.to_ascii_lowercase();
+                        let title_lower = f.title.to_ascii_lowercase();
+                        keywords
+                            .iter()
+                            .any(|kw| rule_lower.contains(kw) || title_lower.contains(kw))
+                    })
+                    .count();
+                let status = if failure_count > 0 {
+                    EaaSignalStatus::AutomatedFailure(failure_count)
+                } else if checks_evaluated > 0 {
+                    EaaSignalStatus::NoAutomatedFailures
+                } else {
+                    EaaSignalStatus::ManualOrUnverified
+                };
+                EaaWcagSignal {
+                    criterion,
+                    title,
+                    status,
+                }
+            })
+            .collect()
     }
 
     /// Recomputes `visible_finding_indices` according to `finding_filter` and `finding_sort`,

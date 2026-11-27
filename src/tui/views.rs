@@ -85,6 +85,9 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     if state.review_open {
         render_review_modal(frame, area, state);
     }
+    if state.overview_brief_open {
+        render_overview_brief_modal(frame, area, state);
+    }
 }
 
 fn render_minimum_size_fallback(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
@@ -252,12 +255,33 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         })
         .count();
 
+    let passed_checks: usize = state.brigade_rows.iter().map(|b| b.checks_passed).sum();
+    let failed_checks: usize = state.brigade_rows.iter().map(|b| b.checks_failed).sum();
+    let evaluated_checks = passed_checks + failed_checks;
     let total_checks: usize = state.brigade_rows.iter().map(|b| b.checks_total).sum();
     let unverified_checks: usize = state
         .brigade_rows
         .iter()
         .map(|b| b.checks_skipped + b.checks_inconclusive)
         .sum();
+    let pass_rate_line = if let Some(pct) = (passed_checks * 100).checked_div(evaluated_checks) {
+        format!(
+            " Verified Pass-Rate: {pct}% ({passed_checks}/{evaluated_checks} passed, {unverified_checks} unverified)"
+        )
+    } else {
+        format!(" Checks: {total_checks} evaluated ({unverified_checks} unverified/skipped)")
+    };
+
+    let overview_assessment = state
+        .audit_report
+        .as_ref()
+        .map(crate::analysis::assessment::assess_audit_report)
+        .or_else(|| {
+            state
+                .crawl_summary
+                .as_ref()
+                .map(crate::analysis::assessment::assess_crawl_summary)
+        });
 
     let (verdict_badge, verdict_detail) = state.quality_verdict_summary();
     let verdict_style = match verdict_badge {
@@ -278,10 +302,34 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from(format!(
             " Pages: {inspected}/{discovered} inspected | Queued: {queued} | Failed: {failed} | Deferred: {skipped}"
         )),
-        Line::from(format!(
-            " Checks: {total_checks} evaluated ({unverified_checks} unverified/skipped)"
-        )),
+        Line::from(pass_rate_line),
     ];
+    if let Some(ref assessment) = overview_assessment {
+        let dom_pass = assessment
+            .domains
+            .iter()
+            .filter(|d| d.verdict == crate::analysis::assessment::DomainVerdict::Pass)
+            .count();
+        let dom_fail = assessment
+            .domains
+            .iter()
+            .filter(|d| d.verdict == crate::analysis::assessment::DomainVerdict::Fail)
+            .count();
+        let dom_insuff = assessment
+            .domains
+            .iter()
+            .filter(|d| {
+                d.verdict == crate::analysis::assessment::DomainVerdict::InsufficientEvidence
+            })
+            .count();
+        let lh_suffix = state
+            .lighthouse_performance_score()
+            .map_or_else(String::new, |s| format!(" | Lighthouse Perf: {s}/100"));
+        surface_lines.push(Line::from(format!(
+            " Domains: PASS {dom_pass}/{} | FAIL {dom_fail} | INSUFF {dom_insuff}{lh_suffix}",
+            assessment.domains.len()
+        )));
+    }
     if let Some(ref crawl) = state.crawl_summary {
         let payload = crate::report_html::summarise_resources(&crawl.resources);
         let payload_text = if payload.measured_count > 0 {
@@ -383,12 +431,21 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let brigade_items: Vec<ListItem<'_>> = state
         .brigade_rows
         .iter()
-        .map(|b| {
+        .enumerate()
+        .map(|(idx, b)| {
+            let is_selected = idx == state.selected_brigade_index;
+            let prefix = if is_selected {
+                state.theme.glyphs.selection_indicator()
+            } else {
+                "  "
+            };
+            let name_style = if is_selected {
+                state.theme.selected_style()
+            } else {
+                state.theme.primary_style()
+            };
             let line = Line::from(vec![
-                Span::styled(
-                    format!(" {:<21} ", b.display_name),
-                    state.theme.primary_style(),
-                ),
+                Span::styled(format!("{prefix}{:<21} ", b.display_name), name_style),
                 Span::styled(
                     format!("{:<19} ", b.dwarf_id.english_domain()),
                     state.theme.muted_style(),
@@ -412,9 +469,9 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         .collect();
     let brigade_list = List::new(brigade_items).block(
         Block::default()
-            .title(" DIE ZWERGENBRIGADE ")
+            .title(" DIE ZWERGENBRIGADE (Up/Down select, Enter Brief) ")
             .borders(Borders::ALL)
-            .border_style(state.theme.border_style(false)),
+            .border_style(state.theme.border_style(true)),
     );
     frame.render_widget(brigade_list, mid_cols[0]);
 
@@ -501,6 +558,35 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             }
             right_lines.push(Line::from(spans));
         }
+    }
+    let eaa_signals = state.eaa_wcag_signals();
+    right_lines.push(Line::from(""));
+    right_lines.push(Line::from(Span::styled(
+        " EAA / WCAG 2.1 AA (Automated Signals — Not Legal Proof):",
+        state.theme.title_style(),
+    )));
+    for chunk in eaa_signals.chunks(2) {
+        let mut spans = Vec::new();
+        for sig in chunk {
+            let (badge, style) = match sig.status {
+                crate::tui::state::EaaSignalStatus::AutomatedFailure(n) => (
+                    format!("FAIL({n})"),
+                    state.theme.severity_style(Severity::High),
+                ),
+                crate::tui::state::EaaSignalStatus::NoAutomatedFailures => (
+                    "NO-FAIL".to_owned(),
+                    state
+                        .theme
+                        .status_style(crate::tui::theme::OperationalStatus::Done),
+                ),
+                crate::tui::state::EaaSignalStatus::ManualOrUnverified => {
+                    ("MANUAL".to_owned(), state.theme.muted_style())
+                }
+            };
+            spans.push(Span::raw(format!(" {} {:<13} ", sig.criterion, sig.title)));
+            spans.push(Span::styled(format!("{badge:<8} "), style));
+        }
+        right_lines.push(Line::from(spans));
     }
     if !state.hypotheses.is_empty() {
         right_lines.push(Line::from(""));
@@ -3291,6 +3377,127 @@ fn render_review_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         .borders(Borders::ALL)
         .border_style(state.theme.border_style(true));
     frame.render_widget(Paragraph::new(lines).block(block), modal_area);
+}
+
+#[allow(clippy::too_many_lines)]
+fn render_overview_brief_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
+    let Some(row) = state.brigade_rows.get(state.selected_brigade_index) else {
+        return;
+    };
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled(format!(" {} ", row.display_name), state.theme.title_style()),
+            Span::styled(
+                format!(
+                    "— {} ({})",
+                    row.dwarf_id.english_domain(),
+                    row.status.label()
+                ),
+                state.theme.muted_style(),
+            ),
+        ]),
+        Line::from(format!(" Role: {}", row.responsibility)),
+        Line::from(format!(
+            " Checks: {} evaluated | {} passed | {} failed | {} skipped | {} inconclusive | {} findings",
+            row.checks_total,
+            row.checks_passed,
+            row.checks_failed,
+            row.checks_skipped,
+            row.checks_inconclusive,
+            row.findings_count
+        )),
+        Line::from(""),
+    ];
+
+    if row.dwarf_id == crate::brigade::DwarfId::Zugaenglichkeits {
+        lines.push(Line::from(Span::styled(
+            " EAA / WCAG 2.1 AA / EN 301 549 (Automated Signals — Not Proof of Legal Compliance):",
+            state.theme.title_style(),
+        )));
+        for sig in state.eaa_wcag_signals() {
+            let (badge, style) = match sig.status {
+                crate::tui::state::EaaSignalStatus::AutomatedFailure(n) => (
+                    format!("FAIL ({n} automated finding(s))"),
+                    state.theme.severity_style(Severity::High),
+                ),
+                crate::tui::state::EaaSignalStatus::NoAutomatedFailures => (
+                    "NO AUTOMATED FAILURES (manual audit still required)".to_owned(),
+                    state
+                        .theme
+                        .status_style(crate::tui::theme::OperationalStatus::Done),
+                ),
+                crate::tui::state::EaaSignalStatus::ManualOrUnverified => {
+                    ("MANUAL / UNVERIFIED".to_owned(), state.theme.muted_style())
+                }
+            };
+            lines.push(Line::from(vec![
+                Span::raw(format!("   {:<9} {:<18} ", sig.criterion, sig.title)),
+                Span::styled(badge, style),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
+    let mut domain_findings: Vec<&crate::tui::state::FindingRow> = state
+        .findings
+        .iter()
+        .filter(|f| f.dwarf_id == row.dwarf_id)
+        .collect();
+    domain_findings.sort_by_key(|f| match f.severity {
+        Severity::Critical => 0_u8,
+        Severity::High => 1_u8,
+        Severity::Medium => 2_u8,
+        Severity::Low => 3_u8,
+        Severity::Info => 4_u8,
+    });
+
+    lines.push(Line::from(Span::styled(
+        format!(" Major Findings ({} total):", domain_findings.len()),
+        state.theme.title_style(),
+    )));
+    if domain_findings.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "   No findings recorded for this specialist in the current run.",
+            state.theme.muted_style(),
+        )));
+    } else {
+        for f in domain_findings.iter().take(5) {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   [{}] ", Theme::severity_badge(f.severity)),
+                    state.theme.severity_style(f.severity),
+                ),
+                Span::styled(format!("{} — ", f.rule_id), state.theme.primary_style()),
+                Span::raw(sanitize_line(&f.title, 64)),
+            ]));
+            if let Some(excerpt) = f.evidence_refs.iter().find_map(|ev| ev.excerpt.as_ref()) {
+                push_cargo_diagnostic_lines(&mut lines, excerpt, state.theme, "     ");
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " [Enter] Open Findings for specialist   [b] Open Brigade view   [Esc] Close brief",
+        state.theme.title_style(),
+    )));
+
+    let modal_area = centered_rect(96, 26, area);
+    frame.render_widget(Clear, modal_area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(format!(
+                        " EXECUTIVE DOMAIN BRIEF: {} ",
+                        row.dwarf_id.english_domain().to_ascii_uppercase()
+                    ))
+                    .borders(Borders::ALL)
+                    .border_style(state.theme.border_style(true)),
+            )
+            .wrap(Wrap { trim: false }),
+        modal_area,
+    );
 }
 
 fn render_help_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {

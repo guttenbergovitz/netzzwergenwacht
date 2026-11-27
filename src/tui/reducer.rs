@@ -127,6 +127,39 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
         return reduce_launcher_action(state, action);
     }
 
+    // Handle Executive Domain Brief overlay when open on `1:Overview`.
+    if state.overview_brief_open {
+        match action {
+            UserAction::BackOrClose => {
+                state.overview_brief_open = false;
+                state.status_message = String::from("Closed Executive Domain Brief.");
+            }
+            UserAction::Activate => {
+                state.overview_brief_open = false;
+                if let Some(row) = state.brigade_rows.get(state.selected_brigade_index) {
+                    let dwarf = row.dwarf_id;
+                    state.finding_filter.dwarf = Some(dwarf);
+                    state.refresh_visible_findings();
+                    state.active_view = WorkbenchView::Findings;
+                    state.status_message = format!(
+                        "Filtered findings to {} ({} finding(s)). Press Esc to clear filter.",
+                        dwarf.display_name(),
+                        state.visible_finding_indices.len()
+                    );
+                }
+            }
+            UserAction::InputChar('b') => {
+                state.overview_brief_open = false;
+                state.active_view = WorkbenchView::Brigade;
+                state.status_message = String::from("Switched to Brigade specialist view.");
+            }
+            UserAction::MoveDown => move_selection(state, 1),
+            UserAction::MoveUp => move_selection(state, -1),
+            _ => {}
+        }
+        return Vec::new();
+    }
+
     // Handle Search bar input when focused.
     if state.search_focused {
         match action {
@@ -159,12 +192,15 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
 
     match action {
         UserAction::NextView => {
+            state.overview_brief_open = false;
             state.active_view = state.active_view.next();
         }
         UserAction::PrevView => {
+            state.overview_brief_open = false;
             state.active_view = state.active_view.prev();
         }
         UserAction::SelectView(view) => {
+            state.overview_brief_open = false;
             state.active_view = view;
         }
         UserAction::MoveDown => move_selection(state, 1),
@@ -678,8 +714,8 @@ fn try_launch_from_launcher(state: &mut AppState) -> Vec<AppEffect> {
 
 fn move_selection(state: &mut AppState, delta: isize) {
     match state.active_view {
-        WorkbenchView::Overview | WorkbenchView::System => {}
-        WorkbenchView::Brigade => {
+        WorkbenchView::System => {}
+        WorkbenchView::Overview | WorkbenchView::Brigade => {
             state.selected_brigade_index = step_index(
                 state.selected_brigade_index,
                 state.brigade_rows.len(),
@@ -740,8 +776,8 @@ fn move_selection(state: &mut AppState, delta: isize) {
 
 fn move_to_edge(state: &mut AppState, last: bool) {
     match state.active_view {
-        WorkbenchView::Overview | WorkbenchView::System => {}
-        WorkbenchView::Brigade => {
+        WorkbenchView::System => {}
+        WorkbenchView::Overview | WorkbenchView::Brigade => {
             state.selected_brigade_index = if last {
                 state.brigade_rows.len().saturating_sub(1)
             } else {
@@ -811,6 +847,18 @@ fn handle_activate_in_active_view(state: &mut AppState) {
                     category.label(),
                     rule
                 );
+            }
+        }
+        WorkbenchView::Overview => {
+            if !state.brigade_rows.is_empty() {
+                state.overview_brief_open = true;
+                if let Some(row) = state.brigade_rows.get(state.selected_brigade_index) {
+                    state.status_message = format!(
+                        "Executive Domain Brief: {} ({}) — Enter for Findings, b for Brigade, Esc to close.",
+                        row.display_name,
+                        row.dwarf_id.english_domain()
+                    );
+                }
             }
         }
         WorkbenchView::Brigade => {
@@ -1477,5 +1525,36 @@ mod tests {
         };
         let _ = reduce(&mut state, AppAction::User(UserAction::BackOrClose));
         assert_eq!(state.active_view, WorkbenchView::Findings);
+    }
+
+    #[test]
+    fn overview_opens_executive_brief_and_jumps_to_specialist_findings() {
+        let mut state = AppState {
+            active_view: WorkbenchView::Overview,
+            launcher: crate::tui::state::LauncherState {
+                open: false,
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+
+        let _ = reduce(&mut state, AppAction::User(UserAction::MoveDown));
+        assert_eq!(state.selected_brigade_index, 1);
+
+        let _ = reduce(&mut state, AppAction::User(UserAction::Activate));
+        assert!(state.overview_brief_open);
+
+        let expected_dwarf = state.brigade_rows[1].dwarf_id;
+        let _ = reduce(&mut state, AppAction::User(UserAction::Activate));
+        assert!(!state.overview_brief_open);
+        assert_eq!(state.active_view, WorkbenchView::Findings);
+        assert_eq!(state.finding_filter.dwarf, Some(expected_dwarf));
+
+        let signals = state.eaa_wcag_signals();
+        assert_eq!(signals.len(), 6);
+        assert!(signals.iter().all(|s| matches!(
+            s.status,
+            crate::tui::state::EaaSignalStatus::ManualOrUnverified
+        )));
     }
 }
