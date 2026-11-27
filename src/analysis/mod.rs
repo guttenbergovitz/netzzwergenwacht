@@ -187,7 +187,7 @@ pub fn run_all_with_events(
             run_analyser(DwarfId::Such, &mut || seo::analyse(http, &obs));
             run_analyser(DwarfId::Inhalts, &mut || content::analyse(http, &obs));
             run_analyser(DwarfId::Browser, &mut || {
-                browser::analyse_with_document(snapshot, Some(&obs))
+                analyse_browser_and_functional(snapshot, Some(&obs))
             });
             run_analyser(DwarfId::Gestaltungs, &mut || {
                 visual::analyse_with_document(snapshot, Some(&obs))
@@ -224,7 +224,9 @@ pub fn run_all_with_events(
                     &reason,
                 )
             });
-            run_analyser(DwarfId::Browser, &mut || browser::analyse(snapshot));
+            run_analyser(DwarfId::Browser, &mut || {
+                analyse_browser_and_functional(snapshot, None)
+            });
             run_analyser(DwarfId::Gestaltungs, &mut || {
                 visual::analyse_without_document(snapshot, &reason)
             });
@@ -260,6 +262,20 @@ pub fn run_all_with_events(
         summary,
         ai_synthesis: None,
     }
+}
+
+fn analyse_browser_and_functional(
+    snapshot: &EvidenceSnapshot,
+    obs: Option<&DocumentObservations>,
+) -> AnalyserResult {
+    let mut res = match obs {
+        Some(doc) => browser::analyse_with_document(snapshot, Some(doc)),
+        None => browser::analyse(snapshot),
+    };
+    let functional = journeys::analyse_functional_behaviour(snapshot);
+    res.findings.extend(functional.findings);
+    res.checks.extend(functional.checks);
+    res
 }
 
 fn populate_fingerprints(page_scope: &str, analysers: &mut [AnalyserResult]) {

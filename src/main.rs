@@ -1962,6 +1962,11 @@ fn print_text_report(
                 "  - [{:?}] ({}) {}",
                 finding.severity, finding.rule_id.0, finding.title
             );
+            if finding.severity >= Severity::High
+                && let Some(fix) = &finding.remediation
+            {
+                println!("      Fix: {fix}");
+            }
         }
     }
 
