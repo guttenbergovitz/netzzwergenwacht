@@ -5,6 +5,7 @@
 //! never perform network or browser I/O.
 
 pub mod accessibility;
+pub mod assessment;
 pub mod browser;
 pub mod content;
 pub mod content_fingerprint;

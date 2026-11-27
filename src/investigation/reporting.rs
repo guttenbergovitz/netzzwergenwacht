@@ -239,22 +239,35 @@ fn compute_release_readiness(
     let has_medium = all_findings
         .iter()
         .any(|(_, f)| f.severity == Severity::Medium);
-    let http_incomplete = ctx.snapshot.as_ref().is_none_or(|s| {
-        matches!(
-            s.http,
-            CollectorOutcome::Failed { .. }
-                | CollectorOutcome::Skipped { .. }
-                | CollectorOutcome::Partial { .. }
-        )
-    });
+    let http_complete = ctx
+        .snapshot
+        .as_ref()
+        .is_some_and(|s| matches!(s.http, CollectorOutcome::Captured { .. }));
     let has_inconclusive_hyp = ctx
         .hypotheses
         .iter()
         .any(|h| h.status == HypothesisStatus::Inconclusive);
 
-    let state = if has_critical_or_high {
+    let mut analysers: Vec<crate::domain::AnalyserResult> = ctx
+        .initial_report
+        .iter()
+        .flat_map(|r| r.analysers.iter().cloned())
+        .collect();
+    for follow_up in &ctx.follow_up_results {
+        analysers.push(crate::domain::AnalyserResult {
+            dwarf_id: follow_up.dwarf_id,
+            findings: follow_up.findings.clone(),
+            checks: Vec::new(),
+        });
+    }
+    let assessment =
+        crate::analysis::assessment::assess_from_analysers(&analysers, http_complete, Vec::new());
+
+    let state = if has_critical_or_high
+        || assessment.overall_verdict == crate::analysis::assessment::DomainVerdict::Fail
+    {
         ReleaseReadinessState::PotentialReleaseBlockers
-    } else if http_incomplete
+    } else if !http_complete
         || matches!(
             ctx.state,
             InvestigationState::BudgetExhausted | InvestigationState::Failed
@@ -273,7 +286,7 @@ fn compute_release_readiness(
         rationale
             .push("One or more Critical/High deterministic findings were observed.".to_owned());
     }
-    if http_incomplete {
+    if !http_complete {
         rationale.push("Initial HTTP collection was failed, skipped, or partial.".to_owned());
     }
     if has_inconclusive_hyp {
@@ -282,20 +295,26 @@ fn compute_release_readiness(
     if rationale.is_empty() {
         rationale.push("All executed checks within scope completed cleanly.".to_owned());
     }
+    let mut coverage_limitations = vec![
+        "Authenticated user journeys were not exercised.".to_owned(),
+        if ctx.discovered_pages.is_empty() {
+            "Only a single seed URL was investigated.".to_owned()
+        } else {
+            format!(
+                "Bounded crawl covered {} discovered URL(s).",
+                ctx.discovered_pages.len()
+            )
+        },
+    ];
+    for limit in assessment.limitations {
+        if !coverage_limitations.contains(&limit) {
+            coverage_limitations.push(limit);
+        }
+    }
     ReleaseReadinessAssessment {
         state,
         rationale,
-        coverage_limitations: vec![
-            "Authenticated user journeys were not exercised.".to_owned(),
-            if ctx.discovered_pages.is_empty() {
-                "Only a single seed URL was investigated.".to_owned()
-            } else {
-                format!(
-                    "Bounded crawl covered {} discovered URL(s).",
-                    ctx.discovered_pages.len()
-                )
-            },
-        ],
+        coverage_limitations,
     }
 }
 

@@ -295,6 +295,9 @@ pub struct PolicyEvaluation {
     pub passed: bool,
     /// Human-readable gate violations when `passed` is `false`.
     pub violations: Vec<String>,
+    /// Multi-dimensional quality assessment underlying this evaluation.
+    #[serde(default)]
+    pub quality_assessment: Option<crate::analysis::assessment::QualityAssessment>,
 }
 
 /// Evaluates `report` against `policy`.
@@ -388,9 +391,12 @@ pub fn evaluate_policy(report: &AuditReport, policy: &PolicyConfig) -> PolicyEva
         }
     }
 
+    let quality_assessment = Some(crate::analysis::assessment::assess_audit_report(report));
+
     PolicyEvaluation {
         passed: violations.is_empty(),
         violations,
+        quality_assessment,
     }
 }
 
