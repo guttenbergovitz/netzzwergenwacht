@@ -15,6 +15,7 @@ pub mod graph;
 pub mod journeys;
 pub mod network;
 pub mod performance;
+pub mod profile;
 pub mod rendered_history;
 pub mod schema;
 pub mod security;
