@@ -453,6 +453,32 @@ fn count_severity(state: &AppState, severity: Severity) -> usize {
 }
 
 #[allow(clippy::too_many_lines)]
+/// First row index to render so `selected` stays inside a viewport of `viewport` rows.
+///
+/// The selection is kept at the bottom edge once it passes the viewport, which is how a
+/// terminal operator expects a list to scroll: the cursor moves, the content follows.
+fn window_start(selected: usize, viewport: usize) -> usize {
+    selected.saturating_sub(viewport.max(1) - 1)
+}
+
+/// Truncates `text` from the front so the distinguishing tail survives.
+///
+/// A target list shows long URLs; clipping the right-hand end hides the part that
+/// differs between pages, which is exactly the part the operator is looking for.
+fn fit_tail(text: &str, width: usize) -> String {
+    let count = text.chars().count();
+    if count <= width {
+        return text.to_owned();
+    }
+    if width <= 1 {
+        return "…".chars().take(width).collect();
+    }
+    let mut out = String::from('…');
+    out.extend(text.chars().skip(count - (width - 1)));
+    out
+}
+
+#[allow(clippy::too_many_lines)]
 fn render_brigade(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -469,10 +495,14 @@ fn render_brigade(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     ])
     .style(state.theme.title_style());
 
+    let window_size = usize::from(chunks[0].height.saturating_sub(4)).max(1);
+    let start = window_start(state.selected_brigade_index, window_size);
     let rows: Vec<Row<'_>> = state
         .brigade_rows
         .iter()
         .enumerate()
+        .skip(start)
+        .take(window_size)
         .map(|(idx, b)| {
             let is_selected = idx == state.selected_brigade_index;
             let prefix = if is_selected {
@@ -623,6 +653,7 @@ fn reconnaissance_coverage_lines(state: &AppState) -> Vec<Line<'static>> {
     ]
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_targets(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let cols = if area.width >= 100 {
         Layout::default()
@@ -638,10 +669,17 @@ fn render_targets(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
 
     let header =
         Row::new(vec!["State", "HTTP", "Depth", "URL", "Issues"]).style(state.theme.title_style());
+    let window_size = usize::from(cols[0].height.saturating_sub(4)).max(1);
+    let start = window_start(state.selected_target_index, window_size);
+    let url_width = usize::from(cols[0].width.saturating_sub(2))
+        .saturating_sub(10 + 6 + 6 + 8 + 4)
+        .max(12);
     let rows: Vec<Row<'_>> = state
         .target_rows
         .iter()
         .enumerate()
+        .skip(start)
+        .take(window_size)
         .map(|(idx, row)| {
             let is_selected = idx == state.selected_target_index;
             let prefix = if is_selected {
@@ -661,7 +699,7 @@ fn render_targets(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 format!("{prefix}{}", row.state.label()),
                 http,
                 row.depth.to_string(),
-                row.display_url.clone(),
+                fit_tail(&row.display_url, url_width),
                 row.findings_count.to_string(),
             ])
             .style(style)
@@ -884,10 +922,34 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         .constraints([Constraint::Length(3), Constraint::Min(10)])
         .split(area);
 
-    // Category selector bar (`h`/`l` or `Left`/`Right` switches category).
+    // Category selector bar (`h`/`l` or `Left`/`Right` switches category). The bar is
+    // windowed so the selected family stays visible: nineteen labels never fit in one
+    // terminal line, and a bar that clips the selection looks as if nothing happened.
+    let budget = usize::from(chunks[0].width.saturating_sub(6)).max(12);
+    let selected_pos = EvidenceCategory::ALL
+        .iter()
+        .position(|cat| *cat == state.evidence_category)
+        .unwrap_or(0);
+    let widths: Vec<usize> = EvidenceCategory::ALL
+        .iter()
+        .map(|cat| cat.label().chars().count() + 3)
+        .collect();
+    let mut start = 0;
+    while start < selected_pos && widths[start..=selected_pos].iter().sum::<usize>() > budget {
+        start += 1;
+    }
     let mut cat_spans = Vec::new();
-    for cat in EvidenceCategory::ALL {
-        let is_selected = cat == state.evidence_category;
+    let mut used = 0;
+    if start > 0 {
+        cat_spans.push(Span::styled("‹ ", state.theme.muted_style()));
+        used += 2;
+    }
+    for (idx, cat) in EvidenceCategory::ALL.iter().enumerate().skip(start) {
+        if used + widths[idx] + 2 > budget {
+            cat_spans.push(Span::styled("›", state.theme.muted_style()));
+            break;
+        }
+        let is_selected = *cat == state.evidence_category;
         let style = if is_selected {
             state.theme.selected_style()
         } else {
@@ -895,9 +957,14 @@ fn render_evidence(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         };
         cat_spans.push(Span::styled(format!(" {} ", cat.label()), style));
         cat_spans.push(Span::styled("│", state.theme.muted_style()));
+        used += widths[idx];
     }
     let cat_block = Block::default()
-        .title(" EVIDENCE FAMILIES (h/l or Left/Right to switch, PageUp/PageDown to paginate) ")
+        .title(format!(
+            " EVIDENCE FAMILIES ({}/{}) — h/l or Left/Right switches, PageUp/PageDown paginates ",
+            selected_pos + 1,
+            EvidenceCategory::ALL.len()
+        ))
         .borders(Borders::ALL)
         .border_style(state.theme.border_style(false));
     frame.render_widget(
@@ -2080,10 +2147,14 @@ fn render_investigation(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
 
     let header =
         Row::new(vec!["ID", "Status", "Originating Rule", "Tool"]).style(state.theme.title_style());
+    let window_size = usize::from(top_cols[0].height.saturating_sub(4)).max(1);
+    let start = window_start(state.selected_hypothesis_index, window_size);
     let rows: Vec<Row<'_>> = state
         .hypotheses
         .iter()
         .enumerate()
+        .skip(start)
+        .take(window_size)
         .map(|(idx, h)| {
             let is_selected = idx == state.selected_hypothesis_index;
             let prefix = if is_selected {
@@ -2315,10 +2386,14 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     ])
     .style(state.theme.title_style());
 
+    let window_size = usize::from(chunks[0].height.saturating_sub(4)).max(1);
+    let start = window_start(state.selected_history_index, window_size);
     let rows: Vec<Row<'_>> = state
         .history_rows
         .iter()
         .enumerate()
+        .skip(start)
+        .take(window_size)
         .map(|(idx, r)| {
             let is_selected = idx == state.selected_history_index;
             let prefix = if is_selected {
@@ -2882,5 +2957,100 @@ mod tests {
     fn observed_duration_never_collapses_to_zero_cells() {
         let bar = build_waterfall_bar(Some(0), Some(1), 1_000_000, "#");
         assert_eq!(bar.chars().filter(|cell| *cell == '#').count(), 1);
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::render;
+    use crate::tui::state::{
+        AppState, EvidenceCategory, TargetInspectionState, TargetSurfaceRow, WorkbenchView,
+    };
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn buffer_text(terminal: &Terminal<TestBackend>) -> String {
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn target_row(index: usize) -> TargetSurfaceRow {
+        TargetSurfaceRow {
+            display_url: format!("https://example.org/page-{index:03}"),
+            discovery_source: String::from("crawl"),
+            depth: 1,
+            page_type: String::from("Unknown"),
+            http_status: Some(200),
+            state: TargetInspectionState::Completed,
+            evidence_summary: String::from("Source"),
+            findings_count: 0,
+        }
+    }
+
+    #[test]
+    fn target_selection_scrolls_into_view_instead_of_being_clipped() {
+        let mut state = AppState::default();
+        state.launcher.open = false;
+        state.active_view = WorkbenchView::Targets;
+        state.target_rows = (0..80).map(target_row).collect();
+        state.selected_target_index = 75;
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|frame| render(frame, &state)).expect("draw");
+        let text = buffer_text(&terminal);
+
+        assert!(
+            text.contains("page-075"),
+            "the selected row must be visible after scrolling past the viewport"
+        );
+        assert!(
+            !text.contains("page-000"),
+            "the first row must have scrolled off once the selection moved far past it"
+        );
+    }
+
+    #[test]
+    fn a_short_list_still_starts_at_the_top() {
+        let mut state = AppState::default();
+        state.launcher.open = false;
+        state.active_view = WorkbenchView::Targets;
+        state.target_rows = (0..3).map(target_row).collect();
+        state.selected_target_index = 2;
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|frame| render(frame, &state)).expect("draw");
+        let text = buffer_text(&terminal);
+
+        assert!(text.contains("page-000"), "buffer was:\n{text}");
+        assert!(text.contains("page-002"), "buffer was:\n{text}");
+    }
+
+    #[test]
+    fn evidence_family_bar_keeps_the_selected_family_visible() {
+        let mut state = AppState::default();
+        state.launcher.open = false;
+        state.active_view = WorkbenchView::Evidence;
+        state.evidence_category = EvidenceCategory::ALL[EvidenceCategory::ALL.len() - 1];
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("terminal");
+        terminal.draw(|frame| render(frame, &state)).expect("draw");
+        let text = buffer_text(&terminal);
+
+        let label = state.evidence_category.label();
+        assert!(
+            text.contains(label),
+            "the selected evidence family `{label}` must be rendered, not clipped off the bar"
+        );
+        assert!(
+            text.contains(&format!("/{})", EvidenceCategory::ALL.len())),
+            "the bar must state which family of how many is selected"
+        );
     }
 }
