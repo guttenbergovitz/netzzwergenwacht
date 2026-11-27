@@ -12,6 +12,7 @@ pub mod content_fingerprint;
 pub mod document;
 pub mod element_identity;
 pub mod graph;
+pub mod journeys;
 pub mod network;
 pub mod performance;
 pub mod rendered_history;
