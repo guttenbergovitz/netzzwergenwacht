@@ -20,4 +20,5 @@ pub mod intelligence;
 pub mod investigation;
 pub mod patrol;
 pub mod persistence;
+pub mod report_html;
 pub mod tui;

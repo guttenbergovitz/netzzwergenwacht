@@ -356,6 +356,7 @@ enum OutputFormat {
     Text,
     Json,
     Markdown,
+    Html,
 }
 
 #[derive(Debug, Subcommand)]
@@ -545,6 +546,15 @@ async fn main() -> ExitCode {
                                     println!("{line}");
                                 }
                             }
+                            OutputFormat::Html => {
+                                println!(
+                                    "{}",
+                                    netzzwergenwacht::report_html::wrap_preformatted_html(
+                                        "Effective Configuration",
+                                        &effective.render_lines().join("\n"),
+                                    )
+                                );
+                            }
                         }
                         ExitCode::from(EXIT_OK)
                     }
@@ -570,6 +580,15 @@ async fn main() -> ExitCode {
                     for line in report.render_lines() {
                         println!("{line}");
                     }
+                }
+                OutputFormat::Html => {
+                    println!(
+                        "{}",
+                        netzzwergenwacht::report_html::wrap_preformatted_html(
+                            "Doctor Diagnostics",
+                            &report.render_lines().join("\n"),
+                        )
+                    );
                 }
             }
             if report.is_ready() {
@@ -674,6 +693,21 @@ async fn main() -> ExitCode {
                     for line in report.render_lines() {
                         println!("{line}");
                     }
+                }
+                OutputFormat::Html => {
+                    let html = netzzwergenwacht::report_html::render_scan_html(
+                        &netzzwergenwacht::report_html::ScanHtmlInput {
+                            run_id: &report.run_id,
+                            application: &report.application,
+                            seed_url: &report.seed_url,
+                            coverage: &report.coverage,
+                            resources: &report.resources,
+                            systemic_issues: &report.systemic_issues,
+                            quality_assessment: &report.quality_assessment,
+                            stored_at: report.stored_at.as_deref(),
+                        },
+                    );
+                    println!("{html}");
                 }
             }
             if report.store_error.is_some() {
@@ -985,6 +1019,16 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
                 println!("Summary: {}", patrol.executive_summary);
                 println!("Coverage: {}", patrol.coverage_summary);
             }
+            OutputFormat::Html => {
+                let md = netzzwergenwacht::patrol::render_patrol_markdown(&patrol, role);
+                println!(
+                    "{}",
+                    netzzwergenwacht::report_html::wrap_preformatted_html(
+                        &format!("Stored Patrol #{}", patrol.patrol_number),
+                        &md,
+                    )
+                );
+            }
         }
         return ExitCode::from(EXIT_OK);
     }
@@ -1001,6 +1045,16 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
                 );
             }
             OutputFormat::Text => print_investigation_text(&inv, false),
+            OutputFormat::Html => {
+                let md = netzzwergenwacht::investigation::reporting::render_markdown_report(&inv);
+                println!(
+                    "{}",
+                    netzzwergenwacht::report_html::wrap_preformatted_html(
+                        "Investigation Report",
+                        &md,
+                    )
+                );
+            }
         }
         return ExitCode::from(EXIT_OK);
     }
@@ -1018,6 +1072,14 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
                     let assessment =
                         netzzwergenwacht::analysis::assessment::assess_audit_report(&audit);
                     print_text_report(&audit, &eval, &assessment);
+                }
+                OutputFormat::Html => {
+                    let assessment =
+                        netzzwergenwacht::analysis::assessment::assess_audit_report(&audit);
+                    println!(
+                        "{}",
+                        netzzwergenwacht::report_html::render_audit_html(&audit, &assessment)
+                    );
                 }
             }
             ExitCode::from(EXIT_OK)
@@ -1136,6 +1198,16 @@ async fn run_patrol_cmd(
                 }
             }
         }
+        OutputFormat::Html => {
+            let md = netzzwergenwacht::patrol::render_patrol_markdown(&report, audience.into());
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::wrap_preformatted_html(
+                    &format!("Autonomous Patrol #{}", report.patrol_number),
+                    &md,
+                )
+            );
+        }
     }
 
     if !report.execution_succeeded {
@@ -1177,6 +1249,19 @@ fn render_portfolio_patrol(
                     println!("  - [{}] ({:?}) ERROR: {err}", o.id, o.criticality);
                 }
             }
+        }
+        OutputFormat::Html => {
+            let summary = format!(
+                "Apps: {} | Succeeded: {} | Quiet: {} | Escalated: {}",
+                portfolio.total_applications,
+                portfolio.succeeded_count,
+                portfolio.quiet_count,
+                portfolio.escalated_count
+            );
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::wrap_preformatted_html("Portfolio Patrol", &summary)
+            );
         }
     }
     if portfolio.succeeded_count < portfolio.total_applications {
@@ -1241,6 +1326,23 @@ async fn run_verify(
             println!("- **Persisting**: {}", diff.summary.persisting_count);
             println!("- **Unverified**: {}", diff.summary.unverified_count);
             println!("- **New**: {}", diff.summary.new_count);
+        }
+        OutputFormat::Html => {
+            let summary = format!(
+                "Target: {}\nResolved: {}\nPersisting: {}\nUnverified: {}\nNew: {}",
+                diff.current_target,
+                diff.summary.resolved_count,
+                diff.summary.persisting_count,
+                diff.summary.unverified_count,
+                diff.summary.new_count
+            );
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::wrap_preformatted_html(
+                    "Remediation Verification",
+                    &summary,
+                )
+            );
         }
     }
 
@@ -1311,6 +1413,16 @@ async fn run_investigate(
             } else {
                 print_investigation_text(&report, show_events);
             }
+        }
+        OutputFormat::Html => {
+            let md = netzzwergenwacht::investigation::render_role_perspective_markdown(
+                &report,
+                audience.into(),
+            );
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::wrap_preformatted_html("Investigation Report", &md)
+            );
         }
     }
     match report.state {
@@ -1523,8 +1635,18 @@ async fn run_check(
         report.ai_synthesis = run_optional_ai(&report).await;
     }
 
+    emit_audit_output(&report, &eval, &assessment, format, code)
+}
+
+fn emit_audit_output(
+    report: &analysis::AuditReport,
+    eval: &config::PolicyEvaluation,
+    assessment: &analysis::assessment::QualityAssessment,
+    format: OutputFormat,
+    code: ExitCode,
+) -> ExitCode {
     match format {
-        OutputFormat::Json => match serde_json::to_string_pretty(&report) {
+        OutputFormat::Json => match serde_json::to_string_pretty(report) {
             Ok(json) => {
                 println!("{json}");
                 code
@@ -1535,10 +1657,17 @@ async fn run_check(
             }
         },
         OutputFormat::Text | OutputFormat::Markdown => {
-            print_text_report(&report, &eval, &assessment);
+            print_text_report(report, eval, assessment);
             if let Some(syn) = &report.ai_synthesis {
                 print_ai_synthesis(syn);
             }
+            code
+        }
+        OutputFormat::Html => {
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::render_audit_html(report, assessment)
+            );
             code
         }
     }
@@ -1791,6 +1920,31 @@ fn render_batch_report(
             }
             code
         }
+        OutputFormat::Html => {
+            let mut lines = vec![format!(
+                "Targets: {} total, {} completed, {} invalid",
+                batch_report.total_targets, batch_report.completed, batch_report.failed_targets
+            )];
+            for item in &batch_report.items {
+                let status = if item.policy.passed { "PASS" } else { "FAIL" };
+                lines.push(format!(
+                    "[{status}] {} (C:{} H:{} M:{} L:{})",
+                    item.report.target.as_str(),
+                    item.report.summary.critical_findings,
+                    item.report.summary.high_findings,
+                    item.report.summary.medium_findings,
+                    item.report.summary.low_findings,
+                ));
+            }
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::wrap_preformatted_html(
+                    "Batch Audit",
+                    &lines.join("\n"),
+                )
+            );
+            code
+        }
     }
 }
 
@@ -1830,6 +1984,21 @@ fn run_diff(baseline_path: &Path, current_path: &Path, format: OutputFormat) -> 
         },
         OutputFormat::Text | OutputFormat::Markdown => {
             print_diff_report(&diff);
+            code
+        }
+        OutputFormat::Html => {
+            let summary = format!(
+                "Baseline: {}\nCurrent:  {}\nSummary:  {} new, {} persisting, {} resolved",
+                diff.baseline_target,
+                diff.current_target,
+                diff.summary.new_count,
+                diff.summary.persisting_count,
+                diff.summary.resolved_count
+            );
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::wrap_preformatted_html("Regression Diff", &summary)
+            );
             code
         }
     }
