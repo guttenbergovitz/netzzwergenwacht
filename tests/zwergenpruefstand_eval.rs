@@ -40,6 +40,18 @@ fn fixture_body(path: &str) -> (&'static str, &'static str) {
             "200 OK",
             include_str!("../fixtures/zwergenpruefstand/fixed/a11y.html"),
         ),
+        "/multilingual-defective.html" => (
+            "200 OK",
+            include_str!("../fixtures/zwergenpruefstand/multilingual-defective.html"),
+        ),
+        "/spa-shell.html" => (
+            "200 OK",
+            include_str!("../fixtures/zwergenpruefstand/spa-shell.html"),
+        ),
+        "/ecommerce-product.html" => (
+            "200 OK",
+            include_str!("../fixtures/zwergenpruefstand/ecommerce-product.html"),
+        ),
         "/segmentation.html" => (
             "200 OK",
             "<html lang=en><body><nav>Home Offers About Contact</nav><main><p>Product information</p><p lang=de>Lieferbar</p><p hidden>Hidden words</p></main><section></section></body></html>",

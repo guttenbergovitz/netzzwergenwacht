@@ -26,6 +26,30 @@
         { "rule_id": "a11y.forms.labels", "domain": "accessibility" },
         { "rule_id": "a11y.aria.broken_references", "domain": "accessibility" }
       ]
+    },
+    {
+      "path": "/multilingual-defective.html",
+      "role": "multilingual_with_defects",
+      "expected_defects": [
+        { "rule_id": "such.i18n.missing_self_reference", "domain": "seo" },
+        { "rule_id": "inh.integrity.unresolved_translation_key", "domain": "content" },
+        { "rule_id": "inh.integrity.placeholder_contact", "domain": "content" }
+      ]
+    },
+    {
+      "path": "/spa-shell.html",
+      "role": "spa_client_shell",
+      "expected_defects": [
+        { "rule_id": "inh.content.thin_content", "domain": "content" }
+      ]
+    },
+    {
+      "path": "/ecommerce-product.html",
+      "role": "ecommerce_with_defects",
+      "expected_defects": [
+        { "rule_id": "such.schema.json_ld", "domain": "seo" },
+        { "rule_id": "a11y.forms.labels", "domain": "accessibility" }
+      ]
     }
   ],
   "expected_systemic_rules": ["a11y.images.alt", "such.meta.description"],
