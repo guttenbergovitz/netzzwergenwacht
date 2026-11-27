@@ -1,1988 +1,1194 @@
 {
-  "repository": "guttenbergovitz/netzzwergenwacht",
-  "branch": "develop",
-  "total_rules": 235,
-  "rules": [
-    {
-      "rule_id": "a11y.doc.lang",
-      "constant": "RULE_DOC_LANG",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.images.alt",
-      "constant": "RULE_IMAGE_ALT",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.forms.labels",
-      "constant": "RULE_FORM_LABELS",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.aria.broken_references",
-      "constant": "RULE_ARIA_REFS",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.interactive.accessible_name",
-      "constant": "RULE_INTERACTIVE_NAMES",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.rendered.contrast_and_axe",
-      "constant": "RULE_RENDERED_AXE",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "module_test_count": 3,
-      "status": "external_instrument"
-    },
-    {
-      "rule_id": "a11y.behavioural.keyboard_and_focus",
-      "constant": "RULE_BEHAVIOURAL",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.console.errors",
-      "constant": "RULE_CONSOLE_ERRORS",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.network.failed_requests",
-      "constant": "RULE_FAILED_REQUESTS",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.runtime.api_failures",
-      "constant": "RULE_API_FAILURES",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.runtime.hydration_errors",
-      "constant": "RULE_HYDRATION_ERRORS",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.runtime.source_rendered_divergence",
-      "constant": "RULE_SOURCE_RENDERED_DIVERGENCE",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.thin_content",
-      "constant": "RULE_THIN_CONTENT",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.freshness_headers",
-      "constant": "RULE_FRESHNESS_HEADERS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.placeholder_text",
-      "constant": "RULE_PLACEHOLDER",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.title_h1_duplication",
-      "constant": "RULE_TITLE_H1_MATCH",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.trust.legal_links",
-      "constant": "RULE_LEGAL_LINKS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.mojibake",
-      "constant": "RULE_MOJIBAKE",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.unrendered_markup",
-      "constant": "RULE_UNRENDERED_MARKUP",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.stale_copyright",
-      "constant": "RULE_STALE_COPYRIGHT",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.readability",
-      "constant": "RULE_READABILITY",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "module_test_count": 4,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.links.broken_internal",
-      "constant": "RULE_BROKEN_INTERNAL_LINKS",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.links.to_redirects",
-      "constant": "RULE_LINKS_TO_REDIRECTS",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.links.to_non_indexable",
-      "constant": "RULE_LINKS_TO_NON_INDEXABLE",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.links.broken_anchors",
-      "constant": "RULE_BROKEN_ANCHORS",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.crawl.orphan_candidates",
-      "constant": "RULE_ORPHAN_CANDIDATES",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.seo.canonical_chain_or_loop",
-      "constant": "RULE_CANONICAL_GRAPH",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.i18n.hreflang_reciprocity",
-      "constant": "RULE_HREFLANG_RECIPROCITY",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.content.duplicate_metadata",
-      "constant": "RULE_DUPLICATE_METADATA",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.schema.entity_conflicts",
-      "constant": "RULE_ENTITY_CONFLICTS",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.schema.dangling_entities",
-      "constant": "RULE_DANGLING_ENTITIES",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.status_error",
-      "constant": "RULE_HTTP_STATUS",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.redirect_chain",
-      "constant": "RULE_REDIRECT_CHAIN",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.redirect_loop",
-      "constant": "RULE_REDIRECT_LOOP",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.soft_error",
-      "constant": "RULE_SOFT_ERROR",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.links.hygiene",
-      "constant": "RULE_LINK_HYGIENE",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.http.exchange_duration",
-      "constant": "RULE_EXCHANGE_DURATION",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.http.payload_size",
-      "constant": "RULE_PAYLOAD_SIZE",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.http.compression",
-      "constant": "RULE_COMPRESSION",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.http.cache_headers",
-      "constant": "RULE_CACHE_HEADERS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.browser.core_web_vitals",
-      "constant": "RULE_CORE_WEB_VITALS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.dom.render_blocking_scripts",
-      "constant": "RULE_RENDER_BLOCKING_SCRIPTS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.dom.third_party_scripts",
-      "constant": "RULE_THIRD_PARTY_SCRIPTS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.dom.size",
-      "constant": "RULE_DOM_SIZE",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.dom.inline_script_weight",
-      "constant": "RULE_INLINE_SCRIPT_WEIGHT",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.dom.duplicate_scripts",
-      "constant": "RULE_DUPLICATE_SCRIPTS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.dom.render_blocking_stylesheets",
-      "constant": "RULE_RENDER_BLOCKING_CSS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.assets.preconnect",
-      "constant": "RULE_PRECONNECT",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.assets.lazy_loading",
-      "constant": "RULE_LAZY_LOADING",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.runtime.total_transfer_weight",
-      "constant": "RULE_RUNTIME_TRANSFER_WEIGHT",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.runtime.uncompressed_text_assets",
-      "constant": "RULE_RUNTIME_UNCOMPRESSED",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.runtime.uncached_static_assets",
-      "constant": "RULE_RUNTIME_UNCACHED",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.runtime.rendered_dom_size",
-      "constant": "RULE_RENDERED_DOM_SIZE",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.schema.type_requirements",
-      "constant": "RULE_SCHEMA_TYPE_REQUIREMENTS",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::schema",
-      "source_path": "src/analysis/schema.rs",
-      "module_test_count": 2,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.schema.same_as",
-      "constant": "RULE_SCHEMA_SAME_AS",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::schema",
-      "source_path": "src/analysis/schema.rs",
-      "module_test_count": 2,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.schema.entity_references",
-      "constant": "RULE_SCHEMA_ENTITY_REFS",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::schema",
-      "source_path": "src/analysis/schema.rs",
-      "module_test_count": 2,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.transport.https",
-      "constant": "RULE_HTTPS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.tls.certificate_expiry",
-      "constant": "RULE_TLS_EXPIRY",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.hsts",
-      "constant": "RULE_HSTS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.csp",
-      "constant": "RULE_CSP",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.x_content_type_options",
-      "constant": "RULE_XCTO",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.x_frame_options",
-      "constant": "RULE_XFO",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.referrer_policy",
-      "constant": "RULE_REFERRER",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.cookies",
-      "constant": "RULE_COOKIES",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.cors",
-      "constant": "RULE_CORS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.dom.mixed_content",
-      "constant": "RULE_MIXED_CONTENT",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.dom.subresource_integrity",
-      "constant": "RULE_SRI",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.permissions_policy",
-      "constant": "RULE_PERMISSIONS_POLICY",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.version_disclosure",
-      "constant": "RULE_VERSION_DISCLOSURE",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.dom.insecure_forms",
-      "constant": "RULE_INSECURE_FORMS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.dom.exposed_secrets",
-      "constant": "RULE_EXPOSED_SECRETS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "module_test_count": 5,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.doc.duplicate_ids",
-      "constant": "RULE_DUPLICATE_IDS",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.headings.hierarchy",
-      "constant": "RULE_HEADING_HIERARCHY",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.landmarks.presence",
-      "constant": "RULE_LANDMARKS",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.interactive.native_semantics",
-      "constant": "RULE_INTERACTIVE_SEMANTICS",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.doc.container_ratio",
-      "constant": "RULE_CONTAINER_RATIO",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.doc.charset",
-      "constant": "RULE_CHARSET",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.nav.skip_link",
-      "constant": "RULE_SKIP_LINK",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.meta.title",
-      "constant": "RULE_TITLE",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.meta.description",
-      "constant": "RULE_DESCRIPTION",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.meta.canonical",
-      "constant": "RULE_CANONICAL",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.indexability.robots",
-      "constant": "RULE_ROBOTS",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.meta.h1",
-      "constant": "RULE_H1",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.i18n.hreflang",
-      "constant": "RULE_HREFLANG",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.schema.json_ld",
-      "constant": "RULE_JSON_LD",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.social.metadata",
-      "constant": "RULE_SOCIAL",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.url.hygiene",
-      "constant": "RULE_URL_HYGIENE",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "module_test_count": 3,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.layout.horizontal_overflow",
-      "constant": "RULE_HORIZONTAL_OVERFLOW",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.assets.broken_images",
-      "constant": "RULE_BROKEN_IMAGES",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.mobile.viewport_meta",
-      "constant": "RULE_VIEWPORT_META",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.layout.image_dimensions",
-      "constant": "RULE_IMAGE_DIMENSIONS",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.images.modern_formats",
-      "constant": "RULE_MODERN_IMAGE_FORMATS",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.images.responsive_srcset",
-      "constant": "RULE_IMAGE_SRCSET",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.images.filename_quality",
-      "constant": "RULE_IMAGE_FILENAME",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.images.hotlinked",
-      "constant": "RULE_IMAGE_HOTLINKED",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.images.inline_svg_a11y",
-      "constant": "RULE_INLINE_SVG_A11Y",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.rendered.oversized_images",
-      "constant": "RULE_OVERSIZED_IMAGES",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.rendered.aspect_ratio_distortion",
-      "constant": "RULE_ASPECT_DISTORTION",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.rendered.above_fold_lazy_lcp",
-      "constant": "RULE_ABOVE_FOLD_LAZY",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.mobile.small_font_size",
-      "constant": "RULE_MOBILE_SMALL_FONT",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.mobile.small_tap_targets",
-      "constant": "RULE_MOBILE_TAP_TARGETS",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "module_test_count": 7,
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.tables.headers",
-      "constant": "RULE_TABLE_HEADERS",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.iframes.title",
-      "constant": "RULE_IFRAME_TITLE",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.focus.positive_tabindex",
-      "constant": "RULE_POSITIVE_TABINDEX",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.media.autoplay_unmuted",
-      "constant": "RULE_AUTOPLAY_MEDIA",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.doc.meta_refresh",
-      "constant": "RULE_META_REFRESH",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.doc.favicon",
-      "constant": "RULE_FAVICON",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.url.uppercase_path",
-      "constant": "RULE_URL_UPPERCASE",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.url.query_hygiene",
-      "constant": "RULE_URL_QUERY_HYGIENE",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.url.deep_path",
-      "constant": "RULE_URL_DEEP_PATH",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.trust.author_or_date",
-      "constant": "RULE_AUTHOR_OR_DATE",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.cross_origin_isolation",
-      "constant": "RULE_CROSS_ORIGIN_ISOLATION",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.sensitive_cache",
-      "constant": "RULE_SENSITIVE_CACHE",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.dom.iframe_sandbox",
-      "constant": "RULE_IFRAME_SANDBOX",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.meta.canonical_absolute",
-      "constant": "RULE_CANONICAL_ABSOLUTE",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.feeds.autodiscovery",
-      "constant": "RULE_FEED_AUTODISCOVERY",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.text_to_html_ratio",
-      "constant": "RULE_TEXT_TO_HTML_RATIO",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.ax.machine_readable_signals",
-      "constant": "RULE_AX_SIGNALS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.images.inline_data_uri",
-      "constant": "RULE_INLINE_DATA_URI",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.media.video_controls_or_poster",
-      "constant": "RULE_VIDEO_CONTROLS_POSTER",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.dom.excessive_stylesheets",
-      "constant": "RULE_EXCESSIVE_STYLESHEETS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.assets.font_display_swap",
-      "constant": "RULE_FONT_DISPLAY_SWAP",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.runtime.third_party_requests",
-      "constant": "RULE_RUNTIME_THIRD_PARTY_REQUESTS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.analytics.tracking_bloat",
-      "constant": "RULE_ANALYTICS_BLOAT",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.runtime.excessive_subresources",
-      "constant": "RULE_EXCESSIVE_SUBRESOURCES",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.crawl.deep_crawl_depth",
-      "constant": "RULE_DEEP_CRAWL_DEPTH",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.seo.sitemap_non_indexable",
-      "constant": "RULE_SITEMAP_NON_INDEXABLE",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.js.uncaught_exception",
-      "constant": "RULE_UNCAUGHT_EXCEPTION",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.js.unhandled_rejection",
-      "constant": "RULE_UNHANDLED_REJECTION",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.js.csp_violation",
-      "constant": "RULE_CSP_VIOLATION",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.network.cors_block",
-      "constant": "RULE_CORS_BLOCK",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.ax.missing_accessible_name",
-      "constant": "RULE_AX_MISSING_NAME",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.ax.hidden_focusable_element",
-      "constant": "RULE_AX_HIDDEN_FOCUSABLE",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.lcp.slow_ttfb",
-      "constant": "RULE_LCP_SLOW_TTFB",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.js.long_tasks",
-      "constant": "RULE_JS_LONG_TASKS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.waterfall.redirect_overhead",
-      "constant": "RULE_WATERFALL_REDIRECTS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.cache.zero_max_age",
-      "constant": "RULE_CACHE_ZERO_MAX_AGE",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.csp.missing_object_restriction",
-      "constant": "RULE_CSP_OBJECT",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.csp.missing_base_uri_restriction",
-      "constant": "RULE_CSP_BASE_URI",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.csp.report_only_without_enforcement",
-      "constant": "RULE_CSP_REPORT_ONLY",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.csp.unsafe_eval",
-      "constant": "RULE_CSP_UNSAFE_EVAL",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.cookies.prefix_violation",
-      "constant": "RULE_COOKIE_PREFIX",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.cookies.excessive_lifetime",
-      "constant": "RULE_COOKIE_LIFETIME",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.cookies.invalid_domain_scope",
-      "constant": "RULE_COOKIE_INVALID_DOMAIN",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.cookies.insecure_samesite_none",
-      "constant": "RULE_COOKIE_INSECURE_SAMESITE",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.cookies.inconsistent_attributes",
-      "constant": "RULE_COOKIE_INCONSISTENT_ATTRS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.privacy.persistent_identifiers",
-      "constant": "RULE_PERSISTENT_IDENTIFIERS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.forms.cross_origin_submission",
-      "constant": "RULE_FORM_CROSS_ORIGIN",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.exposure.sensitive_url_parameters",
-      "constant": "RULE_SENSITIVE_URL_PARAMS",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.links.excessive_internal_redirects",
-      "constant": "RULE_EXCESSIVE_INTERNAL_REDIRECTS",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.crawl.trap_candidate",
-      "constant": "RULE_CRAWL_TRAP_CANDIDATE",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.resources.shared_failed_dependency",
-      "constant": "RULE_SHARED_FAILED_DEPENDENCY",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.resources.third_party_concentration",
-      "constant": "RULE_THIRD_PARTY_CONCENTRATION",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.layout.offscreen_control",
-      "constant": "RULE_OFFSCREEN_CONTROL",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.layout.sticky_header_obstruction",
-      "constant": "RULE_STICKY_HEADER_OBSTRUCTION",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.images.pixelation_candidate",
-      "constant": "RULE_IMAGE_PIXELATION",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.media.missing_caption_track",
-      "constant": "RULE_MEDIA_CAPTIONS",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.images.suspicious_alternative_text",
-      "constant": "RULE_SUSPICIOUS_ALT",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.links.ambiguous_accessible_name",
-      "constant": "RULE_AMBIGUOUS_LINKS",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.integrity.unresolved_translation_key",
-      "constant": "RULE_UNRESOLVED_I18N_KEY",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.integrity.placeholder_contact",
-      "constant": "RULE_PLACEHOLDER_CONTACT",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.redirect.https_downgrade",
-      "constant": "RULE_REDIRECT_HTTPS_DOWNGRADE",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.redirect.cross_origin_chain",
-      "constant": "RULE_REDIRECT_CROSS_ORIGIN",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.etag_validation",
-      "constant": "RULE_ETAG_VALIDATION",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.rate_limiting_observed",
-      "constant": "RULE_RATE_LIMITING",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.landmarks.duplicate_main",
-      "constant": "RULE_DUPLICATE_MAIN",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.headings.empty_heading",
-      "constant": "RULE_EMPTY_HEADING",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.hsts_duration",
-      "constant": "RULE_HSTS_DURATION",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.forms.sensitive_get_submission",
-      "constant": "RULE_SENSITIVE_GET_FORM",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.i18n.missing_self_reference",
-      "constant": "RULE_HREFLANG_SELF_REF",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.social.missing_preview_image",
-      "constant": "RULE_SOCIAL_IMAGE",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.cls.layout_shift_observed",
-      "constant": "RULE_RUNTIME_CLS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.lcp.slow_element_render",
-      "constant": "RULE_RUNTIME_LCP",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.font.legacy_format",
-      "constant": "RULE_FONT_LEGACY_FORMAT",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.privacy.storage_before_consent",
-      "constant": "RULE_PRIVACY_STORAGE",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.privacy.third_party_data_flow",
-      "constant": "RULE_PRIVACY_THIRD_PARTY_FLOW",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.content_type_mismatch",
-      "constant": "RULE_CONTENT_TYPE_MISMATCH",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.invalid_content_length",
-      "constant": "RULE_INVALID_CONTENT_LENGTH",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.range_request_support",
-      "constant": "RULE_RANGE_REQUEST_SUPPORT",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.html.invalid_doctype",
-      "constant": "RULE_INVALID_DOCTYPE",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.forms.invalid_association",
-      "constant": "RULE_INVALID_LABEL_ASSOC",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.meta.multiple_titles",
-      "constant": "RULE_MULTIPLE_TITLES",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.canonical.multiple_declarations",
-      "constant": "RULE_MULTIPLE_CANONICALS",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.ax.rendering_dependency",
-      "constant": "RULE_AX_RENDERING_DEP",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.character_encoding_mismatch",
-      "constant": "RULE_CHARSET_MISMATCH",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.invalid_content_encoding",
-      "constant": "RULE_INVALID_CONTENT_ENCODING",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "netz.http.intermediary_error_response",
-      "constant": "RULE_INTERMEDIARY_ERROR",
-      "dwarf": "NetzZwerg",
-      "module": "analysis::network",
-      "source_path": "src/analysis/network.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.csp.missing_form_action",
-      "constant": "RULE_CSP_FORM_ACTION",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.csp.wildcard_source",
-      "constant": "RULE_CSP_WILDCARD",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.headers.server_error_stack_trace",
-      "constant": "RULE_STACK_TRACE_LEAK",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.forms.missing_submit_control",
-      "constant": "RULE_FORM_MISSING_SUBMIT",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "str.html.nested_interactive",
-      "constant": "RULE_NESTED_INTERACTIVE",
-      "dwarf": "StrukturZwerg",
-      "module": "analysis::semantics",
-      "source_path": "src/analysis/semantics.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.network.mixed_content_loaded",
-      "constant": "RULE_MIXED_CONTENT_LOADED",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.network.third_party_failures",
-      "constant": "RULE_THIRD_PARTY_FAILURES",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "browser.network.redirected_subresources",
-      "constant": "RULE_REDIRECTED_SUBRESOURCES",
-      "dwarf": "BrowserZwerg",
-      "module": "analysis::browser",
-      "source_path": "src/analysis/browser.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.doc.title_presence",
-      "constant": "RULE_DOC_TITLE_PRESENCE",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.doc.generic_page_title",
-      "constant": "RULE_GENERIC_PAGE_TITLE",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.ax.high_ignored_ratio",
-      "constant": "RULE_AX_HIGH_IGNORED_RATIO",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.all_caps_headings",
-      "constant": "RULE_ALL_CAPS_HEADINGS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.integrity.double_escaped_entities",
-      "constant": "RULE_DOUBLE_ESCAPED_ENTITIES",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.font.excessive_webfonts",
-      "constant": "RULE_EXCESSIVE_WEBFONTS",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.images.unbounded_image_weight",
-      "constant": "RULE_UNBOUNDED_IMAGE_WEIGHT",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.cache.hashed_asset_short_ttl",
-      "constant": "RULE_HASHED_ASSET_SHORT_TTL",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.rendered.hidden_downloaded_images",
-      "constant": "RULE_HIDDEN_DOWNLOADED_IMAGES",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "vis.mobile.viewport_zoom_locked",
-      "constant": "RULE_VIEWPORT_ZOOM_LOCKED",
-      "dwarf": "GestaltungsZwerg",
-      "module": "analysis::visual",
-      "source_path": "src/analysis/visual.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.seo.trailing_slash_inconsistency",
-      "constant": "RULE_TRAILING_SLASH_INCONSISTENCY",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.seo.http_https_mixed_pages",
-      "constant": "RULE_HTTP_HTTPS_MIXED_PAGES",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.resources.heavy_shared_asset",
-      "constant": "RULE_HEAVY_SHARED_ASSET",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.js.unused_code_ratio",
-      "constant": "RULE_JS_UNUSED_COVERAGE",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.css.unused_code_ratio",
-      "constant": "RULE_CSS_UNUSED_COVERAGE",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.focus_trap",
-      "constant": "RULE_BEHAVIOURAL_FOCUS_TRAP",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.missing_focus_indicator",
-      "constant": "RULE_BEHAVIOURAL_FOCUS_INDICATOR",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.unreached_interactive_controls",
-      "constant": "RULE_BEHAVIOURAL_UNREACHED_CONTROLS",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.modal_focus_containment",
-      "constant": "RULE_BEHAVIOURAL_MODAL_CONTAINMENT",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.obscured_focus",
-      "constant": "RULE_BEHAVIOURAL_OBSCURED_FOCUS",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.focus_restoration",
-      "constant": "RULE_BEHAVIOURAL_FOCUS_RESTORATION",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.skip_link_effectiveness",
-      "constant": "RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "a11y.behavioural.keyboard_activation",
-      "constant": "RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION",
-      "dwarf": "ZugänglichkeitsZwerg",
-      "module": "analysis::accessibility",
-      "source_path": "src/analysis/accessibility.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.js.cpu_execution_budget",
-      "constant": "RULE_JS_CPU_BUDGET",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "perf.js.single_script_cpu_hotspot",
-      "constant": "RULE_JS_CPU_HOTSPOT",
-      "dwarf": "LeistungsZwerg",
-      "module": "analysis::performance",
-      "source_path": "src/analysis/performance.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.privacy.consent_banner_asymmetry",
-      "constant": "RULE_CONSENT_ASYMMETRY",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.privacy.tracking_without_consent_banner",
-      "constant": "RULE_TRACKING_NO_BANNER",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.i18n.language_mismatch",
-      "constant": "RULE_LANGUAGE_MISMATCH",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.excessive_link_density",
-      "constant": "RULE_EXCESSIVE_LINK_DENSITY",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.repeated_headings",
-      "constant": "RULE_REPEATED_HEADINGS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "graph.content.near_duplicate_simhash",
-      "constant": "RULE_NEAR_DUPLICATE_SIMHASH",
-      "dwarf": "ApplicationGraph",
-      "module": "analysis::graph",
-      "source_path": "src/analysis/graph.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.indexability.noindex_canonical_conflict",
-      "constant": "RULE_NOINDEX_CANONICAL_CONFLICT",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "such.schema.empty_json_ld_entities",
-      "constant": "RULE_EMPTY_JSON_LD_ENTITIES",
-      "dwarf": "SuchZwerg",
-      "module": "analysis::seo",
-      "source_path": "src/analysis/seo.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "sec.cookies.session_missing_httponly",
-      "constant": "RULE_SESSION_COOKIE_HTTPONLY",
-      "dwarf": "SicherheitsZwerg",
-      "module": "analysis::security",
-      "source_path": "src/analysis/security.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.language.mixed_paragraphs",
-      "constant": "RULE_MIXED_PARAGRAPHS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.language.untranslated_fragment",
-      "constant": "RULE_UNTRANSLATED_FRAGMENT",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.duplicate_paragraphs",
-      "constant": "RULE_DUPLICATE_PARAGRAPHS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.empty_sections",
-      "constant": "RULE_EMPTY_SECTIONS",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    },
-    {
-      "rule_id": "inh.content.truncated_text",
-      "constant": "RULE_TRUNCATED_TEXT",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "planned"
-    },
-    {
-      "rule_id": "inh.content.boilerplate_ratio",
-      "constant": "RULE_BOILERPLATE_RATIO",
-      "dwarf": "InhaltsZwerg",
-      "module": "analysis::content",
-      "source_path": "src/analysis/content.rs",
-      "status": "native_rust"
-    }
-  ]
+ "schema_version": 1,
+ "generated_from": "src/analysis (RULE_* constants)",
+ "rule_count": 235,
+ "families": {
+  "a11y": 27,
+  "browser": 14,
+  "graph": 20,
+  "inh": 25,
+  "netz": 18,
+  "perf": 34,
+  "sec": 40,
+  "str": 15,
+  "such": 21,
+  "vis": 21
+ },
+ "rules": [
+  {
+   "rule_id": "a11y.aria.broken_references",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.ax.hidden_focusable_element",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.ax.high_ignored_ratio",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.ax.missing_accessible_name",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.focus_restoration",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.focus_trap",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.keyboard_activation",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.keyboard_and_focus",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.missing_focus_indicator",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.modal_focus_containment",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.obscured_focus",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.skip_link_effectiveness",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.behavioural.unreached_interactive_controls",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.doc.generic_page_title",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.doc.lang",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.doc.title_presence",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.focus.positive_tabindex",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.forms.labels",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.iframes.title",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.images.alt",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.images.suspicious_alternative_text",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.interactive.accessible_name",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.links.ambiguous_accessible_name",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.media.autoplay_unmuted",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.media.missing_caption_track",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.rendered.contrast_and_axe",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "a11y.tables.headers",
+   "module": "accessibility.rs",
+   "family": "a11y"
+  },
+  {
+   "rule_id": "browser.analytics.tracking_bloat",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.console.errors",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.js.csp_violation",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.js.uncaught_exception",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.js.unhandled_rejection",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.network.cors_block",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.network.failed_requests",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.network.mixed_content_loaded",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.network.redirected_subresources",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.network.third_party_failures",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.runtime.api_failures",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.runtime.excessive_subresources",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.runtime.hydration_errors",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "browser.runtime.source_rendered_divergence",
+   "module": "browser.rs",
+   "family": "browser"
+  },
+  {
+   "rule_id": "graph.content.duplicate_metadata",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.content.near_duplicate_simhash",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.crawl.deep_crawl_depth",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.crawl.orphan_candidates",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.crawl.trap_candidate",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.i18n.hreflang_reciprocity",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.links.broken_anchors",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.links.broken_internal",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.links.excessive_internal_redirects",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.links.to_non_indexable",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.links.to_redirects",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.resources.heavy_shared_asset",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.resources.shared_failed_dependency",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.resources.third_party_concentration",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.schema.dangling_entities",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.schema.entity_conflicts",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.seo.canonical_chain_or_loop",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.seo.http_https_mixed_pages",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.seo.sitemap_non_indexable",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "graph.seo.trailing_slash_inconsistency",
+   "module": "graph.rs",
+   "family": "graph"
+  },
+  {
+   "rule_id": "inh.ax.machine_readable_signals",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.all_caps_headings",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.boilerplate_ratio",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.duplicate_paragraphs",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.empty_sections",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.excessive_link_density",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.freshness_headers",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.mojibake",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.placeholder_text",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.readability",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.repeated_headings",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.stale_copyright",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.text_to_html_ratio",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.thin_content",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.title_h1_duplication",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.truncated_text",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.content.unrendered_markup",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.i18n.language_mismatch",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.integrity.double_escaped_entities",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.integrity.placeholder_contact",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.integrity.unresolved_translation_key",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.language.mixed_paragraphs",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.language.untranslated_fragment",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.trust.author_or_date",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "inh.trust.legal_links",
+   "module": "content.rs",
+   "family": "inh"
+  },
+  {
+   "rule_id": "netz.http.character_encoding_mismatch",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.content_type_mismatch",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.etag_validation",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.intermediary_error_response",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.invalid_content_encoding",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.invalid_content_length",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.range_request_support",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.rate_limiting_observed",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.redirect_chain",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.redirect_loop",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.soft_error",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.http.status_error",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.links.hygiene",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.redirect.cross_origin_chain",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.redirect.https_downgrade",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.url.deep_path",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.url.query_hygiene",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "netz.url.uppercase_path",
+   "module": "network.rs",
+   "family": "netz"
+  },
+  {
+   "rule_id": "perf.assets.font_display_swap",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.assets.lazy_loading",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.assets.preconnect",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.browser.core_web_vitals",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.cache.hashed_asset_short_ttl",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.cache.zero_max_age",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.cls.layout_shift_observed",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.css.unused_code_ratio",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.dom.duplicate_scripts",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.dom.excessive_stylesheets",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.dom.inline_script_weight",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.dom.render_blocking_scripts",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.dom.render_blocking_stylesheets",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.dom.size",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.dom.third_party_scripts",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.font.excessive_webfonts",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.font.legacy_format",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.http.cache_headers",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.http.compression",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.http.exchange_duration",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.http.payload_size",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.images.unbounded_image_weight",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.js.cpu_execution_budget",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.js.long_tasks",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.js.single_script_cpu_hotspot",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.js.unused_code_ratio",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.lcp.slow_element_render",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.lcp.slow_ttfb",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.runtime.rendered_dom_size",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.runtime.third_party_requests",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.runtime.total_transfer_weight",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.runtime.uncached_static_assets",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.runtime.uncompressed_text_assets",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "perf.waterfall.redirect_overhead",
+   "module": "performance.rs",
+   "family": "perf"
+  },
+  {
+   "rule_id": "sec.cookies.excessive_lifetime",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.cookies.inconsistent_attributes",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.cookies.insecure_samesite_none",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.cookies.invalid_domain_scope",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.cookies.prefix_violation",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.cookies.session_missing_httponly",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.csp.missing_base_uri_restriction",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.csp.missing_form_action",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.csp.missing_object_restriction",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.csp.report_only_without_enforcement",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.csp.unsafe_eval",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.csp.wildcard_source",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.dom.exposed_secrets",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.dom.iframe_sandbox",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.dom.insecure_forms",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.dom.mixed_content",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.dom.subresource_integrity",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.exposure.sensitive_url_parameters",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.forms.cross_origin_submission",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.forms.sensitive_get_submission",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.cookies",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.cors",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.cross_origin_isolation",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.csp",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.hsts",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.hsts_duration",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.permissions_policy",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.referrer_policy",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.sensitive_cache",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.server_error_stack_trace",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.version_disclosure",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.x_content_type_options",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.headers.x_frame_options",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.privacy.consent_banner_asymmetry",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.privacy.persistent_identifiers",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.privacy.storage_before_consent",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.privacy.third_party_data_flow",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.privacy.tracking_without_consent_banner",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.tls.certificate_expiry",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "sec.transport.https",
+   "module": "security.rs",
+   "family": "sec"
+  },
+  {
+   "rule_id": "str.doc.charset",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.doc.container_ratio",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.doc.duplicate_ids",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.doc.favicon",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.doc.meta_refresh",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.forms.invalid_association",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.forms.missing_submit_control",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.headings.empty_heading",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.headings.hierarchy",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.html.invalid_doctype",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.html.nested_interactive",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.interactive.native_semantics",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.landmarks.duplicate_main",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.landmarks.presence",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "str.nav.skip_link",
+   "module": "semantics.rs",
+   "family": "str"
+  },
+  {
+   "rule_id": "such.ax.rendering_dependency",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.canonical.multiple_declarations",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.feeds.autodiscovery",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.i18n.hreflang",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.i18n.missing_self_reference",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.indexability.noindex_canonical_conflict",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.indexability.robots",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.meta.canonical",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.meta.canonical_absolute",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.meta.description",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.meta.h1",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.meta.multiple_titles",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.meta.title",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.schema.empty_json_ld_entities",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.schema.entity_references",
+   "module": "schema.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.schema.json_ld",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.schema.same_as",
+   "module": "schema.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.schema.type_requirements",
+   "module": "schema.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.social.metadata",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.social.missing_preview_image",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "such.url.hygiene",
+   "module": "seo.rs",
+   "family": "such"
+  },
+  {
+   "rule_id": "vis.assets.broken_images",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.images.filename_quality",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.images.hotlinked",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.images.inline_data_uri",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.images.inline_svg_a11y",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.images.modern_formats",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.images.pixelation_candidate",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.images.responsive_srcset",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.layout.horizontal_overflow",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.layout.image_dimensions",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.layout.offscreen_control",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.layout.sticky_header_obstruction",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.media.video_controls_or_poster",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.mobile.small_font_size",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.mobile.small_tap_targets",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.mobile.viewport_meta",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.mobile.viewport_zoom_locked",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.rendered.above_fold_lazy_lcp",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.rendered.aspect_ratio_distortion",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.rendered.hidden_downloaded_images",
+   "module": "visual.rs",
+   "family": "vis"
+  },
+  {
+   "rule_id": "vis.rendered.oversized_images",
+   "module": "visual.rs",
+   "family": "vis"
+  }
+ ]
 }
