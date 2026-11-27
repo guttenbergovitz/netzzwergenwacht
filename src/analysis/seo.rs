@@ -30,6 +30,8 @@ const RULE_MULTIPLE_CANONICALS: &str = "such.canonical.multiple_declarations";
 const RULE_AX_RENDERING_DEP: &str = "such.ax.rendering_dependency";
 const RULE_NOINDEX_CANONICAL_CONFLICT: &str = "such.indexability.noindex_canonical_conflict";
 const RULE_EMPTY_JSON_LD_ENTITIES: &str = "such.schema.empty_json_ld_entities";
+const RULE_ROBOTS_HEADER_CONFLICT: &str = "such.indexability.robots_header_conflict";
+const RULE_OG_URL_MISMATCH: &str = "such.social.og_url_mismatch";
 
 /// All rule identifiers owned by `SuchZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -54,6 +56,8 @@ pub const ALL_RULES: &[&str] = &[
     schema::RULE_SCHEMA_ENTITY_REFS,
     RULE_NOINDEX_CANONICAL_CONFLICT,
     RULE_EMPTY_JSON_LD_ENTITIES,
+    RULE_ROBOTS_HEADER_CONFLICT,
+    RULE_OG_URL_MISMATCH,
 ];
 
 /// Evaluates search metadata and indexability signals over `http` and `obs`.
@@ -79,6 +83,8 @@ pub fn analyse(http: &HttpEvidence, obs: &DocumentObservations) -> AnalyserResul
     check_multiple_titles_and_canonicals(obs, &mut findings, &mut checks);
     check_ax_rendering_dependency(http, obs, &mut findings, &mut checks);
     check_noindex_canonical_conflict_and_schema(http, obs, &mut findings, &mut checks);
+    check_robots_header_conflict(http, obs, &mut findings, &mut checks);
+    check_og_url_mismatch(obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Such,
@@ -997,6 +1003,114 @@ fn check_noindex_canonical_conflict_and_schema(
     }
 }
 
+fn check_robots_header_conflict(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let x_robots = header_value(http, "x-robots-tag").map(str::to_ascii_lowercase);
+    let meta_robots = obs.meta_robots.as_deref().map(str::to_ascii_lowercase);
+
+    let (Some(hdr), Some(meta)) = (x_robots, meta_robots) else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ROBOTS_HEADER_CONFLICT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    };
+
+    let hdr_noindex = hdr.contains("noindex");
+    let meta_noindex = meta.contains("noindex");
+    let hdr_nofollow = hdr.contains("nofollow");
+    let meta_nofollow = meta.contains("nofollow");
+
+    if hdr_noindex != meta_noindex || hdr_nofollow != meta_nofollow {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_ROBOTS_HEADER_CONFLICT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_ROBOTS_HEADER_CONFLICT.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Conflicting HTTP `X-Robots-Tag` and HTML `<meta name=\"robots\">` directives"
+                .to_owned(),
+            summary: format!(
+                "HTTP `X-Robots-Tag` (`{hdr}`) and HTML `<meta name=\"robots\">` (`{meta}`) disagree on `noindex`/`nofollow`."
+            ),
+            evidence_refs: vec![
+                EvidenceRef::new(EvidenceSource::HttpHeaders, format!("x-robots-tag={hdr}")),
+                EvidenceRef::new(EvidenceSource::HttpBody, format!("meta_robots={meta}")),
+            ],
+            remediation: Some(
+                "Align `X-Robots-Tag` and `<meta name=\"robots\">` so search engines receive unambiguous indexability directives."
+                    .to_owned(),
+            ),
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ROBOTS_HEADER_CONFLICT.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+fn check_og_url_mismatch(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (Some(og_url), Some(canonical)) = (
+        obs.social_meta.og_url.as_deref(),
+        obs.canonical_url.as_deref(),
+    ) else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_OG_URL_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    };
+
+    let norm = |u: &str| u.trim().trim_end_matches('/').to_ascii_lowercase();
+    if norm(og_url) == norm(canonical) {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_OG_URL_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_OG_URL_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_OG_URL_MISMATCH.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: "`og:url` does not match `<link rel=\"canonical\">`".to_owned(),
+            summary: format!(
+                "Open Graph `og:url` (`{og_url}`) differs from canonical URL (`{canonical}`), which can split social share metadata across URLs."
+            ),
+            evidence_refs: vec![
+                EvidenceRef::new(EvidenceSource::HttpBody, format!("og:url={og_url}")),
+                EvidenceRef::new(EvidenceSource::HttpBody, format!("canonical={canonical}")),
+            ],
+            remediation: Some(
+                "Set `<meta property=\"og:url\">` to the exact canonical URL of the page."
+                    .to_owned(),
+            ),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1136,5 +1250,23 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_NOINDEX_CANONICAL_CONFLICT));
         assert!(ids.contains(&RULE_EMPTY_JSON_LD_ENTITIES));
+    }
+
+    #[test]
+    fn flags_robots_header_conflict_and_og_url_mismatch() {
+        let html = r#"<html><head>
+            <meta name="robots" content="index,follow">
+            <link rel="canonical" href="https://example.com/product">
+            <meta property="og:url" content="https://example.com/old-product">
+        </head><body></body></html>"#;
+        let (mut http, obs) = http_with_html(html);
+        http.headers.push(crate::domain::HttpHeader {
+            name: "X-Robots-Tag".to_owned(),
+            value: "noindex".to_owned(),
+        });
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_ROBOTS_HEADER_CONFLICT));
+        assert!(ids.contains(&RULE_OG_URL_MISMATCH));
     }
 }

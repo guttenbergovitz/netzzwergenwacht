@@ -53,6 +53,8 @@ const RULE_COOKIE_INSECURE_SAMESITE: &str = "sec.cookies.insecure_samesite_none"
 const RULE_COOKIE_INCONSISTENT_ATTRS: &str = "sec.cookies.inconsistent_attributes";
 const RULE_PERSISTENT_IDENTIFIERS: &str = "sec.privacy.persistent_identifiers";
 const RULE_LOCALHOST_LEAK: &str = "sec.deploy.localhost_leak";
+const RULE_DEBUG_HEADERS: &str = "sec.headers.debug_headers";
+const RULE_SOURCE_MAP_EXPOSURE: &str = "sec.deploy.source_map_exposure";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -97,6 +99,8 @@ const ALL_RULES: &[&str] = &[
     RULE_COOKIE_INCONSISTENT_ATTRS,
     RULE_PERSISTENT_IDENTIFIERS,
     RULE_LOCALHOST_LEAK,
+    RULE_DEBUG_HEADERS,
+    RULE_SOURCE_MAP_EXPOSURE,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -158,6 +162,8 @@ pub fn analyse_with_document(
     check_hsts_duration(http, uses_https, &mut findings, &mut checks);
     check_privacy_browser_signals(&snapshot.browser, &mut findings, &mut checks);
     check_stack_trace_leak(http, &mut findings, &mut checks);
+    check_debug_headers(http, &mut findings, &mut checks);
+    check_source_map_exposure(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
         check_mixed_content(http, uses_https, doc, &mut findings, &mut checks);
@@ -2405,6 +2411,120 @@ fn check_localhost_leaks(
     }
 }
 
+fn check_debug_headers(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    const DEBUG_HEADER_NAMES: &[&str] = &[
+        "x-debug-token",
+        "x-debug-token-link",
+        "x-symfony-profiler",
+        "x-aspnet-version",
+        "x-aspnetmvc-version",
+    ];
+    let exposed: Vec<String> = http
+        .headers
+        .iter()
+        .filter(|h| {
+            let lower = h.name.to_ascii_lowercase();
+            DEBUG_HEADER_NAMES.contains(&lower.as_str())
+        })
+        .map(|h| format!("{}: {}", h.name, h.value))
+        .collect();
+
+    if exposed.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DEBUG_HEADERS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DEBUG_HEADERS.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DEBUG_HEADERS.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Debug/profiler response headers exposed ({})", exposed.len()),
+            summary: format!(
+                "HTTP response exposes framework profiler or debug header(s) (for example `{}`).",
+                exposed[0]
+            ),
+            evidence_refs: exposed
+                .iter()
+                .take(4)
+                .map(|entry| EvidenceRef::new(EvidenceSource::HttpHeaders, entry.clone()))
+                .collect(),
+            remediation: Some(
+                "Disable development profilers and strip debug headers (`X-Debug-Token*`, `X-AspNet-Version`) in production."
+                    .to_owned(),
+            ),
+        });
+    }
+}
+
+fn check_source_map_exposure(
+    http: &HttpEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mut matches = Vec::new();
+    for line in http.body_text.lines() {
+        if let Some(idx) = line.find("sourceMappingURL=") {
+            let url_part = line[idx + "sourceMappingURL=".len()..]
+                .trim()
+                .trim_end_matches("*/")
+                .trim();
+            if !url_part.is_empty() && !url_part.starts_with("data:") {
+                matches.push(url_part.to_owned());
+                if matches.len() >= 4 {
+                    break;
+                }
+            }
+        }
+    }
+
+    if matches.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SOURCE_MAP_EXPOSURE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SOURCE_MAP_EXPOSURE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SOURCE_MAP_EXPOSURE.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Low,
+            confidence: Confidence::High,
+            title: format!("Public source map reference(s) exposed ({})", matches.len()),
+            summary: format!(
+                "Captured response references external source map `{}` via `sourceMappingURL`, which can expose unminified source code.",
+                matches[0]
+            ),
+            evidence_refs: matches
+                .iter()
+                .map(|m| EvidenceRef::new(EvidenceSource::HttpBody, format!("sourceMappingURL={m}")))
+                .collect(),
+            remediation: Some(
+                "Restrict `.map` files to private error-tracking uploads or strip `sourceMappingURL` comments from public builds."
+                    .to_owned(),
+            ),
+        });
+    }
+}
+
 fn check_privacy_browser_signals(
     browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
     findings: &mut Vec<Finding>,
@@ -3252,5 +3372,21 @@ mod tests {
             c,
             CheckStatus::Skipped { rule_id, .. } if rule_id.0 == RULE_LOCALHOST_LEAK
         )));
+    }
+
+    #[test]
+    fn flags_debug_headers_and_source_map_exposure() {
+        let mut snap =
+            snapshot_with_headers("https://example.com/", vec![("X-Debug-Token", "abc123")]);
+        let html = "<html><body><script>console.log(1);\n//# sourceMappingURL=app.js.map</script></body></html>";
+        let obs = DocumentObservations::from_html(html);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let res = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_DEBUG_HEADERS));
+        assert!(ids.contains(&RULE_SOURCE_MAP_EXPOSURE));
     }
 }

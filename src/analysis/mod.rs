@@ -367,10 +367,9 @@ pub(crate) fn skip_all(
 
 /// Case-insensitive lookup for the first matching HTTP header value.
 pub(crate) fn header_value<'a>(http: &'a HttpEvidence, name: &str) -> Option<&'a str> {
-    let target = name.to_ascii_lowercase();
     http.headers
         .iter()
-        .find(|h| h.name == target)
+        .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
 }
 
