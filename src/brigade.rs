@@ -218,6 +218,30 @@ impl DwarfId {
         profile(self).display_name
     }
 
+    /// Concise English competency label for non-German speakers.
+    #[must_use]
+    pub const fn english_domain(self) -> &'static str {
+        match self {
+            Self::Netz => "Network & HTTP",
+            Self::Sicherheits => "Security & Privacy",
+            Self::Leistungs => "Performance",
+            Self::Struktur => "HTML Structure",
+            Self::Zugaenglichkeits => "Accessibility",
+            Self::Such => "SEO & Indexing",
+            Self::Inhalts => "Content",
+            Self::Gestaltungs => "Visual & Mobile",
+            Self::Browser => "Browser Runtime",
+            Self::Dokumentations => "Reporting",
+            Self::Kommandant => "AI Synthesis",
+        }
+    }
+
+    /// Combined German display name and concise English competency label.
+    #[must_use]
+    pub fn labelled_name(self) -> String {
+        format!("{} ({})", self.display_name(), self.english_domain())
+    }
+
     /// Returns the lowercase configuration key used in `[models.dwarfs.<key>]`.
     ///
     /// The key is ASCII without umlauts so it can appear in TOML table names and

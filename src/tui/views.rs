@@ -269,32 +269,46 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         _ => state.theme.muted_style(),
     };
 
-    let surface_lines = vec![
+    let mut surface_lines = vec![
         Line::from(vec![
             Span::raw(" Verdict: "),
             Span::styled(format!(" {verdict_badge} "), verdict_style),
             Span::raw(format!(" {}", sanitize_line(&verdict_detail, 44))),
         ]),
         Line::from(format!(
-            " Pages discovered: {discovered:<6}  Inspected: {inspected}"
+            " Pages: {inspected}/{discovered} inspected | Queued: {queued} | Failed: {failed} | Deferred: {skipped}"
         )),
         Line::from(format!(
-            " Queued:           {queued:<6}  Failed:    {failed}  Deferred: {skipped}"
+            " Checks: {total_checks} evaluated ({unverified_checks} unverified/skipped)"
         )),
-        Line::from(format!(
-            " Checks evaluated: {total_checks} ({unverified_checks} unverified/skipped)"
-        )),
-        Line::from(format!(
+    ];
+    if let Some(ref crawl) = state.crawl_summary {
+        let payload = crate::report_html::summarise_resources(&crawl.resources);
+        let payload_text = if payload.measured_count > 0 {
+            format!(
+                " | Payload: {} (JS {})",
+                crate::report_html::format_bytes(payload.total_bytes),
+                crate::report_html::format_bytes(payload.script_bytes)
+            )
+        } else {
+            String::new()
+        };
+        surface_lines.push(Line::from(format!(
+            " Systemic clusters: {}{payload_text}",
+            crawl.systemic_issues.len()
+        )));
+    } else {
+        surface_lines.push(Line::from(format!(
             " Scope: {}",
             if discovered > 1 {
                 "Sampled multi-page surface"
             } else {
                 "Single-target inspection"
             }
-        )),
-    ];
+        )));
+    }
     let surface_block = Block::default()
-        .title(" APPLICATION SURFACE & COVERAGE ")
+        .title(" EXECUTIVE SUMMARY & SURFACE ")
         .borders(Borders::ALL)
         .border_style(state.theme.border_style(false));
     frame.render_widget(
@@ -345,9 +359,14 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             ),
             Span::raw(format!("Informational: {info}")),
         ]),
+        Line::from(if crit + high > 0 {
+            format!(" Release Gate: BLOCKED ({crit} Critical, {high} High)")
+        } else {
+            " Release Gate: CLEAR within observed scope".to_owned()
+        }),
     ];
     let findings_block = Block::default()
-        .title(" FINDINGS BY SEVERITY ")
+        .title(" KEY STATS & SEVERITY ")
         .borders(Borders::ALL)
         .border_style(state.theme.border_style(false));
     frame.render_widget(
@@ -367,16 +386,20 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         .map(|b| {
             let line = Line::from(vec![
                 Span::styled(
-                    format!(" {:<22} ", b.display_name),
+                    format!(" {:<21} ", b.display_name),
                     state.theme.primary_style(),
                 ),
                 Span::styled(
-                    format!("{:<9} ", b.status.label()),
+                    format!("{:<19} ", b.dwarf_id.english_domain()),
+                    state.theme.muted_style(),
+                ),
+                Span::styled(
+                    format!("{:<8} ", b.status.label()),
                     state.theme.status_style(b.status),
                 ),
                 Span::styled(
                     format!(
-                        "{:>2}/{:<2} chk  {:>2} iss",
+                        "{:>2}/{:<2} chk {:>2} iss",
                         b.checks_passed + b.checks_failed,
                         b.checks_total,
                         b.findings_count
@@ -396,6 +419,32 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     frame.render_widget(brigade_list, mid_cols[0]);
 
     let mut right_lines = Vec::new();
+    let mut top_blockers: Vec<&crate::tui::state::FindingRow> = state
+        .findings
+        .iter()
+        .filter(|f| matches!(f.severity, Severity::Critical | Severity::High))
+        .collect();
+    top_blockers.sort_by_key(|f| match f.severity {
+        Severity::Critical => 0_u8,
+        Severity::High => 1_u8,
+        _ => 2_u8,
+    });
+    if !top_blockers.is_empty() {
+        right_lines.push(Line::from(Span::styled(
+            " Top Blockers (Meeting Agenda):",
+            state.theme.title_style(),
+        )));
+        for blocker in top_blockers.into_iter().take(4) {
+            right_lines.push(Line::from(vec![
+                Span::styled(
+                    format!(" [{}] ", Theme::severity_badge(blocker.severity)),
+                    state.theme.severity_style(blocker.severity),
+                ),
+                Span::raw(sanitize_line(&blocker.title, 44)),
+            ]));
+        }
+        right_lines.push(Line::from(""));
+    }
     for (collector, status, detail) in &state.system_metrics.collector_statuses {
         right_lines.push(Line::from(vec![
             Span::styled(
@@ -588,7 +637,7 @@ fn render_brigade(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 state.theme.primary_style()
             };
             Row::new(vec![
-                format!("{prefix}{}", b.display_name),
+                format!("{prefix}{}", b.dwarf_id.labelled_name()),
                 b.status.label().to_owned(),
                 mode_str.to_owned(),
                 checks_str,
@@ -623,7 +672,7 @@ fn render_brigade(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         let details = vec![
             Line::from(vec![
                 Span::styled(" Specialist:     ", state.theme.muted_style()),
-                Span::styled(selected.display_name, state.theme.title_style()),
+                Span::styled(selected.dwarf_id.labelled_name(), state.theme.title_style()),
                 Span::styled("   Role: ", state.theme.muted_style()),
                 Span::styled(format!("{:?}", selected.role), state.theme.primary_style()),
                 Span::styled("   Evidence level: ", state.theme.muted_style()),
@@ -878,7 +927,7 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             Some(
                 Row::new(vec![
                     format!("{prefix}{}", Theme::severity_badge(f.severity)),
-                    f.dwarf_id.profile().display_name.to_owned(),
+                    f.dwarf_id.labelled_name(),
                     f.rule_id.clone(),
                     f.title.clone(),
                 ])
@@ -928,10 +977,7 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                     state.theme.title_style(),
                 ),
             ]),
-            Line::from(format!(
-                " Specialist: {}",
-                finding.dwarf_id.profile().display_name
-            )),
+            Line::from(format!(" Specialist: {}", finding.dwarf_id.labelled_name())),
             Line::from(format!(" Title:      {}", finding.title)),
             Line::from(""),
             Line::from(Span::styled(
