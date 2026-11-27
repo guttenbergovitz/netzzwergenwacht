@@ -226,3 +226,25 @@ fn launcher_defaults_to_a_passive_deterministic_mission() {
         "a fresh launcher must not present an error"
     );
 }
+
+#[test]
+fn check_rejects_missing_quality_profile_before_collection() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_nzw"))
+        .args([
+            "check",
+            "--profile",
+            "/nonexistent/nzw-profile.toml",
+            "https://example.org/",
+        ])
+        .output()
+        .expect("run nzw check");
+    assert!(
+        !output.status.success(),
+        "missing quality profile must fail before collection"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("invalid quality profile"),
+        "expected profile error message, got: {stderr}"
+    );
+}

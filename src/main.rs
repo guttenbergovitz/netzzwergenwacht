@@ -44,6 +44,9 @@ enum Command {
         /// Optional path to a TOML configuration file (`nzw.toml`).
         #[arg(long)]
         config: Option<PathBuf>,
+        /// Optional path to a versioned Application Quality Profile (`nzw-profile.toml`).
+        #[arg(long)]
+        profile: Option<PathBuf>,
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
@@ -667,6 +670,7 @@ async fn main() -> ExitCode {
         Command::Check {
             url,
             config: config_path,
+            profile: profile_path,
             format,
             allow_private,
             timeout_secs,
@@ -706,6 +710,7 @@ async fn main() -> ExitCode {
             run_check(
                 &url,
                 config_path.as_deref(),
+                profile_path.as_deref(),
                 format,
                 allow_private,
                 timeout_secs,
@@ -977,7 +982,11 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
                         println!("{json}");
                     }
                 }
-                OutputFormat::Text | OutputFormat::Markdown => print_text_report(&audit, &eval),
+                OutputFormat::Text | OutputFormat::Markdown => {
+                    let assessment =
+                        netzzwergenwacht::analysis::assessment::assess_audit_report(&audit);
+                    print_text_report(&audit, &eval, &assessment);
+                }
             }
             ExitCode::from(EXIT_OK)
         }
@@ -1388,6 +1397,7 @@ async fn collect_level1(
 async fn run_check(
     url: &str,
     config_path: Option<&Path>,
+    profile_path: Option<&Path>,
     format: OutputFormat,
     allow_private: bool,
     timeout_secs: Option<u64>,
@@ -1400,6 +1410,10 @@ async fn run_check(
 ) -> ExitCode {
     let app_cfg = match load_optional_config(config_path) {
         Ok(cfg) => cfg,
+        Err(code) => return code,
+    };
+    let quality_profile = match load_optional_profile(profile_path) {
+        Ok(prof) => prof,
         Err(code) => return code,
     };
     let policy_cfg = merge_policy(&app_cfg.policy, allow_private, fail_on);
@@ -1469,6 +1483,8 @@ async fn run_check(
     }
 
     let eval = config::evaluate_policy(&report, &policy_cfg);
+    let assessment =
+        netzzwergenwacht::analysis::profile::assess_with_profile(&report, quality_profile.as_ref());
     let code = exit_code_for_report(&report, &eval);
 
     if ai {
@@ -1487,13 +1503,27 @@ async fn run_check(
             }
         },
         OutputFormat::Text | OutputFormat::Markdown => {
-            print_text_report(&report, &eval);
+            print_text_report(&report, &eval, &assessment);
             if let Some(syn) = &report.ai_synthesis {
                 print_ai_synthesis(syn);
             }
             code
         }
     }
+}
+
+fn load_optional_profile(
+    profile_path: Option<&Path>,
+) -> Result<Option<netzzwergenwacht::analysis::profile::ApplicationQualityProfile>, ExitCode> {
+    let Some(path) = profile_path else {
+        return Ok(None);
+    };
+    netzzwergenwacht::analysis::profile::ApplicationQualityProfile::from_path(path)
+        .map(Some)
+        .map_err(|err| {
+            eprintln!("invalid quality profile {}: {err}", path.display());
+            ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+        })
 }
 
 async fn persist_check_history(
@@ -1837,7 +1867,11 @@ fn exit_code_for_report(report: &AuditReport, eval: &PolicyEvaluation) -> ExitCo
     }
 }
 
-fn print_text_report(report: &AuditReport, eval: &PolicyEvaluation) {
+fn print_text_report(
+    report: &AuditReport,
+    eval: &PolicyEvaluation,
+    assessment: &netzzwergenwacht::analysis::assessment::QualityAssessment,
+) {
     println!("NETZZWERGENWACHT");
     println!("Die Zwergenbrigade\n");
     println!("Target: {}", report.target.as_str());
@@ -1872,6 +1906,17 @@ fn print_text_report(report: &AuditReport, eval: &PolicyEvaluation) {
     );
     if !eval.passed {
         println!("Policy Gate: FAILED ({})", eval.violations.join("; "));
+    }
+    println!("Quality Assessment: {}", assessment.overall_verdict.badge());
+    for dom in &assessment.domains {
+        if dom.verdict != netzzwergenwacht::analysis::assessment::DomainVerdict::NotApplicable {
+            println!(
+                "  - {:<20} {:<6} {}",
+                dom.domain.label(),
+                dom.verdict.badge(),
+                dom.rationale
+            );
+        }
     }
 
     for analyser in &report.analysers {
