@@ -2164,17 +2164,83 @@ fn build_axe_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<L
 }
 
 fn render_offline_report_evidence_fallback(state: &AppState) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+
+    if let Some(finding) = state.selected_finding() {
+        lines.push(Line::from(format!(
+            " Selected Finding: [{}] {} ({:?})",
+            finding.rule_id,
+            sanitize_line(&finding.title, 72),
+            finding.severity
+        )));
+        lines.push(Line::from(format!(
+            " Target: {}",
+            sanitize_url_for_display(&finding.target_url, 90)
+        )));
+        if finding.evidence_refs.is_empty() {
+            lines.push(Line::from(" Supporting evidence refs: (none attached)"));
+        } else {
+            lines.push(Line::from(format!(
+                " Supporting evidence refs ({}):",
+                finding.evidence_refs.len()
+            )));
+            for ev in finding.evidence_refs.iter().take(12) {
+                lines.push(Line::from(format!(
+                    "   - [{:?}] {}",
+                    ev.source,
+                    sanitize_line(&ev.detail, 96)
+                )));
+            }
+        }
+        lines.push(Line::from(""));
+    }
+
+    if let Some(ref crawl) = state.crawl_summary {
+        let cov = &crawl.coverage;
+        lines.push(Line::from(format!(
+            " Crawl Coverage: discovered={} fetched={} analysed={} failed={} systemic_issues={}",
+            cov.discovered_urls,
+            cov.fetched_urls,
+            cov.analysed_urls,
+            cov.failed_urls,
+            crawl.systemic_issues.len()
+        )));
+        if !crawl.resources.is_empty() {
+            lines.push(Line::from(format!(
+                " Shared Resources ({} observed, prioritised):",
+                crawl.resources.len()
+            )));
+            for res in crate::report_html::prioritise_resources(&crawl.resources)
+                .into_iter()
+                .take(15)
+            {
+                let size = res.byte_len.map_or_else(
+                    || res.error.as_deref().unwrap_or("—").to_owned(),
+                    crate::report_html::format_bytes,
+                );
+                lines.push(Line::from(format!(
+                    "   - [{:?}] {} ({})",
+                    res.status,
+                    sanitize_url_for_display(&res.url, 72),
+                    size
+                )));
+            }
+        }
+        return lines;
+    }
+
     let Some(ref report) = state.audit_report else {
-        return vec![Line::from(
-            " No EvidenceSnapshot or AuditReport loaded. Start a run from Launcher (n).",
-        )];
+        if lines.is_empty() {
+            lines.push(Line::from(
+                " No EvidenceSnapshot, CrawlSummary, or AuditReport loaded. Start a run from Launcher (n).",
+            ));
+        }
+        return lines;
     };
-    let mut lines = vec![
-        Line::from(
-            " Loaded from saved AuditReport (raw EvidenceSnapshot not retained in report JSON).",
-        ),
-        Line::from(""),
-    ];
+    lines.push(Line::from(
+        " Loaded from saved AuditReport (raw EvidenceSnapshot not retained in report JSON).",
+    ));
+    lines.push(Line::from(""));
     match &report.http {
         CollectorOutcome::Captured { data: value }
         | CollectorOutcome::Partial { data: value, .. } => {

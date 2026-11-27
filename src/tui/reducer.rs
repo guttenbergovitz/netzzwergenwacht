@@ -204,6 +204,9 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
                 state.finding_filter.dwarf = None;
                 state.refresh_visible_findings();
                 state.status_message = String::from("Cleared all finding filters.");
+            } else if state.active_view == WorkbenchView::Evidence {
+                state.active_view = WorkbenchView::Findings;
+                state.status_message = String::from("Returned to Findings.");
             }
         }
         UserAction::OpenSearch => {
@@ -1460,5 +1463,19 @@ mod tests {
             effs,
             vec![AppEffect::SaveReport(PathBuf::from("nzw-report.html"))]
         );
+    }
+
+    #[test]
+    fn esc_in_evidence_returns_to_findings() {
+        let mut state = AppState {
+            active_view: WorkbenchView::Evidence,
+            launcher: crate::tui::state::LauncherState {
+                open: false,
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+        let _ = reduce(&mut state, AppAction::User(UserAction::BackOrClose));
+        assert_eq!(state.active_view, WorkbenchView::Findings);
     }
 }
