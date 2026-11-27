@@ -79,6 +79,12 @@ fn taskfile_exposes_the_documented_tasks() {
         "uninstall:",
         "test:browser:",
         "test:integration:",
+        "test:crawler:",
+        "test:store:",
+        "test:recon:",
+        "bench:store:",
+        "bench:crawler:",
+        "scan:",
         "check:",
         "check:all:",
     ] {

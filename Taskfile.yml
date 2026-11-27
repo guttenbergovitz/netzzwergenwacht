@@ -5,7 +5,11 @@ version: "3"
 # `task setup` prepares a fresh clone, `task doctor` reports which local
 # instruments are available, and `task check` runs the engineering quality gate.
 # Note the distinction: `task check` validates the codebase, while `nzw check URL`
-# runs a diagnostic audit against a target.
+# runs a single-page audit and `task scan URL=…` crawls an application and retains
+# its evidence.
+#
+# Every implementation wave updates this file: a capability that can only be
+# exercised by remembering Cargo incantations is not delivered.
 
 vars:
   BIN: nzw
@@ -47,11 +51,25 @@ tasks:
       - cargo run --quiet --locked -- tui {{.TARGET | default "https://example.org"}}
 
   run:
-    desc: Run a deterministic audit (URL required, e.g. task run URL=https://example.org)
+    desc: Run a deterministic single-page audit (URL required, e.g. task run URL=https://example.org)
     requires:
       vars: [URL]
     cmds:
       - cargo run --quiet --locked -- check {{.URL}}
+
+  scan:
+    desc: Crawl an application, retain its evidence and report coverage (URL required)
+    requires:
+      vars: [URL]
+    cmds:
+      - cargo run --release --locked -- scan {{.URL}} --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}}
+
+  scan:private:
+    desc: Crawl a loopback or private target, bypassing the public-only policy (URL required)
+    requires:
+      vars: [URL]
+    cmds:
+      - cargo run --release --locked -- scan {{.URL}} --allow-private --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}}
 
   fmt:
     desc: Format all Rust source files
@@ -84,6 +102,31 @@ tasks:
       NZW_CHROMIUM_BIN: '{{.NZW_CHROMIUM_BIN | default "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}}'
     cmds:
       - cargo test --locked --test sensory_collectors_live --test browser_timeline -- --ignored --test-threads=1
+
+  test:crawler:
+    desc: Run the concurrent crawler, frontier, robots and subresource suites
+    cmds:
+      - "cargo test --locked --lib discovery::"
+
+  test:store:
+    desc: Run the evidence store, migration and schema suites
+    cmds:
+      - "cargo test --locked --lib evidence_store::"
+
+  test:recon:
+    desc: Run the end-to-end reconnaissance pipeline (crawl, analyse, persist, query)
+    cmds:
+      - cargo test --locked --test reconnaissance_pipeline
+
+  bench:store:
+    desc: Compare Turso with batched SQLite over identical populations (release, ignored)
+    cmds:
+      - cargo test --release --locked --test evidence_store_spike -- --ignored --nocapture --test-threads=1
+
+  bench:crawler:
+    desc: Measure crawl wall clock at concurrency 1 and 4 over a loopback fixture (release, ignored)
+    cmds:
+      - cargo test --release --locked --test crawler_benchmark -- --ignored --nocapture
 
   doc:
     desc: Build API documentation and fail on broken intra-doc links

@@ -313,6 +313,19 @@ task test:browser # ignored live Chromium suites (needs Chromium and Node 22+)
 task audit        # cargo audit
 ```
 
+Reconnaissance work has its own entrypoints, because a capability that can only be exercised by
+remembering Cargo incantations is not delivered:
+
+```bash
+task scan URL=https://example.org          # crawl, analyse and retain evidence
+task scan:private URL=http://127.0.0.1:8080 # the same for a loopback or private target
+task test:crawler                          # frontier, robots, concurrency and subresources
+task test:store                            # evidence store, schema and migrations
+task test:recon                            # crawl → analyse → persist → query, end to end
+task bench:store                           # Turso against batched SQLite, identical populations
+task bench:crawler                         # crawl wall clock at concurrency 1 and 4
+```
+
 `task check` is an engineering gate; `nzw check <url>` is a diagnostic audit. The required gates are:
 
 ```bash
