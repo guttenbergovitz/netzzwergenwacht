@@ -2194,6 +2194,7 @@ mod tests {
                     budget_exhausted: false,
                     graph_results: Vec::new(),
                     resources: Vec::new(),
+                    page_resources: Vec::new(),
                 }
             })
         }
@@ -2649,6 +2650,7 @@ mod tests {
                     budget_exhausted: false,
                     graph_results: Vec::new(),
                     resources: Vec::new(),
+                    page_resources: Vec::new(),
                 }
             })
         }

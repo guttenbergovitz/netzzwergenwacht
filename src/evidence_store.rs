@@ -39,7 +39,7 @@ use crate::discovery::{
 ///
 /// Migrations are forward-only: a store written by a newer build is refused
 /// rather than partially understood.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Maximum number of simultaneous write connections.
 ///
@@ -155,6 +155,18 @@ pub struct StoredResourceCoverage {
     pub external_refused: usize,
     /// Configured subresource bound.
     pub max_resources: usize,
+}
+
+/// One page that references a shared subresource.
+///
+/// The dependent relationship is a discovery fact. It survives a failed or skipped resource
+/// acquisition, because the page depends on the resource either way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredDependent {
+    /// Page URL that references the resource.
+    pub page_url: String,
+    /// Resource family the page referenced.
+    pub kind: ResourceKind,
 }
 
 /// Summary row for one recorded run.
@@ -466,6 +478,23 @@ impl EvidenceStore {
                 .await
                 .map_err(classify)?;
         }
+
+        for edge in &record.summary.page_resources {
+            connection
+                .execute(
+                    "INSERT INTO page_resources (run_id, page_url, resource_url, kind)
+                     VALUES (?1, ?2, ?3, ?4)
+                     ON CONFLICT(run_id, page_url, resource_url) DO NOTHING",
+                    (
+                        record.run_id,
+                        edge.page_url.as_str(),
+                        edge.resource_url.as_str(),
+                        resource_kind_label(edge.kind),
+                    ),
+                )
+                .await
+                .map_err(classify)?;
+        }
         Ok(())
     }
 
@@ -666,6 +695,43 @@ impl EvidenceStore {
         Ok(resources)
     }
 
+    /// Lists the pages that reference one subresource, sorted by page URL.
+    ///
+    /// This is the leverage query: a defect in a stylesheet referenced by three hundred pages is
+    /// one remediation, not three hundred findings. The result is bounded like every other read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the query fails.
+    pub async fn resource_dependents(
+        &self,
+        run_id: &str,
+        resource_url: &str,
+        limit: usize,
+    ) -> Result<Vec<StoredDependent>, StoreError> {
+        let connection = self.database.connect()?;
+        let mut rows = connection
+            .query(
+                "SELECT page_url, kind FROM page_resources
+                 WHERE run_id = ?1 AND resource_url = ?2
+                 ORDER BY page_url ASC LIMIT ?3",
+                (run_id, resource_url, bounded_limit(limit)),
+            )
+            .await?;
+
+        let mut dependents = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let kind_label = row.get::<String>(1)?;
+            let kind = resource_kind_from_label(&kind_label)
+                .ok_or_else(|| unknown_value("resource kind", &kind_label))?;
+            dependents.push(StoredDependent {
+                page_url: row.get::<String>(0)?,
+                kind,
+            });
+        }
+        Ok(dependents)
+    }
+
     /// Lists systemic clusters of one run, ordered by affected breadth.
     ///
     /// # Errors
@@ -772,6 +838,13 @@ async fn initialise(database: &Database) -> Result<(), StoreError> {
             .map_err(StoreError::from)?;
         version = 2;
     }
+    if version < 3 {
+        connection
+            .execute_batch(MIGRATION_V3)
+            .await
+            .map_err(StoreError::from)?;
+        version = 3;
+    }
     connection
         .execute(format!("PRAGMA user_version = {version}"), ())
         .await
@@ -865,6 +938,23 @@ ALTER TABLE resources ADD COLUMN last_modified_present INTEGER;
 ALTER TABLE resources ADD COLUMN error TEXT;
 ";
 
+/// Schema v3 records which pages reference which subresources.
+///
+/// Without the edge, a shared-resource finding could be counted but never attributed to the
+/// pages that would have to change. The edge is independent of acquisition success.
+const MIGRATION_V3: &str = "
+CREATE TABLE IF NOT EXISTS page_resources (
+    run_id TEXT NOT NULL,
+    page_url TEXT NOT NULL,
+    resource_url TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
+    PRIMARY KEY (run_id, page_url, resource_url)
+);
+CREATE INDEX IF NOT EXISTS page_resources_by_resource
+    ON page_resources(run_id, resource_url);
+";
+
 fn count(value: usize) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
@@ -877,8 +967,12 @@ fn flag(value: bool) -> i64 {
     i64::from(u8::from(value))
 }
 
+/// Clamps a caller's limit without ever widening it.
+///
+/// A limit of zero returns no rows. Raising it to one would answer a question the caller did not
+/// ask, and returning everything would contradict the bound.
 fn bounded_limit(limit: usize) -> i64 {
-    count(limit.clamp(1, MAX_READ_ROWS))
+    count(limit.min(MAX_READ_ROWS))
 }
 
 fn positive(row: &turso::Row, index: usize) -> Result<usize, StoreError> {
@@ -1033,9 +1127,9 @@ fn resource_status_from_label(label: &str) -> Option<ResourceStatus> {
 mod tests {
     use super::{CrawlRecord, EvidenceStore, SCHEMA_VERSION, StoreError};
     use crate::discovery::{
-        CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageType, ResourceCoverage,
-        ResourceKind, ResourceObservation, ResourceStatus, RobotsOutcome, SystemicClassification,
-        SystemicIssue,
+        CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageResourceEdge, PageType,
+        ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus, RobotsOutcome,
+        SystemicClassification, SystemicIssue,
     };
     use crate::domain::{AuditTarget, Confidence, RuleId, TargetPolicy};
     use std::path::PathBuf;
@@ -1132,6 +1226,11 @@ mod tests {
             budget_exhausted: true,
             graph_results: Vec::new(),
             coverage,
+            page_resources: vec![PageResourceEdge {
+                page_url: "https://example.org/".to_owned(),
+                resource_url: "https://example.org/site.css".to_owned(),
+                kind: ResourceKind::Stylesheet,
+            }],
             resources: vec![
                 observation(
                     "https://example.org/app.js",
@@ -1451,5 +1550,109 @@ mod tests {
                 .expect("present");
             assert_eq!(coverage.discovered_urls, 6);
         }
+    }
+
+    #[tokio::test]
+    async fn page_resource_edges_attribute_a_shared_resource_to_its_dependents() {
+        let store = EvidenceStore::open(&store_path("edges"))
+            .await
+            .expect("open");
+        store
+            .record_crawl(CrawlRecord {
+                run_id: "run-edges",
+                application: "https://example.org",
+                summary: &summary(),
+                recorded_at_unix_secs: 1_700_000_000,
+            })
+            .await
+            .expect("record");
+
+        let dependents = store
+            .resource_dependents("run-edges", "https://example.org/site.css", 10)
+            .await
+            .expect("dependents");
+        assert_eq!(dependents.len(), 1);
+        assert_eq!(dependents[0].page_url, "https://example.org/");
+        assert_eq!(dependents[0].kind, ResourceKind::Stylesheet);
+
+        assert_eq!(
+            store
+                .resource_dependents("run-edges", "https://example.org/site.css", 0)
+                .await
+                .expect("bounded")
+                .len(),
+            0,
+            "a zero limit must bound the result, not be treated as unlimited"
+        );
+        assert_eq!(
+            store
+                .resource_dependents("run-edges", "https://example.org/unreferenced.css", 10)
+                .await
+                .expect("absent")
+                .len(),
+            0,
+            "a resource with no observed dependents is an empty observation, not an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_version_two_store_gains_the_edge_table_without_losing_rows() {
+        let path = store_path("migrate-v2");
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir).expect("create directory");
+        }
+        let location = path.to_str().expect("UTF-8 path");
+        let database = turso::Builder::new_local(location)
+            .build()
+            .await
+            .expect("build legacy store");
+        let connection = database.connect().expect("connection");
+        connection
+            .execute_batch(super::SCHEMA_V1)
+            .await
+            .expect("legacy schema");
+        connection
+            .execute_batch(super::MIGRATION_V2)
+            .await
+            .expect("version two schema");
+        connection
+            .execute("PRAGMA user_version = 2", ())
+            .await
+            .expect("legacy version");
+        connection
+            .execute(
+                "INSERT INTO resources
+                    (run_id, url, kind, status, http_status, content_type, byte_len, truncated,
+                     content_encoding, cache_control, etag_present, last_modified_present, error)
+                 VALUES ('legacy', 'https://example.org/app.js', 'script', 'fetched',
+                    200, 'application/javascript', 42, 0, 'br', 'max-age=60', 1, 0, NULL)",
+                (),
+            )
+            .await
+            .expect("legacy row");
+        drop(connection);
+        drop(database);
+
+        let store = EvidenceStore::open(&path).await.expect("migrate");
+        assert_eq!(
+            store.schema_version().await.expect("version"),
+            SCHEMA_VERSION
+        );
+        let resources = store
+            .resources("legacy", None, 10)
+            .await
+            .expect("resources");
+        assert_eq!(resources.len(), 1, "migration must keep existing rows");
+        assert_eq!(resources[0].etag_present, Some(true));
+        assert_eq!(resources[0].last_modified_present, Some(false));
+        assert_eq!(
+            store
+                .resource_dependents("legacy", "https://example.org/app.js", 10)
+                .await
+                .expect("edges table")
+                .len(),
+            0,
+            "a pre-edge store has no observed dependents, which is not an error"
+        );
     }
 }

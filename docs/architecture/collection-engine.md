@@ -210,3 +210,8 @@ During a Chromium collection session (`src/adapters/browser.rs` + `src/adapters/
 - **Wave IV-H & IV-I (Visual Artefacts, Service Worker Lifecycle, TLS/CAA & Patrol Catalog)**: `VisualArtifactEvidence` (SHA-256 viewport screenshot digest and `above_fold_retained_element_coverage_milli`, a geometric estimate over retained element rectangles rather than pixel coverage), `ServiceWorkerLifecycleEvidence`, `TlsAndCaaDiagnostics` (leaf-certificate projection plus direct CAA records, collected only when a DNS resolver endpoint is configured in `src/config.rs`), and indexed `PatrolIndexCatalog` (`src/patrol/memory.rs`).
 
 All 21 offline query operations in `src/investigation/evidence_query.rs` and `src/investigation/browser_timeline.rs` operate strictly over `&EvidenceSnapshot` with explicit `EvidenceQueryStatus`; numeric filters exclude unobserved values rather than treating them as zero, and no query exposes raw rendered text, cookie values, or storage values. Every query supports bounded 16-item pagination, validates citations in `KommandantZwerg`, and is explorable across 19 categories in the `Zwergenleitstand` TUI (`nzw tui`).
+
+The crawl also records a page-to-resource edge for every reference it observed, sorted by page and
+then resource. The edge is emitted even when the resource was never acquired, because the page's
+dependence is a separate fact from the acquisition outcome; only pages whose document was fully
+captured contribute edges, since a truncated document yields an incomplete reference list.

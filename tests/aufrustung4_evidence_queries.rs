@@ -1076,6 +1076,7 @@ impl DiagnosticBackend for StaticBackend {
                 budget_exhausted: false,
                 graph_results: Vec::new(),
                 resources: Vec::new(),
+                page_resources: Vec::new(),
             }
         })
     }

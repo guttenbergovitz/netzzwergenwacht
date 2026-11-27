@@ -17,7 +17,9 @@ pub mod resources;
 pub mod robots;
 
 pub use frontier::DiscoverySource;
-pub use resources::{ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus};
+pub use resources::{
+    PageResourceEdge, ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus,
+};
 pub use robots::RobotsOutcome;
 
 use crate::analysis::document::DocumentObservations;
@@ -199,6 +201,13 @@ pub struct CrawlSummary {
     /// Distinct subresources acquired once per crawl, sorted by URL.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub resources: Vec<ResourceObservation>,
+    /// Page-to-resource references observed during the crawl, sorted by page then resource.
+    ///
+    /// A reference is recorded even when the resource was never acquired or its acquisition
+    /// failed, because the page still depends on it. Referencing pages are only known for pages
+    /// whose document was fully captured.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub page_resources: Vec<PageResourceEdge>,
 }
 
 /// Extracts normalised, deduplicated, same-origin [`AuditTarget`] links from `obs`.

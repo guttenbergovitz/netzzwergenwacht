@@ -51,6 +51,21 @@ pub struct ResourceRef {
     pub kind: ResourceKind,
 }
 
+/// One page-to-resource reference observed during a crawl.
+///
+/// The edge records that a page referenced a resource. It does not assert that the resource was
+/// acquired, nor that its acquisition succeeded: a reference and an observation are different
+/// facts, and a failed resource still has dependents that need remediation.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PageResourceEdge {
+    /// Page that referenced the resource.
+    pub page_url: String,
+    /// Referenced resource URL.
+    pub resource_url: String,
+    /// Resource family the reference was discovered as.
+    pub kind: ResourceKind,
+}
+
 /// What happened to a discovered resource.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

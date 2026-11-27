@@ -9,7 +9,7 @@ survive the process that produced them.
 Implementation: `src/evidence_store.rs`. Engine decision: ADR 0032, amended by
 ADR 0033 (Turso Database, MVCC).
 
-## What is stored in schema version 2
+## What is stored in schema version 3
 
 | Table | Contents |
 | --- | --- |
@@ -61,6 +61,17 @@ non-zero: a persistence failure must not look like a successful run.
 its own sampling pipeline rather than the concurrent crawl, and unifying the two is
 scheduled with the adaptive-sampling work; until then the store has exactly one
 producer and the patrol report remains its only record.
+
+### Page-to-resource edges
+
+Version 3 adds `page_resources`, recording which pages referenced which subresource. The edge is a
+discovery fact, independent of acquisition: a page still depends on a stylesheet that failed to
+load, and that dependence is what makes a shared-resource defect worth one remediation rather than
+one finding per page. `resource_dependents` answers the leverage question, bounded like every other
+read, and returns an empty list for a resource with no observed dependents rather than an error.
+
+Limits are never widened. A caller that asks for zero rows receives zero rows; the store will not
+quietly answer one.
 
 ## What is not stored yet
 

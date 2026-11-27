@@ -326,6 +326,7 @@ pub(super) async fn crawl_concurrently(
     let mut cancelled = 0usize;
     let mut robots_blocked = 0usize;
     let mut resource_refs: HashMap<String, ResourceRef> = HashMap::new();
+    let mut page_resources: Vec<resources::PageResourceEdge> = Vec::new();
     let mut external_resources = 0usize;
     let mut budget_exhausted = false;
     let mut deadline_reached = false;
@@ -416,6 +417,11 @@ pub(super) async fn crawl_concurrently(
         }
 
         for reference in outcome.resources {
+            page_resources.push(resources::PageResourceEdge {
+                page_url: outcome.target.as_str().to_owned(),
+                resource_url: reference.url.as_str().to_owned(),
+                kind: reference.kind,
+            });
             resource_refs
                 .entry(reference.url.as_str().to_owned())
                 .or_insert(reference);
@@ -542,6 +548,9 @@ pub(super) async fn crawl_concurrently(
         resources: resource_coverage,
     };
 
+    page_resources.sort();
+    page_resources.dedup();
+
     let systemic_issues = cluster_systemic_issues(&page_reports);
     let graph = ApplicationGraph::from_pages(&graph_inputs, complete);
     let graph_results = crate::analysis::graph::analyse(&graph);
@@ -554,6 +563,7 @@ pub(super) async fn crawl_concurrently(
         graph_results,
         coverage,
         resources: resource_observations,
+        page_resources,
     }
 }
 
@@ -799,6 +809,17 @@ mod tests {
         let mut sorted = urls.clone();
         sorted.sort_unstable();
         assert_eq!(urls, sorted);
+
+        // The shared stylesheet is referenced from the seed and from `/a`, so the edge table must
+        // record two dependents rather than one reference per acquisition.
+        let dependents: Vec<&str> = summary
+            .page_resources
+            .iter()
+            .filter(|edge| edge.resource_url.ends_with("/shared.css"))
+            .map(|edge| edge.page_url.as_str())
+            .collect();
+        assert_eq!(dependents.len(), 2);
+        assert!(dependents.iter().any(|page| page.ends_with("/a")));
     }
 
     #[tokio::test]
