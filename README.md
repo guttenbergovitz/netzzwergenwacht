@@ -118,6 +118,10 @@ nzw tui --report saved-audit.json
 The launcher (`Mission Control`) collects the target, the run mode, the provider and model, a
 session-only credential, the Level 2 instruments, and the target policy. `r` opens the Mission
 Review, which shows the resolved routing, budget and configuration source before anything runs.
+The `Overview` dashboard presents a measured Domain Scoreboard, Verified Check Pass-Rate,
+honest EAA / WCAG 2.1 AA automated signals, and an interactive Executive Domain Brief (`Enter` on
+any specialist), while `Findings` and `Evidence` render `cargo`-style source excerpts for observed
+defects. Press `e` to export a self-contained HTML report.
 See `docs/user-guide/zwergenleitstand.md` for the full keymap.
 
 ## Deterministic audits

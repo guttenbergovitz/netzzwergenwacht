@@ -4,6 +4,21 @@ All notable changes to NetzZwergenWacht are documented in this file.
 
 ## [Unreleased] - `develop`
 
+## [0.2.0-alpha.1] - 2026-11-27
+
+### `cargo`-Style Source Excerpts (`EvidenceExcerpt`)
+- Added optional `EvidenceExcerpt` (`location`, `line`, `column`, `snippet`, `highlight_start`, `highlight_len`, `label`, `help`) to `EvidenceRef` (`src/domain.rs`) with backwards-compatible `#[serde(default, skip_serializing_if = "Option::is_none")]`.
+- Added deterministic `enrich_evidence_excerpts` (`src/analysis/excerpt.rs`, wired into `analysis::run_all_with_events`) covering all 11 `EvidenceSource` variants (`HttpHeaders`, `HttpBody`, `HttpStatus`, `HttpFinalUrl`, `HttpRedirectChain`, `HttpTiming`, `TlsCertificate`, `BrowserRuntime`, `LighthouseReport`, `AxeReport`, `VisualLayout`) and extended HTML element/attribute patterns.
+- Preserved representative excerpts on systemic crawl clusters (`src/tui/state.rs`) and rendered `cargo`-style diagnostic blocks in both `4:Findings` and `5:Evidence` (`src/tui/views.rs`).
+
+### Zwergenleitstand Dashboard, EAA Signals & Evidence Explorer
+- Added `Overview` **Verified Check Pass-Rate**, **Domain Scoreboard** (`PASS / FAIL / INSUFF`), measured **Lighthouse Performance** score, and **EAA / WCAG 2.1 AA / EN 301 549** automated signal matrix (`src/tui/state.rs`, `src/tui/views.rs`) with explicit non-compliance-proof disclaimers.
+- Added interactive **Executive Domain Brief** overlay (`Enter` on `1:Overview`, `Enter` to open specialist-filtered `4:Findings`, `b` for `2:Brigade`, `Esc` to close) and English domain labels alongside German dwarf names.
+- Differentiated all 19 `EvidenceCategory` tabs in `5:Evidence` for crawl and offline `AuditReport` mode, added `Esc` return from `5:Evidence` to `4:Findings`, and added self-contained HTML report export (`e`).
+
+### Expanded Deterministic & Browser Checks
+- Added native WCAG 2.1 contrast check without `axe`, dead CTA link detection, scroll-locked page detection, localhost/`.local` URL leak detection, debug header/source map/`robots.txt` conflict/`og:url` checks, and portfolio HTML/SARIF export (`-o`/`--output`).
+
 ### Filter History-Only Tools in `nzw investigate` (2026-11-24)
 - Excluded `inspect_previous_findings` and `verify_finding` from `propose_hypothesis` tool advertisement in `run_investigation_with_specialists` (`src/investigation/mod.rs`) when no baseline history is attached, preventing wasted `KommandantZwerg` turns.
 

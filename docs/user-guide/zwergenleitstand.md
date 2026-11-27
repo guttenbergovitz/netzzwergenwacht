@@ -47,7 +47,7 @@ value; the panel states that credentials are session-only.
 
 | Key | View | Contents |
 | --- | --- | --- |
-| `1` | Overview | Run lifecycle, quality verdict & domain matrix, target surface, headline counts |
+| `1` | Overview | Run lifecycle, Domain Scoreboard, Verified Pass-Rate, EAA/WCAG 2.1 AA automated signals, Brigade selector (`Enter` for Executive Domain Brief) |
 | `2` | Brigade | Per-dwarf activity: checks, findings, status |
 | `3` | Targets | Discovered pages and their inspection state |
 | `4` | Findings | Filterable findings with severity and evidence citations |
@@ -104,6 +104,15 @@ Values that were not observed are shown as `unobserved`, `unavailable`, `partial
 | `Backspace` | Delete the last character |
 | `Ctrl+u` | Clear the focused field |
 | `Esc` | Close the launcher without starting |
+
+### Executive Domain Brief (`1:Overview`)
+
+| Key | Action |
+| --- | --- |
+| `j` / `k` or `Up` / `Down` | Select specialist domain in `Die Zwergenbrigade` |
+| `Enter` | Open Executive Domain Brief for selected specialist; press `Enter` again to jump to filtered `Findings` |
+| `b` | Jump from Executive Domain Brief to `2:Brigade` |
+| `Esc` | Close Executive Domain Brief |
 
 ### Mission Review
 
