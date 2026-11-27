@@ -84,3 +84,12 @@ The following are **not implemented**. They remain candidates for a later operat
 2. **External Instrument Integrations**: optional `testssl.sh` TLS protocol/cipher enumeration and Nu HTML Checker (`vnu`) conformance adapter behind `CollectorOutcome`.
 3. **Interaction safety depth**: network-restricted behavioural probes with explicit authorisation policies, plus multi-state consent observation.
 4. **Historical evidence**: longitudinal comparison across observation families with explicit compatibility rules for differing coverage and fingerprint contracts.
+
+## Phase II: External Technical Quality Assurance
+
+Phase II transitions NetzZwergenWacht from an evidence-rich diagnostic prototype into an independent, defensible black-box technical QA system. See [phase-2-external-technical-qa.md](file:///Users/krzys/github.com/guttenbergovitz/netzzwergenwacht/docs/product/phase-2-external-technical-qa.md) for the full specification.
+
+- **P0 — Stabilisation and credibility**: Chromium CI launch stability, live browser test reliability, unified `EvidenceStore` persistence, rule verification, empirical validation baseline, unified multi-dimensional quality assessment (`compute_release_readiness` + `evaluate_policy`), and explicit coverage/`INSUFFICIENT EVIDENCE` semantics.
+- **P1 — Genuine black-box QA**: Controlled interaction engine, functional assertions, user journey testing, Application Quality Profiles, persistent finding lifecycle, visual regression, cross-run evidence comparison, and extended runtime/accessibility analysis.
+- **P2 — Diagnostic depth**: Repeated performance distributions, multi-state privacy/consent scenarios, advanced multilingual assessment, cross-browser assessment, systemic defect clustering, and dependency failure attribution.
+- **P3 — Continuous technical assurance**: Release-aware baselines, scheduled execution, portfolio-level assessment, synthetic monitoring, regression alerts, longitudinal quality trends, and exportable evidence packages.
