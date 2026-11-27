@@ -277,6 +277,8 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
                 rendered_dom_elements: Some(42),
                 hydration_errors: Vec::new(),
                 rendered_word_count: Some(500),
+                visible_busy_indicators: None,
+                rendered_error_marker: None,
                 rendered_content: None,
                 ax_tree: None,
                 performance: None,

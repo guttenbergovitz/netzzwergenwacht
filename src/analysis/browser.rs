@@ -27,6 +27,8 @@ const RULE_CORS_BLOCK: &str = "browser.network.cors_block";
 const RULE_MIXED_CONTENT_LOADED: &str = "browser.network.mixed_content_loaded";
 const RULE_THIRD_PARTY_FAILURES: &str = "browser.network.third_party_failures";
 const RULE_REDIRECTED_SUBRESOURCES: &str = "browser.network.redirected_subresources";
+const RULE_CLIENT_ERROR_FALLBACK: &str = "browser.runtime.client_error_fallback";
+const RULE_STUCK_LOADING_STATE: &str = "browser.runtime.stuck_loading_state";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -44,6 +46,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_MIXED_CONTENT_LOADED,
     RULE_THIRD_PARTY_FAILURES,
     RULE_REDIRECTED_SUBRESOURCES,
+    RULE_CLIENT_ERROR_FALLBACK,
+    RULE_STUCK_LOADING_STATE,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -85,6 +89,8 @@ pub fn analyse_with_document(
     check_mixed_content_loaded(browser, &mut findings, &mut checks);
     check_third_party_failures(browser, &mut findings, &mut checks);
     check_redirected_subresources(browser, &mut findings, &mut checks);
+    check_client_error_fallback(browser, &mut findings, &mut checks);
+    check_stuck_loading_state(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -879,6 +885,106 @@ fn check_redirected_subresources(
     });
 }
 
+fn check_client_error_fallback(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if browser.rendered_word_count.is_none() && browser.rendered_error_marker.is_none() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_CLIENT_ERROR_FALLBACK.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "rendered text crash marker was not collected".to_owned(),
+        });
+        return;
+    }
+
+    if let Some(marker) = &browser.rendered_error_marker {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_CLIENT_ERROR_FALLBACK.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_CLIENT_ERROR_FALLBACK.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Critical,
+            confidence: Confidence::High,
+            title: "Client-side error boundary rendered instead of application UI".to_owned(),
+            summary: format!(
+                "Despite an HTTP response, the rendered DOM displays the client-side crash marker `{marker}`."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("rendered_error_marker={marker}"),
+            )],
+            remediation: Some(
+                "Inspect the client bundle and ErrorBoundary logs for the failing route and ensure broken deployments fail health checks before serving traffic."
+                    .to_owned(),
+            ),
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_CLIENT_ERROR_FALLBACK.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_stuck_loading_state(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let (Some(busy_count), Some(word_count)) =
+        (browser.visible_busy_indicators, browser.rendered_word_count)
+    else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_STUCK_LOADING_STATE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "visible busy-indicator or rendered word count was not collected".to_owned(),
+        });
+        return;
+    };
+
+    if busy_count > 0 && word_count < 25 {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_STUCK_LOADING_STATE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_STUCK_LOADING_STATE.to_owned()),
+            category: FindingCategory::Reliability,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Heuristic,
+            severity: Severity::High,
+            confidence: Confidence::Medium,
+            title: format!(
+                "Page appears stuck in a loading state ({busy_count} active indicator(s))"
+            ),
+            summary: format!(
+                "After browser load stabilisation, {busy_count} visible `[aria-busy=\"true\"]` / `[role=\"progressbar\"]` indicator(s) remained active with only {word_count} rendered word(s)."
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!("visible_busy_indicators={busy_count}, rendered_word_count={word_count}"),
+            )],
+            remediation: Some(
+                "Verify that data-fetching requests resolve or show an explicit error state rather than leaving users on an indefinite loading spinner."
+                    .to_owned(),
+            ),
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_STUCK_LOADING_STATE.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1099,5 +1205,24 @@ mod tests {
         assert!(ids.contains(&RULE_MIXED_CONTENT_LOADED));
         assert!(ids.contains(&RULE_THIRD_PARTY_FAILURES));
         assert!(ids.contains(&RULE_REDIRECTED_SUBRESOURCES));
+    }
+
+    #[test]
+    fn flags_client_error_fallback_and_stuck_loading_state() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                rendered_word_count: Some(8),
+                visible_busy_indicators: Some(1),
+                rendered_error_marker: Some(
+                    "Application error: a client-side exception has occurred".to_owned(),
+                ),
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_CLIENT_ERROR_FALLBACK));
+        assert!(ids.contains(&RULE_STUCK_LOADING_STATE));
     }
 }

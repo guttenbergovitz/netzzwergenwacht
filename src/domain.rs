@@ -1065,6 +1065,12 @@ pub struct BrowserEvidence {
     /// Visible word count extracted from rendered `document.body.innerText`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rendered_word_count: Option<usize>,
+    /// Count of visible `[aria-busy="true"]` or `[role="progressbar"]` elements after render.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_busy_indicators: Option<usize>,
+    /// Explicit client-side crash/error-boundary marker observed in rendered text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_error_marker: Option<String>,
     /// Level 2 Accessibility Tree summary (`Accessibility.getFullAXTree`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ax_tree: Option<AccessibilityTreeSummary>,

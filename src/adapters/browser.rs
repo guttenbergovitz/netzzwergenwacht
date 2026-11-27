@@ -540,6 +540,21 @@ function findBrowser() {
         });
         const renderedText = (document.body?.innerText || '').trim();
         const renderedWords = renderedText ? renderedText.split(/\s+/).length : 0;
+        const visibleBusyIndicators = Array.from(
+          document.querySelectorAll('[aria-busy=true], [role=progressbar]')
+        ).filter((el) => {
+          const r = el.getBoundingClientRect();
+          const st = getComputedStyle(el);
+          return r.width > 0 && r.height > 0 && st.display !== 'none' && st.visibility !== 'hidden';
+        }).length;
+        const crashPhrases = [
+          'application error: a client-side exception has occurred',
+          'unexpected application error!',
+          'minified react error #',
+          'chunkloaderror: loading chunk',
+        ];
+        const lowerText = renderedText.toLowerCase();
+        const renderedErrorMarker = crashPhrases.find((phrase) => lowerText.includes(phrase)) || null;
         const nav = performance.getEntriesByType('navigation')[0];
         const p = window.__nzwPerf || {};
         const pos = (v) => (typeof v === 'number' && v >= 0 ? Math.round(v) : null);
@@ -610,6 +625,8 @@ function findBrowser() {
           rendered_images: imgs,
           rendered_images_truncated: document.images.length > 100,
           rendered_word_count: renderedWords,
+          visible_busy_indicators: visibleBusyIndicators,
+          rendered_error_marker: renderedErrorMarker,
           csp_violations: Array.isArray(window.__nzwCspViolations) ? window.__nzwCspViolations : [],
           performance: perfObs,
           storage_summary: storageSummary,
@@ -1111,6 +1128,8 @@ function findBrowser() {
       rendered_images_truncated: Boolean(domAndImages.rendered_images_truncated),
       rendered_dom_elements: typeof domAndImages.rendered_dom_elements === 'number' ? domAndImages.rendered_dom_elements : null,
       rendered_word_count: typeof domAndImages.rendered_word_count === 'number' ? domAndImages.rendered_word_count : null,
+      visible_busy_indicators: typeof domAndImages.visible_busy_indicators === 'number' ? domAndImages.visible_busy_indicators : null,
+      rendered_error_marker: typeof domAndImages.rendered_error_marker === 'string' && domAndImages.rendered_error_marker ? domAndImages.rendered_error_marker : null,
       ax_tree: axTreeSummary,
       performance: domAndImages.performance || null,
       storage_summary: domAndImages.storage_summary || null,

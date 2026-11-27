@@ -603,3 +603,64 @@ async fn live_browser_detects_ineffective_reject_consent_button() {
         "expected sec.privacy.reject_consent_ineffective, got: {rules:?}"
     );
 }
+
+#[ignore = "requires local Chromium/Chrome and Node.js with ws"]
+#[tokio::test]
+async fn live_browser_detects_client_error_fallback_and_stuck_loading() {
+    use netzzwergenwacht::analysis;
+    use netzzwergenwacht::collection;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let body = r#"<!doctype html><html lang="en"><head><title>App</title></head><body>
+            <main>
+              <div role="progressbar" aria-busy="true" style="width:40px;height:40px;"></div>
+              <p>Application error: a client-side exception has occurred</p>
+            </main>
+        </body></html>"#;
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+
+    let target =
+        AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+    let mut snapshot = collection::collect_http(
+        &target,
+        &netzzwergenwacht::domain::ExecutionBudget::default(),
+        TargetPolicy::AllowPrivate,
+    )
+    .await;
+    snapshot.browser =
+        run_browser_with_policy(&target, Duration::from_secs(30), TargetPolicy::AllowPrivate).await;
+    server.abort();
+
+    let report = analysis::run_all(&snapshot);
+    let rules: Vec<&str> = report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+    assert!(
+        rules.contains(&"browser.runtime.client_error_fallback"),
+        "expected browser.runtime.client_error_fallback, got: {rules:?}"
+    );
+    assert!(
+        rules.contains(&"browser.runtime.stuck_loading_state"),
+        "expected browser.runtime.stuck_loading_state, got: {rules:?}"
+    );
+}
