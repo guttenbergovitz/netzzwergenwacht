@@ -14,7 +14,7 @@
         { "rule_id": "a11y.images.alt", "domain": "accessibility" },
         { "rule_id": "str.doc.duplicate_ids", "domain": "semantics" },
         { "rule_id": "str.headings.hierarchy", "domain": "semantics" },
-        { "rule_id": "seo.meta.description", "domain": "seo" }
+        { "rule_id": "such.meta.description", "domain": "seo" }
       ]
     },
     {
@@ -28,7 +28,7 @@
       ]
     }
   ],
-  "expected_systemic_rules": ["a11y.images.alt", "seo.meta.description"],
+  "expected_systemic_rules": ["a11y.images.alt", "such.meta.description"],
   "remediation_variants": [
     {
       "baseline": "/a11y.html",

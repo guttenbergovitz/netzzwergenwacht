@@ -427,3 +427,107 @@ async fn measures_source_segmentation_and_rejects_truncated_http() {
         matches!(check, CheckStatus::Skipped { rule_id, .. } if rule_id.0 == "inh.content.boilerplate_ratio")
     }));
 }
+
+#[tokio::test]
+async fn measures_ground_truth_recall_and_healthy_control_precision() {
+    use netzzwergenwacht::analysis::assessment::assess_audit_report;
+    use netzzwergenwacht::domain::Severity;
+
+    #[derive(serde::Deserialize)]
+    struct ExpectedDefect {
+        rule_id: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct ManifestPage {
+        path: String,
+        role: String,
+        expected_defects: Vec<ExpectedDefect>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        pages: Vec<ManifestPage>,
+    }
+
+    let manifest: Manifest =
+        serde_json::from_str(include_str!("../fixtures/zwergenpruefstand/manifest.json"))
+            .expect("valid manifest");
+    let (base_url, server) = spawn_fixture_server().await;
+    let budget = ExecutionBudget::default();
+
+    let mut true_positives = 0usize;
+    let mut missed_rules = Vec::new();
+    let mut healthy_blocking_fps = 0usize;
+
+    for page in &manifest.pages {
+        let target = AuditTarget::parse(
+            &format!("{base_url}{}", page.path),
+            TargetPolicy::AllowPrivate,
+        )
+        .expect("valid target");
+        let snapshot = collection::collect_http(&target, &budget, TargetPolicy::AllowPrivate).await;
+        let report = analysis::run_all(&snapshot);
+        let assessment = assess_audit_report(&report);
+
+        let observed_rules: std::collections::HashSet<&str> = report
+            .analysers
+            .iter()
+            .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+
+        for expected in &page.expected_defects {
+            if observed_rules.contains(expected.rule_id.as_str()) {
+                true_positives += 1;
+            } else {
+                missed_rules.push(format!("{}:{}", page.path, expected.rule_id));
+            }
+        }
+
+        if page.role == "healthy_control" {
+            for dom in &assessment.domains {
+                if matches!(
+                    dom.domain,
+                    netzzwergenwacht::analysis::assessment::QualityDomain::Accessibility
+                        | netzzwergenwacht::analysis::assessment::QualityDomain::ContentIntegrity
+                        | netzzwergenwacht::analysis::assessment::QualityDomain::Discoverability
+                        | netzzwergenwacht::analysis::assessment::QualityDomain::Reliability
+                ) {
+                    assert_eq!(
+                        dom.critical_high_count, 0,
+                        "healthy control must have zero Critical/High findings in {:?}: {:?}",
+                        dom.domain, dom.rationale
+                    );
+                }
+                if matches!(
+                    dom.domain,
+                    netzzwergenwacht::analysis::assessment::QualityDomain::Accessibility
+                        | netzzwergenwacht::analysis::assessment::QualityDomain::ContentIntegrity
+                        | netzzwergenwacht::analysis::assessment::QualityDomain::Reliability
+                ) {
+                    assert_eq!(
+                        dom.medium_count, 0,
+                        "healthy control must have zero Medium findings in {:?}: {:?}",
+                        dom.domain, dom.rationale
+                    );
+                }
+            }
+            healthy_blocking_fps += report
+                .analysers
+                .iter()
+                .filter(|a| a.dwarf_id != netzzwergenwacht::brigade::DwarfId::Sicherheits)
+                .flat_map(|a| a.findings.iter())
+                .filter(|f| f.severity >= Severity::High)
+                .count();
+        }
+    }
+
+    server.abort();
+    assert!(
+        missed_rules.is_empty(),
+        "all ground-truth defects must be recalled (TP={true_positives}, missed={missed_rules:?})"
+    );
+    assert!(true_positives >= 8);
+    assert_eq!(
+        healthy_blocking_fps, 0,
+        "healthy control must produce zero Medium+ false positives"
+    );
+}
