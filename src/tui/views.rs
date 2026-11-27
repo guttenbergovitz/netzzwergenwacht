@@ -575,6 +575,46 @@ fn render_brigade(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     }
 }
 
+/// Builds the reconnaissance coverage block shown under the selected page, if a crawl ran.
+fn reconnaissance_coverage_lines(state: &AppState) -> Vec<Line<'static>> {
+    let Some(crawl) = &state.crawl_summary else {
+        return Vec::new();
+    };
+    let coverage = crawl.coverage;
+    vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            " RECONNAISSANCE COVERAGE ",
+            state.theme.title_style(),
+        )),
+        Line::from(format!(
+            " Discovered {}  Fetched {}  Analysed {}",
+            coverage.discovered_urls, coverage.fetched_urls, coverage.analysed_urls
+        )),
+        Line::from(format!(
+            " Failed {}  Skipped {}  Cancelled {}  Robots blocked {}",
+            coverage.failed_urls,
+            coverage.skipped_budget_urls,
+            coverage.cancelled_urls,
+            coverage.robots_blocked_urls
+        )),
+        Line::from(format!(
+            " Complete: {}  Budget exhausted: {}  Robots file: {}",
+            if coverage.complete { "yes" } else { "no" },
+            if crawl.budget_exhausted { "yes" } else { "no" },
+            coverage.robots.label()
+        )),
+        Line::from(format!(
+            " Resources acquired {} of {} discovered",
+            coverage.resources.fetched_resources, coverage.resources.discovered_resources
+        )),
+        Line::from(format!(
+            " Systemic clusters: {}",
+            crawl.systemic_issues.len()
+        )),
+    ]
+}
+
 fn render_targets(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     let cols = if area.width >= 100 {
         Layout::default()
@@ -642,31 +682,34 @@ fn render_targets(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     );
     frame.render_widget(table, cols[0]);
 
-    let detail_lines = if let Some(selected) = state.target_rows.get(state.selected_target_index) {
-        vec![
-            Line::from(vec![
-                Span::styled(" URL:       ", state.theme.muted_style()),
-                Span::styled(&selected.display_url, state.theme.title_style()),
-            ]),
-            Line::from(format!(" Status:    {}", selected.state.label())),
-            Line::from(format!(
-                " HTTP Code: {}",
-                selected
-                    .http_status
-                    .map_or_else(|| String::from("Not observed"), |c| c.to_string())
-            )),
-            Line::from(format!(" Source:    {}", selected.discovery_source)),
-            Line::from(format!(" Depth:     {}", selected.depth)),
-            Line::from(format!(" Page Type: {}", selected.page_type)),
-            Line::from(format!(" Evidence:  {}", selected.evidence_summary)),
-            Line::from(format!(" Findings:  {}", selected.findings_count)),
-        ]
-    } else {
-        vec![Line::from(Span::styled(
-            " No targets inspected yet.",
-            state.theme.muted_style(),
-        ))]
-    };
+    let mut detail_lines =
+        if let Some(selected) = state.target_rows.get(state.selected_target_index) {
+            vec![
+                Line::from(vec![
+                    Span::styled(" URL:       ", state.theme.muted_style()),
+                    Span::styled(&selected.display_url, state.theme.title_style()),
+                ]),
+                Line::from(format!(" Status:    {}", selected.state.label())),
+                Line::from(format!(
+                    " HTTP Code: {}",
+                    selected
+                        .http_status
+                        .map_or_else(|| String::from("Not observed"), |c| c.to_string())
+                )),
+                Line::from(format!(" Source:    {}", selected.discovery_source)),
+                Line::from(format!(" Depth:     {}", selected.depth)),
+                Line::from(format!(" Page Type: {}", selected.page_type)),
+                Line::from(format!(" Evidence:  {}", selected.evidence_summary)),
+                Line::from(format!(" Findings:  {}", selected.findings_count)),
+            ]
+        } else {
+            vec![Line::from(Span::styled(
+                " No targets inspected yet.",
+                state.theme.muted_style(),
+            ))]
+        };
+
+    detail_lines.extend(reconnaissance_coverage_lines(state));
 
     let detail_block = Block::default()
         .title(" PAGE DETAILS ")

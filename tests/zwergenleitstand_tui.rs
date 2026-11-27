@@ -80,6 +80,9 @@ async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_repor
         enable_lighthouse: false,
         provider: netzzwergenwacht::config::ProviderKind::OpenAi,
         model: String::new(),
+        evidence_dir: std::path::PathBuf::from(".nzw/evidence"),
+        max_pages: 10,
+        max_depth: 1,
     };
 
     let artefacts = execute_diagnostic_run(
@@ -348,6 +351,7 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
             audit_report: Some(report),
             investigation_report: None,
             patrol_report: None,
+            crawl_summary: None,
             history_reports: Vec::new(),
             regression_report: None,
             elapsed_ms: 420,
@@ -441,6 +445,7 @@ fn terminal_security_strips_hostile_escape_sequences_and_redacts_secrets_in_buff
         audit_report: Some(report),
         investigation_report: None,
         patrol_report: None,
+        crawl_summary: None,
         history_reports: Vec::new(),
         regression_report: None,
         elapsed_ms: 15,
@@ -524,6 +529,9 @@ async fn cancelled_run_stops_before_acquisition() {
         enable_lighthouse: true,
         provider: netzzwergenwacht::config::ProviderKind::OpenAi,
         model: String::new(),
+        evidence_dir: std::path::PathBuf::from(".nzw/evidence"),
+        max_pages: 10,
+        max_depth: 1,
     };
     let outcome = execute_diagnostic_run_cancellable(
         spec,
@@ -608,6 +616,9 @@ async fn agentic_investigation_without_a_kommandant_model_fails_explicitly() {
         enable_lighthouse: false,
         provider: netzzwergenwacht::config::ProviderKind::OpenAi,
         model: String::new(),
+        evidence_dir: std::path::PathBuf::from(".nzw/evidence"),
+        max_pages: 10,
+        max_depth: 1,
     };
 
     let outcome = execute_diagnostic_run_cancellable(
@@ -627,4 +638,125 @@ async fn agentic_investigation_without_a_kommandant_model_fails_explicitly() {
         error.contains("needs a model configured for KommandantZwerg"),
         "unexpected error: {error}"
     );
+}
+
+/// Serves a two-page application so the reconnaissance crawl has something to discover.
+async fn spawn_crawl_fixture() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind loopback listener");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buf = [0_u8; 2048];
+            let read = stream.read(&mut buf).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&buf[..read]).to_string();
+            let body = if request.contains("GET /second") {
+                "<!doctype html><html><head><title>Second page</title></head><body><h1>Two</h1></body></html>"
+            } else {
+                "<!doctype html><html><head><title>Reconnaissance fixture</title>\
+                 <link rel=\"stylesheet\" href=\"/shared.css\"></head>\
+                 <body><h1>One</h1><a href=\"/second\">Second</a></body></html>"
+            };
+            let content_type = if request.contains("shared.css") {
+                "text/css"
+            } else {
+                "text/html; charset=utf-8"
+            };
+            let payload = if request.contains("shared.css") {
+                String::from("body { color: #111; }")
+            } else {
+                body.to_owned()
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+            let _ = stream.shutdown().await;
+        }
+    });
+    format!("http://{addr}/")
+}
+
+#[tokio::test]
+async fn reconnaissance_crawl_mode_retains_evidence_and_populates_surface() {
+    let target_str = spawn_crawl_fixture().await;
+    let policy = TargetPolicy::AllowPrivate;
+    let target = AuditTarget::parse(&target_str, policy).expect("valid loopback url");
+    let evidence_dir = std::env::temp_dir().join(format!(
+        "nzw-scan-{}-{}",
+        std::process::id(),
+        Instant::now().elapsed().as_nanos()
+    ));
+
+    let spec = RunLaunchSpec {
+        target,
+        mode: DiagnosticRunMode::ReconnaissanceCrawl,
+        enable_browser: false,
+        enable_axe: false,
+        enable_lighthouse: false,
+        provider: netzzwergenwacht::config::ProviderKind::OpenAi,
+        model: String::new(),
+        evidence_dir: evidence_dir.clone(),
+        max_pages: 5,
+        max_depth: 1,
+    };
+
+    let (sink, _rx) = diagnostic_event_channel(RunId::new("run-scan"));
+    let artefacts = execute_diagnostic_run_cancellable(
+        spec,
+        policy,
+        ExecutionBudget::default(),
+        String::from("Reconnaissance"),
+        sink,
+        tokio::sync::watch::channel(false).1,
+        std::path::Path::new(netzzwergenwacht::patrol::memory::DEFAULT_MEMORY_DIR),
+        std::sync::Arc::new(netzzwergenwacht::intelligence::EmptyProviderRouter),
+    )
+    .await
+    .expect("execute reconnaissance crawl");
+
+    let crawl = artefacts
+        .crawl_summary
+        .as_ref()
+        .expect("crawl summary retained");
+    assert_eq!(artefacts.mode, DiagnosticRunMode::ReconnaissanceCrawl);
+    assert_eq!(
+        crawl.coverage.discovered_urls, 2,
+        "seed plus one discovered link"
+    );
+    assert_eq!(crawl.coverage.analysed_urls, 2);
+    assert_eq!(crawl.coverage.failed_urls, 0);
+    assert_eq!(crawl.coverage.resources.fetched_resources, 1);
+
+    let mut state = AppState::new(ThemeMode::StandardDark, GlyphSet::Unicode);
+    state.ingest_artefacts(artefacts);
+    assert_eq!(state.target_rows.len(), 2);
+    assert_eq!(state.run_mode, DiagnosticRunMode::ReconnaissanceCrawl);
+    assert!(state.crawl_summary.is_some());
+
+    let store_path = evidence_dir.join("evidence.db");
+    assert!(
+        store_path.exists(),
+        "evidence store written to {}",
+        store_path.display()
+    );
+    let store = netzzwergenwacht::evidence_store::EvidenceStore::open(&store_path)
+        .await
+        .expect("reopen evidence store");
+    let runs = store.runs(8).await.expect("list stored runs");
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].discovered_urls, 2);
+    let coverage = store
+        .coverage(&runs[0].run_id)
+        .await
+        .expect("read coverage")
+        .expect("coverage present");
+    assert_eq!(coverage.analysed_urls, 2);
+
+    let _ = std::fs::remove_dir_all(&evidence_dir);
 }

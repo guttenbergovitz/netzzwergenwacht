@@ -543,7 +543,8 @@ fn cycle_discovered_model(state: &mut AppState, forward: bool) {
 
 const fn cycle_mode_next(mode: DiagnosticRunMode) -> DiagnosticRunMode {
     match mode {
-        DiagnosticRunMode::DeterministicCheck => DiagnosticRunMode::AgenticInvestigation,
+        DiagnosticRunMode::DeterministicCheck => DiagnosticRunMode::ReconnaissanceCrawl,
+        DiagnosticRunMode::ReconnaissanceCrawl => DiagnosticRunMode::AgenticInvestigation,
         DiagnosticRunMode::AgenticInvestigation => DiagnosticRunMode::AutonomousPatrol,
         DiagnosticRunMode::AutonomousPatrol | DiagnosticRunMode::OfflineExploration => {
             DiagnosticRunMode::DeterministicCheck
@@ -556,7 +557,8 @@ const fn cycle_mode_prev(mode: DiagnosticRunMode) -> DiagnosticRunMode {
         DiagnosticRunMode::DeterministicCheck | DiagnosticRunMode::OfflineExploration => {
             DiagnosticRunMode::AutonomousPatrol
         }
-        DiagnosticRunMode::AgenticInvestigation => DiagnosticRunMode::DeterministicCheck,
+        DiagnosticRunMode::ReconnaissanceCrawl => DiagnosticRunMode::DeterministicCheck,
+        DiagnosticRunMode::AgenticInvestigation => DiagnosticRunMode::ReconnaissanceCrawl,
         DiagnosticRunMode::AutonomousPatrol => DiagnosticRunMode::AgenticInvestigation,
     }
 }
@@ -627,6 +629,9 @@ fn try_launch_from_launcher(state: &mut AppState) -> Vec<AppEffect> {
                 enable_lighthouse: state.launcher.enable_lighthouse,
                 provider: state.launcher.provider,
                 model,
+                evidence_dir: state.evidence_dir.clone(),
+                max_pages: state.crawl_max_pages,
+                max_depth: state.crawl_max_depth,
             })]
         }
         Err(err) => {

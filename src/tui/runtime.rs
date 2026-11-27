@@ -66,6 +66,12 @@ pub struct TuiStartupOptions {
     /// Directory for persistent patrol memory. Shared with `nzw patrol` so the
     /// workbench continues the same application history instead of starting fresh.
     pub memory_dir: PathBuf,
+    /// Directory for the application-wide evidence store written by reconnaissance crawls.
+    pub evidence_dir: PathBuf,
+    /// Page bound applied to reconnaissance crawls launched from the workbench.
+    pub max_pages: usize,
+    /// Link-following depth bound applied to reconnaissance crawls.
+    pub max_depth: usize,
     /// Execution budget governing network, browser, and LLM limits.
     pub budget: ExecutionBudget,
     /// Investigation objective for `AgenticInvestigation` mode.
@@ -91,6 +97,9 @@ impl Default for TuiStartupOptions {
             config_source: None,
             policy: TargetPolicy::PublicOnly,
             memory_dir: PathBuf::from(crate::patrol::memory::DEFAULT_MEMORY_DIR),
+            evidence_dir: PathBuf::from(".nzw/evidence"),
+            max_pages: 50,
+            max_depth: 2,
             budget: ExecutionBudget::default(),
             objective: String::from(
                 "Identify high-impact web quality, reliability, accessibility, and security issues",
@@ -118,6 +127,7 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
             audit_report: Some(audit_report),
             investigation_report: None,
             patrol_report: None,
+            crawl_summary: None,
             history_reports: Vec::new(),
             regression_report: None,
             elapsed_ms: 0,
@@ -132,6 +142,7 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
             audit_report: inv_report.initial_report.clone(),
             investigation_report: Some(inv_report),
             patrol_report: None,
+            crawl_summary: None,
             history_reports: Vec::new(),
             regression_report: None,
             elapsed_ms: 0,
@@ -152,6 +163,7 @@ pub fn load_offline_report(path: &Path) -> Result<DiagnosticArtefacts, String> {
             audit_report: first_audit,
             investigation_report: first_inv,
             patrol_report: Some(patrol_report),
+            crawl_summary: None,
             history_reports: Vec::new(),
             regression_report: None,
             elapsed_ms: 0,
@@ -192,6 +204,7 @@ pub fn load_offline_history(path: &Path) -> Result<DiagnosticArtefacts, String> 
         audit_report: latest,
         investigation_report: None,
         patrol_report: None,
+        crawl_summary: None,
         history_reports: reports,
         regression_report,
         elapsed_ms: 0,
@@ -244,6 +257,9 @@ pub fn initialize_state(options: &TuiStartupOptions) -> Result<(AppState, Vec<Ap
         state.config = Some(config.clone());
     }
     state.config_source.clone_from(&options.config_source);
+    state.evidence_dir.clone_from(&options.evidence_dir);
+    state.crawl_max_pages = options.max_pages;
+    state.crawl_max_depth = options.max_depth;
 
     if let Some(target) = &options.target {
         state.launcher.target_input.clone_from(target);
@@ -287,6 +303,9 @@ pub fn initialize_state(options: &TuiStartupOptions) -> Result<(AppState, Vec<Ap
             enable_browser: options.enable_browser,
             enable_axe: options.enable_axe,
             enable_lighthouse: options.enable_lighthouse,
+            evidence_dir: options.evidence_dir.clone(),
+            max_pages: options.max_pages,
+            max_depth: options.max_depth,
         };
         return Ok((state, vec![AppEffect::StartRun(spec)]));
     }
@@ -782,10 +801,17 @@ pub async fn execute_diagnostic_run_cancellable(
                 audit_report: Some(report),
                 investigation_report: None,
                 patrol_report: None,
+                crawl_summary: None,
                 history_reports: Vec::new(),
                 regression_report: None,
                 elapsed_ms,
             })
+        }
+        DiagnosticRunMode::ReconnaissanceCrawl => {
+            Box::pin(run_reconnaissance_crawl(
+                target, target_str, spec, policy, budget, start, &cancel, &sink,
+            ))
+            .await
         }
         DiagnosticRunMode::AgenticInvestigation => {
             if *cancel.borrow() {
@@ -821,6 +847,7 @@ pub async fn execute_diagnostic_run_cancellable(
                 audit_report: inv_report.initial_report.clone(),
                 investigation_report: Some(inv_report),
                 patrol_report: None,
+                crawl_summary: None,
                 history_reports: Vec::new(),
                 regression_report: None,
                 elapsed_ms,
@@ -915,12 +942,119 @@ pub async fn execute_diagnostic_run_cancellable(
                 audit_report: first_audit,
                 investigation_report: first_inv,
                 patrol_report: Some(patrol_report),
+                crawl_summary: None,
                 history_reports: Vec::new(),
                 regression_report: None,
                 elapsed_ms,
             })
         }
     }
+}
+
+/// Executes an application-wide reconnaissance crawl and retains its evidence.
+///
+/// Kept in its own future so the crawl and evidence-store state do not inflate the
+/// top-level run future; the caller boxes it for the same reason.
+#[allow(clippy::too_many_arguments)]
+async fn run_reconnaissance_crawl(
+    target: AuditTarget,
+    target_str: String,
+    spec: RunLaunchSpec,
+    policy: TargetPolicy,
+    budget: ExecutionBudget,
+    start: Instant,
+    cancel: &watch::Receiver<bool>,
+    sink: &DiagnosticEventSink,
+) -> Result<DiagnosticArtefacts, String> {
+    if *cancel.borrow() {
+        return Err(String::from("cancelled by operator before crawl"));
+    }
+    sink.emit(
+        EventContext::new()
+            .with_target(&target_str)
+            .with_collector(CollectorId::Http),
+        DiagnosticEventPayload::CollectionStarted {
+            collector: CollectorId::Http,
+        },
+    );
+    let crawl_budget = crate::discovery::CrawlBudget {
+        max_pages: spec.max_pages.max(1),
+        max_depth: spec.max_depth,
+        max_duration: budget.audit_timeout,
+    };
+    let crawl = crate::discovery::crawl_and_cluster(target, crawl_budget, budget, policy).await;
+
+    for page in &crawl.pages {
+        sink.emit(
+            EventContext::new()
+                .with_target(&target_str)
+                .with_page(page.url.as_str()),
+            DiagnosticEventPayload::TargetDiscovered {
+                url: page.url.as_str().to_owned(),
+                source: String::from("crawl"),
+                depth: page.depth,
+                status: format!("{:?}", page.status),
+            },
+        );
+    }
+
+    let store_path = spec.evidence_dir.join("evidence.db");
+    let run_id = format!(
+        "tui-scan-{}",
+        u64::try_from(start.elapsed().as_millis()).unwrap_or(0)
+    );
+    let record = crate::evidence_store::CrawlRecord {
+        run_id: &run_id,
+        application: &target_str,
+        summary: &crawl,
+        recorded_at_unix_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs()),
+    };
+    let stored = Box::pin(async {
+        match crate::evidence_store::EvidenceStore::open(&store_path).await {
+            Ok(store) => store.record_crawl(record).await,
+            Err(err) => Err(err),
+        }
+    })
+    .await;
+    if let Err(err) = stored {
+        sink.emit(
+            EventContext::new().with_target(&target_str),
+            DiagnosticEventPayload::Warning {
+                message: format!(
+                    "reconnaissance evidence not stored at {}: {err}",
+                    store_path.display()
+                ),
+            },
+        );
+    }
+
+    let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+    sink.emit(
+                EventContext::new().with_target(&target_str),
+                DiagnosticEventPayload::RunCompleted {
+                    summary: format!(
+                        "Reconnaissance crawl analysed {} of {} discovered URLs, {} systemic clusters, in {elapsed_ms} ms",
+                        crawl.coverage.analysed_urls,
+                        crawl.coverage.discovered_urls,
+                        crawl.systemic_issues.len()
+                    ),
+                },
+            );
+
+    Ok(DiagnosticArtefacts {
+        target: target_str,
+        mode: DiagnosticRunMode::ReconnaissanceCrawl,
+        snapshot: None,
+        audit_report: None,
+        investigation_report: None,
+        patrol_report: None,
+        crawl_summary: Some(crawl),
+        history_reports: Vec::new(),
+        regression_report: None,
+        elapsed_ms,
+    })
 }
 
 async fn collect_snapshot_with_events(

@@ -85,6 +85,7 @@ fn taskfile_exposes_the_documented_tasks() {
         "bench:store:",
         "bench:crawler:",
         "scan:",
+        "tui:scan:",
         "check:",
         "check:all:",
     ] {

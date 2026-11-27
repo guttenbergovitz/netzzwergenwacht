@@ -84,6 +84,12 @@ pub struct RunLaunchSpec {
     pub provider: crate::config::ProviderKind,
     /// Model identifier selected for agentic modes; empty means "use configuration".
     pub model: String,
+    /// Directory for the persisted application-wide evidence store.
+    pub evidence_dir: std::path::PathBuf,
+    /// Page bound for a reconnaissance crawl.
+    pub max_pages: usize,
+    /// Link-following depth bound for a reconnaissance crawl.
+    pub max_depth: usize,
 }
 
 /// Top-level reducer inputs combining user actions, engine events, and task completions.

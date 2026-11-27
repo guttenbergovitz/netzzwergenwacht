@@ -940,6 +940,8 @@ pub struct DiagnosticArtefacts {
     pub investigation_report: Option<InvestigationReport>,
     /// Patrol report (when `AutonomousPatrol` ran).
     pub patrol_report: Option<PatrolReport>,
+    /// Application-wide crawl result (when `ReconnaissanceCrawl` ran).
+    pub crawl_summary: Option<crate::discovery::CrawlSummary>,
     /// Historical reports loaded from JSONL history.
     pub history_reports: Vec<AuditReport>,
     /// Regression diff between baseline and current report.
@@ -1049,6 +1051,14 @@ pub struct AppState {
     pub snapshot: Option<EvidenceSnapshot>,
     /// Authoritative deterministic audit report.
     pub audit_report: Option<AuditReport>,
+    /// Authoritative application-wide reconnaissance result, when a crawl ran.
+    pub crawl_summary: Option<crate::discovery::CrawlSummary>,
+    /// Directory holding the persisted application-wide evidence store.
+    pub evidence_dir: PathBuf,
+    /// Page bound applied to reconnaissance crawls launched from the workbench.
+    pub crawl_max_pages: usize,
+    /// Link-following depth bound applied to reconnaissance crawls.
+    pub crawl_max_depth: usize,
     /// Authoritative loaded history reports for offline comparison.
     pub history_reports: Vec<AuditReport>,
     /// Whether the operator has requested exit.
@@ -1141,6 +1151,10 @@ impl AppState {
             recent_activity: VecDeque::with_capacity(MAX_RECENT_EVENTS),
             snapshot: None,
             audit_report: None,
+            crawl_summary: None,
+            evidence_dir: PathBuf::from(".nzw/evidence"),
+            crawl_max_pages: 50,
+            crawl_max_depth: 2,
             history_reports: Vec::new(),
             should_quit: false,
         }
@@ -1312,6 +1326,15 @@ impl AppState {
         if let Some(report) = artefacts.audit_report {
             self.populate_from_audit_report(&report);
             self.audit_report = Some(report);
+        }
+
+        if let Some(crawl) = artefacts.crawl_summary {
+            self.system_metrics.http_requests = self
+                .system_metrics
+                .http_requests
+                .saturating_add(crawl.coverage.fetched_urls);
+            self.populate_targets_from_crawl(&crawl);
+            self.crawl_summary = Some(crawl);
         }
 
         if !artefacts.history_reports.is_empty() {
@@ -1498,6 +1521,44 @@ impl AppState {
             })
             .collect();
         self.selected_target_index = 0;
+    }
+
+    fn populate_targets_from_crawl(&mut self, crawl: &crate::discovery::CrawlSummary) {
+        let mut rows = Vec::new();
+        for page in &crawl.pages {
+            let (state, summary) = match page.status {
+                PageCrawlStatus::Investigated => (
+                    TargetInspectionState::Completed,
+                    String::from("Fetched and analysed"),
+                ),
+                PageCrawlStatus::PartiallyInvestigated => (
+                    TargetInspectionState::Partial,
+                    String::from("Fetched with truncated evidence"),
+                ),
+                PageCrawlStatus::SkippedBudget => (
+                    TargetInspectionState::SkippedBudget,
+                    String::from("Discovered but not acquired within budget"),
+                ),
+                PageCrawlStatus::Unreachable => (
+                    TargetInspectionState::Failed,
+                    String::from("Acquisition failed"),
+                ),
+            };
+            rows.push(TargetSurfaceRow {
+                display_url: sanitize_url_for_display(page.url.as_str(), 100),
+                discovery_source: String::from("crawl"),
+                depth: page.depth,
+                page_type: format!("{:?}", page.page_type),
+                http_status: None,
+                state,
+                evidence_summary: summary,
+                findings_count: 0,
+            });
+        }
+        if !rows.is_empty() {
+            self.target_rows = rows;
+            self.selected_target_index = 0;
+        }
     }
 
     fn populate_targets_from_patrol(&mut self, patrol: &PatrolReport) {

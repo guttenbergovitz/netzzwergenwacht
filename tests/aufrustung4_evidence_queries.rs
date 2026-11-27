@@ -1235,6 +1235,7 @@ fn zwergenleitstand_renders_every_evidence_category() {
         audit_report: None,
         investigation_report: None,
         patrol_report: None,
+        crawl_summary: None,
         history_reports: Vec::new(),
         regression_report: None,
         elapsed_ms: 1_500,

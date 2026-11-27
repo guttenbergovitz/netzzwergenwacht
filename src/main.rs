@@ -265,7 +265,7 @@ enum Command {
         /// Optional default output path when saving reports from the workbench (`w`).
         #[arg(short, long)]
         output: Option<PathBuf>,
-        /// Initial diagnostic mode (`check`, `investigate`, `patrol`).
+        /// Initial diagnostic mode (`check`, `scan`, `investigate`, `patrol`).
         #[arg(short, long, value_enum, default_value_t = TuiModeArg::Check)]
         mode: TuiModeArg,
         /// Enable Level 2 headless Chromium collection (`BrowserZwerg` & `GestaltungsZwerg`).
@@ -295,12 +295,22 @@ enum Command {
         /// Directory for persistent patrol memory shared with `nzw patrol` (defaults to `.nzw/memory`).
         #[arg(long, default_value = netzzwergenwacht::patrol::memory::DEFAULT_MEMORY_DIR)]
         memory_dir: PathBuf,
+        /// Directory for the application-wide evidence store written by reconnaissance crawls.
+        #[arg(long, default_value = ".nzw/evidence")]
+        evidence_dir: PathBuf,
+        /// Page bound for reconnaissance crawls launched from the workbench.
+        #[arg(long, default_value_t = 50)]
+        max_pages: usize,
+        /// Link-following depth bound for reconnaissance crawls.
+        #[arg(long, default_value_t = 2)]
+        max_depth: usize,
     },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum TuiModeArg {
     Check,
+    Scan,
     Investigate,
     Patrol,
 }
@@ -309,6 +319,7 @@ impl From<TuiModeArg> for DiagnosticRunMode {
     fn from(value: TuiModeArg) -> Self {
         match value {
             TuiModeArg::Check => Self::DeterministicCheck,
+            TuiModeArg::Scan => Self::ReconnaissanceCrawl,
             TuiModeArg::Investigate => Self::AgenticInvestigation,
             TuiModeArg::Patrol => Self::AutonomousPatrol,
         }
@@ -829,6 +840,9 @@ async fn main() -> ExitCode {
             high_contrast,
             ascii,
             memory_dir,
+            evidence_dir,
+            max_pages,
+            max_depth,
         } => {
             let discovery = config::ConfigDiscovery {
                 explicit: config,
@@ -868,6 +882,9 @@ async fn main() -> ExitCode {
                 },
                 budget,
                 memory_dir,
+                evidence_dir,
+                max_pages,
+                max_depth,
                 config: Some(config),
                 config_source: Some(loaded_source),
                 theme_mode,

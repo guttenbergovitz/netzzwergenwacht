@@ -56,6 +56,11 @@ tasks:
     cmds:
       - cargo run --quiet --locked -- tui {{.URL | default .TARGET | default .DEFAULT_URL}}
 
+  tui:scan:
+    desc: Crawl an application inside the workbench and retain the evidence (URL default https://example.org)
+    cmds:
+      - cargo run --quiet --locked -- tui {{.URL | default .TARGET | default .DEFAULT_URL}} --mode scan --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}}
+
   run:
     desc: Run a deterministic single-page audit (URL required, e.g. task run URL=https://example.org)
     requires:

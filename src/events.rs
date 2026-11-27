@@ -91,6 +91,9 @@ impl CollectorId {
 pub enum DiagnosticRunMode {
     /// Deterministic Level 1 / Level 2 audit without LLM dependencies.
     DeterministicCheck,
+    /// Application-wide concurrent crawl with deterministic analysis and local
+    /// evidence retention, run without any LLM dependency.
+    ReconnaissanceCrawl,
     /// Hypothesis-driven investigation coordinated by `KommandantZwerg`.
     AgenticInvestigation,
     /// Single-application or portfolio autonomous patrol.
@@ -105,6 +108,7 @@ impl DiagnosticRunMode {
     pub const fn label(self) -> &'static str {
         match self {
             Self::DeterministicCheck => "Deterministic check",
+            Self::ReconnaissanceCrawl => "Reconnaissance crawl",
             Self::AgenticInvestigation => "Agentic investigation",
             Self::AutonomousPatrol => "Autonomous patrol",
             Self::OfflineExploration => "Offline exploration",
