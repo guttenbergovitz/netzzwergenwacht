@@ -73,6 +73,122 @@ pub async fn collect_http_cached(
     collect_http_with_source(target, budget, policy, None, ClientSource::Cached(cache)).await
 }
 
+/// What a bounded subresource acquisition actually observed.
+///
+/// The body is streamed, counted and discarded: `byte_len` reports the bytes read before the read
+/// stopped, and `truncated` states whether the byte cap was reached, so a truncated read is never
+/// presented as the complete size of the resource.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResourceFetch {
+    /// Response status code, when a response was received.
+    pub status_code: Option<u16>,
+    /// Declared `Content-Type`.
+    pub content_type: Option<String>,
+    /// Declared `Content-Encoding`.
+    pub content_encoding: Option<String>,
+    /// Bytes read from the body before the read stopped.
+    pub byte_len: Option<u64>,
+    /// Declared `Cache-Control`.
+    pub cache_control: Option<String>,
+    /// Whether the response carried an `ETag`.
+    pub etag_present: bool,
+    /// Whether the response carried `Last-Modified`.
+    pub last_modified_present: bool,
+    /// Whether the byte cap stopped the read, making `byte_len` a lower bound.
+    pub truncated: bool,
+    /// Transport or validation failure, if any.
+    pub error: Option<String>,
+}
+
+/// Acquires one subresource without retaining its body.
+///
+/// Runs under the caller's [`ExecutionBudget`] and [`TargetPolicy`]: the target is resolved and
+/// validated by the shared client cache, redirects are not followed (a redirect status is itself an
+/// observation), and the read stops at `max_bytes`.
+pub async fn fetch_resource(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    cache: &CrawlHttpCache,
+    http_timeout: std::time::Duration,
+    max_bytes: usize,
+) -> ResourceFetch {
+    let cap = u64::try_from(max_bytes.max(1)).unwrap_or(u64::MAX);
+    let client = match cache.client_for(target, http_timeout, policy).await {
+        Ok(client) => client,
+        Err(error) => {
+            return ResourceFetch {
+                error: Some(error),
+                ..ResourceFetch::default()
+            };
+        }
+    };
+
+    let response = match client.get(target.as_str()).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            return ResourceFetch {
+                error: Some(format!("resource request failed: {error}")),
+                ..ResourceFetch::default()
+            };
+        }
+    };
+
+    let status_code = response.status().as_u16();
+    let headers = response.headers().clone();
+    let mut read = response;
+    let mut observed: u64 = 0;
+    let mut truncated = false;
+    loop {
+        match read.chunk().await {
+            Ok(Some(chunk)) => {
+                observed = observed.saturating_add(u64::try_from(chunk.len()).unwrap_or(u64::MAX));
+                if observed >= cap {
+                    truncated = true;
+                    break;
+                }
+            }
+            Ok(None) => break,
+            Err(error) => {
+                return ResourceFetch {
+                    status_code: Some(status_code),
+                    content_type: header_text(&headers, reqwest::header::CONTENT_TYPE),
+                    content_encoding: header_text(&headers, reqwest::header::CONTENT_ENCODING),
+                    byte_len: Some(observed),
+                    truncated: false,
+                    error: Some(format!("resource body read failed: {error}")),
+                    ..ResourceFetch::default()
+                };
+            }
+        }
+    }
+
+    ResourceFetch {
+        status_code: Some(status_code),
+        content_type: header_text(&headers, reqwest::header::CONTENT_TYPE),
+        content_encoding: header_text(&headers, reqwest::header::CONTENT_ENCODING),
+        byte_len: Some(observed),
+        cache_control: header_text(&headers, reqwest::header::CACHE_CONTROL),
+        etag_present: headers.contains_key(reqwest::header::ETAG),
+        last_modified_present: headers.contains_key(reqwest::header::LAST_MODIFIED),
+        truncated,
+        error: None,
+    }
+}
+
+/// Reads a response header as bounded text, dropping control characters and capping the length.
+fn header_text(
+    headers: &reqwest::header::HeaderMap,
+    name: reqwest::header::HeaderName,
+) -> Option<String> {
+    let value = headers.get(name)?.to_str().ok()?;
+    let cleaned: String = value
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(256)
+        .collect();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
 /// Where the HTTP client for one request comes from.
 #[derive(Clone, Copy)]
 enum ClientSource<'a> {

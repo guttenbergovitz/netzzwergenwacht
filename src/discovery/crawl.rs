@@ -12,6 +12,7 @@ use tokio::task::JoinSet;
 use url::Url;
 
 use super::frontier::{CrawlFrontier, DiscoverySource, EnqueueOutcome};
+use super::resources::{self, ResourceCoverage, ResourceObservation, ResourceRef, ResourceStatus};
 use super::robots;
 use super::{
     CrawlBudget, CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageType,
@@ -39,6 +40,10 @@ struct PageOutcome {
     links: Vec<AuditTarget>,
     graph_input: Option<GraphPageInput>,
     report: Option<AuditReport>,
+    /// Same-origin subresources referenced by the captured document.
+    resources: Vec<ResourceRef>,
+    /// Cross-origin subresource references observed but not acquired.
+    external_resources: usize,
 }
 
 /// Crawl-wide acquisition settings shared by every page task.
@@ -113,55 +118,72 @@ async fn acquire_page(
     };
     let snapshot = collection::collect_http_cached(&target, &per_page_budget, policy, &cache).await;
 
-    let (status, page_type, links, graph_input, report) = match &snapshot.http {
-        CollectorOutcome::Captured { data } => {
-            let observations = DocumentObservations::from_html(&data.body_text);
-            let page_type = classify_page(&target, &observations);
-            let graph_input =
-                build_captured_graph_input(&target, data, &observations, depth, in_sitemap, policy);
-            let links = if depth < max_depth {
-                prioritise_representative_urls(discover_same_origin_links(
-                    &target,
-                    &observations,
-                    policy,
-                ))
-            } else {
-                Vec::new()
-            };
-            (
-                PageCrawlStatus::Investigated,
-                page_type,
-                links,
-                Some(graph_input),
-                Some(crate::analysis::run_all(&snapshot)),
-            )
-        }
-        CollectorOutcome::Partial { data, .. } => {
-            let observations = DocumentObservations::from_html(&data.body_text);
-            let page_type = classify_page(&target, &observations);
-            (
-                PageCrawlStatus::PartiallyInvestigated,
-                page_type,
-                Vec::new(),
-                Some(build_captured_graph_input(
+    let (status, page_type, links, graph_input, report, resources, external_resources) =
+        match &snapshot.http {
+            CollectorOutcome::Captured { data } => {
+                let observations = DocumentObservations::from_html(&data.body_text);
+                let page_type = classify_page(&target, &observations);
+                let graph_input = build_captured_graph_input(
                     &target,
                     data,
                     &observations,
                     depth,
                     in_sitemap,
                     policy,
-                )),
-                Some(crate::analysis::run_all(&snapshot)),
-            )
-        }
-        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => (
-            PageCrawlStatus::Unreachable,
-            PageType::Unknown,
-            Vec::new(),
-            Some(unreachable_graph_input(&target, depth, in_sitemap)),
-            None,
-        ),
-    };
+                );
+                let links = if depth < max_depth {
+                    prioritise_representative_urls(discover_same_origin_links(
+                        &target,
+                        &observations,
+                        policy,
+                    ))
+                } else {
+                    Vec::new()
+                };
+                // Resources are only inventoried from a complete body: a truncated document would
+                // produce a partial resource list that must not be presented as the page's full set.
+                let (page_resources, external_resources) =
+                    resources::discover_page_resources(&target, &observations, policy);
+                (
+                    PageCrawlStatus::Investigated,
+                    page_type,
+                    links,
+                    Some(graph_input),
+                    Some(crate::analysis::run_all(&snapshot)),
+                    page_resources,
+                    external_resources,
+                )
+            }
+            CollectorOutcome::Partial { data, .. } => {
+                let observations = DocumentObservations::from_html(&data.body_text);
+                let page_type = classify_page(&target, &observations);
+                (
+                    PageCrawlStatus::PartiallyInvestigated,
+                    page_type,
+                    Vec::new(),
+                    Some(build_captured_graph_input(
+                        &target,
+                        data,
+                        &observations,
+                        depth,
+                        in_sitemap,
+                        policy,
+                    )),
+                    Some(crate::analysis::run_all(&snapshot)),
+                    Vec::new(),
+                    0,
+                )
+            }
+            CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => (
+                PageCrawlStatus::Unreachable,
+                PageType::Unknown,
+                Vec::new(),
+                Some(unreachable_graph_input(&target, depth, in_sitemap)),
+                None,
+                Vec::new(),
+                0,
+            ),
+        };
 
     PageOutcome {
         target,
@@ -171,7 +193,97 @@ async fn acquire_page(
         links,
         graph_input,
         report,
+        resources,
+        external_resources,
     }
+}
+
+/// Maximum bytes read from any single subresource during reconnaissance.
+const RESOURCE_BYTE_CAP: usize = 2 * 1024 * 1024;
+
+/// Acquires one discovered resource under the crawl's budget and policy.
+async fn acquire_resource(
+    reference: ResourceRef,
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+    cache: Arc<collection::CrawlHttpCache>,
+) -> ResourceObservation {
+    let cap = exec_budget.max_response_bytes.min(RESOURCE_BYTE_CAP);
+    let fetch = collection::fetch_resource(
+        &reference.url,
+        policy,
+        &cache,
+        exec_budget.http_timeout,
+        cap,
+    )
+    .await;
+    ResourceObservation {
+        url: reference.url.as_str().to_owned(),
+        kind: reference.kind,
+        status: if fetch.error.is_some() {
+            ResourceStatus::Failed
+        } else {
+            ResourceStatus::Fetched
+        },
+        http_status: fetch.status_code,
+        content_type: fetch.content_type,
+        content_encoding: fetch.content_encoding,
+        byte_len: fetch.byte_len,
+        cache_control: fetch.cache_control,
+        etag_present: fetch.etag_present,
+        last_modified_present: fetch.last_modified_present,
+        truncated: fetch.truncated,
+        error: fetch.error,
+    }
+}
+
+/// Acquires discovered resources with bounded concurrency, never beyond `remaining`.
+///
+/// Returns the observations, the number cancelled at the deadline and the number never scheduled
+/// because the deadline expired first. Nothing is invented for a resource that was not acquired.
+async fn acquire_resources(
+    references: Vec<ResourceRef>,
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+    remaining: std::time::Duration,
+    global_limit: usize,
+    cache: Arc<collection::CrawlHttpCache>,
+) -> (Vec<ResourceObservation>, usize, usize) {
+    let deadline = Instant::now() + remaining;
+    let mut observations = Vec::new();
+    let mut join: JoinSet<ResourceObservation> = JoinSet::new();
+    let mut next = 0usize;
+
+    while next < references.len() || !join.is_empty() {
+        if Instant::now() >= deadline {
+            break;
+        }
+        while next < references.len() && join.len() < global_limit && Instant::now() < deadline {
+            let reference = references[next].clone();
+            let cache = Arc::clone(&cache);
+            join.spawn(
+                async move { acquire_resource(reference, exec_budget, policy, cache).await },
+            );
+            next = next.saturating_add(1);
+        }
+        if join.is_empty() {
+            break;
+        }
+        let Some(joined) = join.join_next().await else {
+            break;
+        };
+        if let Ok(observation) = joined {
+            observations.push(observation);
+        }
+    }
+
+    let cancelled = join.len();
+    if cancelled > 0 {
+        join.abort_all();
+        while join.join_next().await.is_some() {}
+    }
+    let unscheduled = references.len().saturating_sub(next);
+    (observations, cancelled, unscheduled)
 }
 
 /// Performs a bounded, concurrent, same-origin crawl starting from `seed`.
@@ -213,6 +325,8 @@ pub(super) async fn crawl_concurrently(
     let mut fetched = 0usize;
     let mut cancelled = 0usize;
     let mut robots_blocked = 0usize;
+    let mut resource_refs: HashMap<String, ResourceRef> = HashMap::new();
+    let mut external_resources = 0usize;
     let mut budget_exhausted = false;
     let mut deadline_reached = false;
 
@@ -301,6 +415,12 @@ pub(super) async fn crawl_concurrently(
             }
         }
 
+        for reference in outcome.resources {
+            resource_refs
+                .entry(reference.url.as_str().to_owned())
+                .or_insert(reference);
+        }
+        external_resources = external_resources.saturating_add(outcome.external_resources);
         if let Some(input) = outcome.graph_input {
             graph_inputs.push(input);
         }
@@ -357,6 +477,54 @@ pub(super) async fn crawl_concurrently(
         .count();
     let complete = !budget_exhausted && !deadline_reached && cancelled == 0;
 
+    // Shared resources are acquired once per crawl, after the page population is known, so a
+    // stylesheet referenced by every page costs one request rather than one per page.
+    let mut queued_resources: Vec<ResourceRef> = resource_refs.into_values().collect();
+    queued_resources.sort_by(|left, right| left.url.as_str().cmp(right.url.as_str()));
+    let discovered_resources = queued_resources.len();
+    let max_resources = crawl_budget.max_pages.saturating_mul(8).clamp(32, 1024);
+    queued_resources.truncate(max_resources);
+    let skipped_by_bound = discovered_resources.saturating_sub(queued_resources.len());
+
+    let remaining_for_resources = crawl_budget.max_duration.saturating_sub(started.elapsed());
+    let (mut resource_observations, resource_cancelled, resource_unscheduled) =
+        if remaining_for_resources.is_zero() || queued_resources.is_empty() {
+            (Vec::new(), 0, queued_resources.len())
+        } else {
+            acquire_resources(
+                queued_resources,
+                exec_budget,
+                policy,
+                remaining_for_resources,
+                global_limit,
+                Arc::clone(&cache),
+            )
+            .await
+        };
+    resource_observations.sort_by(|left, right| left.url.cmp(&right.url));
+    let fetched_resources = resource_observations
+        .iter()
+        .filter(|observation| observation.status == ResourceStatus::Fetched)
+        .count();
+    let failed_resources = resource_observations
+        .iter()
+        .filter(|observation| observation.status == ResourceStatus::Failed)
+        .count();
+    let truncated_resources = resource_observations
+        .iter()
+        .filter(|observation| observation.truncated)
+        .count();
+    let resource_coverage = ResourceCoverage {
+        discovered_resources,
+        fetched_resources,
+        failed_resources,
+        skipped_resources: skipped_by_bound.saturating_add(resource_unscheduled),
+        cancelled_resources: resource_cancelled,
+        truncated_resources,
+        external_refused: external_resources,
+        max_resources,
+    };
+
     let coverage = CrawlCoverage {
         discovered_urls: pages.len().saturating_add(robots_blocked),
         fetched_urls: fetched,
@@ -371,6 +539,7 @@ pub(super) async fn crawl_concurrently(
         max_pages: crawl_budget.max_pages,
         max_depth: crawl_budget.max_depth,
         complete,
+        resources: resource_coverage,
     };
 
     let systemic_issues = cluster_systemic_issues(&page_reports);
@@ -384,6 +553,7 @@ pub(super) async fn crawl_concurrently(
         budget_exhausted,
         graph_results,
         coverage,
+        resources: resource_observations,
     }
 }
 
@@ -447,10 +617,25 @@ mod tests {
                     }
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     let body = if path == "/" {
-                        "<html><head><title>Seed</title></head><body>\
+                        "<html><head><title>Seed</title>\
+                         <link rel=\"stylesheet\" href=\"/shared.css\">\
+                         <script src=\"/app.js\"></script></head><body>\
                          <a href=\"/a\">A</a><a href=\"/a\">A again</a>\
-                         <a href=\"/b\">B</a><a href=\"/c\">C</a></body></html>"
+                         <a href=\"/b\">B</a><a href=\"/c\">C</a>\
+                         <img src=\"/logo.png\" alt=\"Logo\"></body></html>"
                             .to_owned()
+                    } else if path == "/a" {
+                        // Deliberately references the same stylesheet as the seed page.
+                        "<html><head><title>A</title>\
+                         <link rel=\"stylesheet\" href=\"/shared.css\"></head>\
+                         <body><a href=\"/\">Home</a></body></html>"
+                            .to_owned()
+                    } else if path == "/shared.css" {
+                        "body { color: #111; }".to_owned()
+                    } else if path == "/app.js" {
+                        "window.__nzwFixture = true;".to_owned()
+                    } else if path == "/logo.png" {
+                        "not-really-a-png-but-eight-bytes".to_owned()
                     } else if path == "/sitemap.xml" {
                         String::new()
                     } else if path == "/robots.txt" {
@@ -463,8 +648,17 @@ mod tests {
                     } else {
                         "200 OK"
                     };
+                    let content_type = if path.eq_ignore_ascii_case("/shared.css") {
+                        "text/css"
+                    } else if path.eq_ignore_ascii_case("/app.js") {
+                        "application/javascript"
+                    } else if path.eq_ignore_ascii_case("/logo.png") {
+                        "image/png"
+                    } else {
+                        "text/html"
+                    };
                     let response = format!(
-                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: max-age=600\r\nETag: \"fixture\"\r\nConnection: close\r\n\r\n{body}",
                         body.len()
                     );
                     let _ = socket.write_all(response.as_bytes()).await;
@@ -539,6 +733,72 @@ mod tests {
             peak >= 2,
             "expected concurrent acquisitions, observed peak {peak}"
         );
+    }
+
+    #[tokio::test]
+    async fn shared_resources_are_acquired_once_and_reported() {
+        let fixture = spawn_fixture().await;
+        let seed = AuditTarget::parse(
+            &format!("http://{}/", fixture.addr),
+            TargetPolicy::AllowPrivate,
+        )
+        .unwrap();
+        let summary = crawl_concurrently(
+            seed,
+            CrawlBudget {
+                max_pages: 8,
+                max_depth: 1,
+                max_duration: Duration::from_secs(20),
+            },
+            ExecutionBudget {
+                max_concurrency: 4,
+                ..ExecutionBudget::default()
+            },
+            TargetPolicy::AllowPrivate,
+        )
+        .await;
+
+        // Three distinct resources were referenced; `/shared.css` by two different pages.
+        assert_eq!(summary.coverage.resources.discovered_resources, 3);
+        assert_eq!(summary.coverage.resources.fetched_resources, 3);
+        assert_eq!(summary.coverage.resources.failed_resources, 0);
+        assert_eq!(summary.coverage.resources.skipped_resources, 0);
+        assert_eq!(summary.resources.len(), 3);
+
+        let css_requests = fixture
+            .requested_paths
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|path| path.as_str() == "/shared.css")
+            .count();
+        assert_eq!(
+            css_requests, 1,
+            "a resource shared by two pages must be acquired once per crawl"
+        );
+
+        let css = summary
+            .resources
+            .iter()
+            .find(|resource| resource.url.ends_with("/shared.css"))
+            .expect("stylesheet observation");
+        assert_eq!(css.kind, crate::discovery::ResourceKind::Stylesheet);
+        assert_eq!(css.status, ResourceStatus::Fetched);
+        assert_eq!(css.http_status, Some(200));
+        assert_eq!(css.content_type.as_deref(), Some("text/css"));
+        assert_eq!(css.byte_len, Some(21));
+        assert!(css.etag_present);
+        assert!(!css.truncated);
+
+        // Observations are ordered by URL, so the report is stable across runs.
+        let urls: Vec<&str> = summary
+            .resources
+            .iter()
+            .map(|resource| resource.url.as_str())
+            .collect();
+        let mut sorted = urls.clone();
+        sorted.sort_unstable();
+        assert_eq!(urls, sorted);
     }
 
     #[tokio::test]

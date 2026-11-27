@@ -13,9 +13,11 @@ use url::Url;
 
 mod crawl;
 pub mod frontier;
+pub mod resources;
 pub mod robots;
 
 pub use frontier::DiscoverySource;
+pub use resources::{ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus};
 pub use robots::RobotsOutcome;
 
 use crate::analysis::document::DocumentObservations;
@@ -171,6 +173,10 @@ pub struct CrawlCoverage {
     pub max_depth: usize,
     /// Whether the crawl acquired every URL it discovered.
     pub complete: bool,
+    /// Subresource accounting for this crawl, kept separate because a page-level bound and a
+    /// resource-level bound are different limitations.
+    #[serde(default)]
+    pub resources: ResourceCoverage,
 }
 
 /// Output of a bounded multi-page crawl and systemic clustering run.
@@ -190,6 +196,9 @@ pub struct CrawlSummary {
     /// Explicit acquisition accounting for this crawl.
     #[serde(default)]
     pub coverage: CrawlCoverage,
+    /// Distinct subresources acquired once per crawl, sorted by URL.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resources: Vec<ResourceObservation>,
 }
 
 /// Extracts normalised, deduplicated, same-origin [`AuditTarget`] links from `obs`.

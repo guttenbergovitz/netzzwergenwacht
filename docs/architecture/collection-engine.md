@@ -45,6 +45,26 @@ deduplicating priority frontier through a bounded worker pool:
   skipped, robots blocked and cancelled, and reports `complete = false` whenever any URL was left
   unacquired. Counts are observed, never estimated.
 
+## 2b. Shared resource acquisition
+
+A crawl treats scripts, stylesheets and images as diagnostic objects rather than page decoration.
+After the page population is known, the crawl deduplicates every same-origin subresource reference
+and acquires each distinct URL once, bounded by the crawl deadline, the global worker limit and a
+per-crawl resource bound (`max_pages * 8`, clamped to `32..=1024`).
+
+What the acquisition records is what the response showed: status, declared `Content-Type` and
+`Content-Encoding`, declared `Cache-Control`, presence of `ETag` and `Last-Modified`, and the bytes
+read. Bodies are streamed, counted and discarded. `truncated` marks a read that stopped at the byte
+cap, so a truncated size is a lower bound rather than the resource's size.
+
+Cross-origin references are discovered and counted in `ResourceCoverage::external_refused`, never
+fetched: a link to a CDN is evidence that a dependency exists, not authorisation to contact it.
+
+`ResourceCoverage` reports discovered, fetched, failed, skipped and cancelled resources separately
+from page coverage, because a page bound and a resource bound are different limitations and must not
+be reported as one number. Resource observations are sorted by URL so the report is stable regardless
+of completion order.
+
 ## Source content segmentation
 
 The shared HTML5 parse yields content evidence for editorial integrity and

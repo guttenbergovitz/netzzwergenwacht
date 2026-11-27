@@ -89,6 +89,7 @@ impl DiagnosticBackend for StaticBackend {
                 systemic_issues: Vec::new(),
                 budget_exhausted: false,
                 graph_results: Vec::new(),
+                resources: Vec::new(),
             }
         })
     }
