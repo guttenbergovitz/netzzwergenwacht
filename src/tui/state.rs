@@ -1650,9 +1650,18 @@ impl AppState {
             }
         }
 
-        let mut rows = Vec::new();
+        let mut rows = build_systemic_finding_rows(&crawl.systemic_issues);
+        let systemic_rules: std::collections::HashSet<&str> = crawl
+            .systemic_issues
+            .iter()
+            .map(|i| i.rule_id.0.as_str())
+            .collect();
+
         for page in &crawl.page_diagnostics {
             for finding in &page.findings {
+                if systemic_rules.contains(finding.rule_id.0.as_str()) {
+                    continue;
+                }
                 let index = rows.len();
                 let category = finding
                     .evidence_refs
@@ -1686,37 +1695,6 @@ impl AppState {
                         })
                         .collect(),
                     primary_evidence_category: category,
-                });
-            }
-        }
-
-        // A crawl that retained no page diagnostics still knows which rules recurred, so the
-        // clusters remain visible rather than the view falling empty.
-        if rows.is_empty() {
-            for issue in &crawl.systemic_issues {
-                let index = rows.len();
-                let affected = issue.affected_urls.len();
-                rows.push(FindingRow {
-                    index,
-                    dwarf_id: issue.dwarf_id,
-                    rule_id: sanitize_line(&issue.rule_id.0, 80),
-                    severity: issue.severity,
-                    confidence: issue.recurrence_confidence,
-                    evidence_level: EvidenceLevel::Source,
-                    target_url: sanitize_url_for_display(
-                        issue.affected_urls.first().map_or("", String::as_str),
-                        120,
-                    ),
-                    title: sanitize_line(
-                        &format!("{} recurs on {affected} page(s)", issue.rule_id.0),
-                        120,
-                    ),
-                    description: sanitize_multiline(&issue.summary, 360),
-                    recommendation: String::from(
-                        "Correct the shared template or component rather than each affected page.",
-                    ),
-                    evidence_refs: Vec::new(),
-                    primary_evidence_category: EvidenceCategory::Http,
                 });
             }
         }
@@ -1991,6 +1969,48 @@ fn outcome_summary<T>(outcome: &CollectorOutcome<T>) -> String {
         CollectorOutcome::Failed { error } => sanitize_line(error, 72),
         CollectorOutcome::Skipped { reason } => sanitize_line(reason, 72),
     }
+}
+
+fn build_systemic_finding_rows(issues: &[crate::discovery::SystemicIssue]) -> Vec<FindingRow> {
+    issues
+        .iter()
+        .enumerate()
+        .map(|(index, issue)| {
+            let affected = issue.affected_urls.len();
+            let affected_preview = issue
+                .affected_urls
+                .iter()
+                .take(3)
+                .map(|u| sanitize_url_for_display(u, 60))
+                .collect::<Vec<_>>()
+                .join(", ");
+            FindingRow {
+                index,
+                dwarf_id: issue.dwarf_id,
+                rule_id: sanitize_line(&issue.rule_id.0, 80),
+                severity: issue.severity,
+                confidence: issue.recurrence_confidence,
+                evidence_level: EvidenceLevel::Source,
+                target_url: sanitize_url_for_display(
+                    issue.affected_urls.first().map_or("", String::as_str),
+                    120,
+                ),
+                title: sanitize_line(
+                    &format!("[Systemic: {affected} page(s)] {}", issue.rule_id.0),
+                    120,
+                ),
+                description: sanitize_multiline(
+                    &format!("{} Affected: {affected_preview}", issue.summary),
+                    360,
+                ),
+                recommendation: String::from(
+                    "Correct the shared template, configuration, or dependency rather than each affected page.",
+                ),
+                evidence_refs: Vec::new(),
+                primary_evidence_category: EvidenceCategory::Http,
+            }
+        })
+        .collect()
 }
 
 fn evidence_category_for(source: EvidenceSource, detail: &str) -> EvidenceCategory {

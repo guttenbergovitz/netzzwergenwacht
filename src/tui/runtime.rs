@@ -816,6 +816,7 @@ pub async fn execute_diagnostic_run_cancellable(
                 evidence_dir: spec.evidence_dir.clone(),
                 policy,
                 budget,
+                enable_browser: spec.enable_browser,
             };
             Box::pin(run_reconnaissance_crawl(request, start, &cancel, &sink)).await
         }
@@ -1143,6 +1144,8 @@ struct CrawlRequest {
     policy: TargetPolicy,
     /// Execution budget for the run.
     budget: ExecutionBudget,
+    /// Whether to run a bounded headless browser sample over discovered pages.
+    enable_browser: bool,
 }
 
 async fn run_reconnaissance_crawl(
@@ -1159,6 +1162,7 @@ async fn run_reconnaissance_crawl(
         evidence_dir,
         policy,
         budget,
+        enable_browser,
     } = request;
     if *cancel.borrow() {
         return Err(String::from("cancelled by operator before crawl"));
@@ -1176,7 +1180,7 @@ async fn run_reconnaissance_crawl(
         max_depth,
         max_duration: budget.audit_timeout,
     };
-    let crawl = crawl_with_progress(
+    let mut crawl = crawl_with_progress(
         target,
         &target_str,
         crawl_budget,
@@ -1186,6 +1190,10 @@ async fn run_reconnaissance_crawl(
         sink,
     )
     .await;
+
+    if enable_browser {
+        crate::discovery::sample_browser_on_crawl(&mut crawl, 3, budget, policy).await;
+    }
 
     for page in &crawl.pages {
         sink.emit(
