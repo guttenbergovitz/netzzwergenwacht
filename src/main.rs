@@ -177,6 +177,9 @@ enum Command {
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Optional file path to write the rendered diff (`json`, `html`, `sarif`, `markdown`, `text`).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Run a hypothesis-driven `KommandantZwerg` investigation (requires `NZW_LLM_API_KEY`).
     Investigate {
@@ -220,6 +223,9 @@ enum Command {
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Optional file path to write the rendered verification report.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Run an autonomous recurring web quality patrol requiring only a target URL or `--targets`.
     Patrol {
@@ -260,6 +266,9 @@ enum Command {
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Optional file path to write the rendered report.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
         /// Target stakeholder perspective for Markdown output.
         #[arg(long, value_enum, default_value_t = AudienceArg::Technical)]
         audience: AudienceArg,
@@ -872,7 +881,8 @@ async fn main() -> ExitCode {
             baseline,
             current,
             format,
-        } => run_diff(&baseline, &current, format),
+            output,
+        } => run_diff(&baseline, &current, format, output.as_deref()),
         Command::Investigate {
             url,
             objective,
@@ -910,7 +920,8 @@ async fn main() -> ExitCode {
             url,
             allow_private,
             format,
-        } => run_verify(&baseline, &url, allow_private, format).await,
+            output,
+        } => run_verify(&baseline, &url, allow_private, format, output.as_deref()).await,
         Command::Patrol {
             url,
             config: config_path,
@@ -949,8 +960,9 @@ async fn main() -> ExitCode {
         Command::Report {
             file,
             format,
+            output,
             audience,
-        } => run_report_cmd(&file, format, audience),
+        } => run_report_cmd(&file, format, output.as_deref(), audience),
         Command::Tui {
             url,
             report,
@@ -1085,7 +1097,12 @@ fn render_stored_patrol(
     }
 }
 
-fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> ExitCode {
+fn run_report_cmd(
+    file: &Path,
+    format: OutputFormat,
+    output: Option<&Path>,
+    audience: AudienceArg,
+) -> ExitCode {
     let raw = match std::fs::read_to_string(file) {
         Ok(s) => s,
         Err(err) => {
@@ -1146,16 +1163,17 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
                 OutputFormat::Html => {
                     let assessment =
                         netzzwergenwacht::analysis::assessment::assess_audit_report(&audit);
-                    println!(
-                        "{}",
-                        netzzwergenwacht::report_html::render_audit_html(&audit, &assessment)
-                    );
+                    let html =
+                        netzzwergenwacht::report_html::render_audit_html(&audit, &assessment);
+                    if let Err(code) = write_output_or_stdout(output, &html) {
+                        return code;
+                    }
                 }
                 OutputFormat::Sarif => {
-                    println!(
-                        "{}",
-                        netzzwergenwacht::report_sarif::render_audit_sarif(&audit)
-                    );
+                    let sarif = netzzwergenwacht::report_sarif::render_audit_sarif(&audit);
+                    if let Err(code) = write_output_or_stdout(output, &sarif) {
+                        return code;
+                    }
                 }
             }
             ExitCode::from(EXIT_OK)
@@ -1360,6 +1378,7 @@ async fn run_verify(
     url: &str,
     allow_private: bool,
     format: OutputFormat,
+    output: Option<&Path>,
 ) -> ExitCode {
     let policy = target_policy(allow_private);
     let target = match AuditTarget::parse(url, policy) {
@@ -1410,13 +1429,16 @@ async fn run_verify(
             println!("- **New**: {}", diff.summary.new_count);
         }
         OutputFormat::Html => {
-            println!("{}", netzzwergenwacht::report_html::render_diff_html(&diff));
+            let html = netzzwergenwacht::report_html::render_diff_html(&diff);
+            if let Err(code) = write_output_or_stdout(output, &html) {
+                return code;
+            }
         }
         OutputFormat::Sarif => {
-            println!(
-                "{}",
-                netzzwergenwacht::report_sarif::render_diff_sarif(&diff)
-            );
+            let sarif = netzzwergenwacht::report_sarif::render_diff_sarif(&diff);
+            if let Err(code) = write_output_or_stdout(output, &sarif) {
+                return code;
+            }
         }
     }
 
@@ -2059,7 +2081,12 @@ fn render_batch_report(
     }
 }
 
-fn run_diff(baseline_path: &Path, current_path: &Path, format: OutputFormat) -> ExitCode {
+fn run_diff(
+    baseline_path: &Path,
+    current_path: &Path,
+    format: OutputFormat,
+    output: Option<&Path>,
+) -> ExitCode {
     let baseline = match persistence::load_latest_or_single(baseline_path) {
         Ok(r) => r,
         Err(err) => {
@@ -2098,15 +2125,18 @@ fn run_diff(baseline_path: &Path, current_path: &Path, format: OutputFormat) -> 
             code
         }
         OutputFormat::Html => {
-            println!("{}", netzzwergenwacht::report_html::render_diff_html(&diff));
-            code
+            let html = netzzwergenwacht::report_html::render_diff_html(&diff);
+            match write_output_or_stdout(output, &html) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            }
         }
         OutputFormat::Sarif => {
-            println!(
-                "{}",
-                netzzwergenwacht::report_sarif::render_diff_sarif(&diff)
-            );
-            code
+            let sarif = netzzwergenwacht::report_sarif::render_diff_sarif(&diff);
+            match write_output_or_stdout(output, &sarif) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            }
         }
     }
 }

@@ -1074,6 +1074,9 @@ pub struct BrowserEvidence {
     /// Visible primary interactive controls (`<main>`, `<form>`) covered by another element at their centre.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub occluded_primary_controls: Option<Vec<String>>,
+    /// Whether `html`/`body` forces `overflow: hidden` on a scrollable page with no open modal dialog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_locked: Option<bool>,
     /// Level 2 Accessibility Tree summary (`Accessibility.getFullAXTree`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ax_tree: Option<AccessibilityTreeSummary>,

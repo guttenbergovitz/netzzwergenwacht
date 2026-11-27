@@ -280,6 +280,7 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
                 visible_busy_indicators: None,
                 rendered_error_marker: None,
                 occluded_primary_controls: None,
+                scroll_locked: None,
                 rendered_content: None,
                 ax_tree: None,
                 performance: None,

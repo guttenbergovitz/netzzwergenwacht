@@ -30,6 +30,7 @@ const RULE_REDIRECTED_SUBRESOURCES: &str = "browser.network.redirected_subresour
 const RULE_CLIENT_ERROR_FALLBACK: &str = "browser.runtime.client_error_fallback";
 const RULE_STUCK_LOADING_STATE: &str = "browser.runtime.stuck_loading_state";
 const RULE_OCCLUDED_PRIMARY_CONTROLS: &str = "browser.interaction.occluded_primary_controls";
+const RULE_SCROLL_LOCKED: &str = "browser.layout.scroll_locked";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -50,6 +51,7 @@ pub const ALL_RULES: &[&str] = &[
     RULE_CLIENT_ERROR_FALLBACK,
     RULE_STUCK_LOADING_STATE,
     RULE_OCCLUDED_PRIMARY_CONTROLS,
+    RULE_SCROLL_LOCKED,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -94,6 +96,7 @@ pub fn analyse_with_document(
     check_client_error_fallback(browser, &mut findings, &mut checks);
     check_stuck_loading_state(browser, &mut findings, &mut checks);
     check_occluded_primary_controls(browser, &mut findings, &mut checks);
+    check_scroll_locked(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -1041,6 +1044,51 @@ fn check_occluded_primary_controls(
     }
 }
 
+fn check_scroll_locked(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(locked) = browser.scroll_locked else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_SCROLL_LOCKED.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "page scroll-lock state was not collected".to_owned(),
+        });
+        return;
+    };
+
+    if locked {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_SCROLL_LOCKED.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_SCROLL_LOCKED.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Page scrolling is locked (`overflow: hidden` on root/body)".to_owned(),
+            summary: "The rendered page exceeds the viewport height by more than 100px, yet `html` or `body` enforces `overflow: hidden` with no open modal dialog, preventing users from scrolling.".to_owned(),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                "scroll_locked=true".to_owned(),
+            )],
+            remediation: Some(
+                "Remove `overflow: hidden` from `html`/`body` after dismissing consent banners or modals so users can scroll normally.".to_owned(),
+            ),
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_SCROLL_LOCKED.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1296,5 +1344,19 @@ mod tests {
         let res = analyse(&snap);
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_OCCLUDED_PRIMARY_CONTROLS));
+    }
+
+    #[test]
+    fn flags_scroll_locked_page() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                scroll_locked: Some(true),
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_SCROLL_LOCKED));
     }
 }

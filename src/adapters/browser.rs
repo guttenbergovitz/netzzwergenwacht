@@ -646,6 +646,19 @@ function findBrowser() {
           visible_busy_indicators: visibleBusyIndicators,
           rendered_error_marker: renderedErrorMarker,
           occluded_primary_controls: occludedPrimaryControls,
+          scroll_locked: (() => {
+            const root = document.documentElement;
+            const body = document.body;
+            const rootSt = root ? getComputedStyle(root) : null;
+            const bodySt = body ? getComputedStyle(body) : null;
+            const locked = Boolean(
+              (rootSt && (rootSt.overflowY === 'hidden' || rootSt.overflow === 'hidden')) ||
+              (bodySt && (bodySt.overflowY === 'hidden' || bodySt.overflow === 'hidden'))
+            );
+            const scrollable = root ? root.scrollHeight > vh + 100 : false;
+            const openModal = Boolean(document.querySelector('dialog[open], [role=dialog][aria-modal=true]'));
+            return locked && scrollable && !openModal;
+          })(),
           csp_violations: Array.isArray(window.__nzwCspViolations) ? window.__nzwCspViolations : [],
           performance: perfObs,
           storage_summary: storageSummary,
@@ -1150,6 +1163,7 @@ function findBrowser() {
       visible_busy_indicators: typeof domAndImages.visible_busy_indicators === 'number' ? domAndImages.visible_busy_indicators : null,
       rendered_error_marker: typeof domAndImages.rendered_error_marker === 'string' && domAndImages.rendered_error_marker ? domAndImages.rendered_error_marker : null,
       occluded_primary_controls: Array.isArray(domAndImages.occluded_primary_controls) ? domAndImages.occluded_primary_controls.slice(0, 12) : null,
+      scroll_locked: typeof domAndImages.scroll_locked === 'boolean' ? domAndImages.scroll_locked : null,
       ax_tree: axTreeSummary,
       performance: domAndImages.performance || null,
       storage_summary: domAndImages.storage_summary || null,
