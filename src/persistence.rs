@@ -44,6 +44,12 @@ pub struct RegressionSummary {
     /// Findings whose severity or detail changed between comparable runs.
     #[serde(default)]
     pub changed_count: usize,
+    /// Findings whose severity increased since baseline.
+    #[serde(default)]
+    pub worsened_count: usize,
+    /// Findings whose severity decreased since baseline.
+    #[serde(default)]
+    pub improved_count: usize,
     /// Findings previously resolved and later reintroduced.
     #[serde(default)]
     pub reintroduced_count: usize,
@@ -75,6 +81,12 @@ pub struct RegressionReport {
     /// Findings whose severity changed since baseline.
     #[serde(default)]
     pub changed_findings: Vec<Finding>,
+    /// Findings whose severity increased since baseline.
+    #[serde(default)]
+    pub worsened_findings: Vec<Finding>,
+    /// Findings whose severity decreased since baseline.
+    #[serde(default)]
+    pub improved_findings: Vec<Finding>,
     /// Findings reintroduced after prior resolution.
     #[serde(default)]
     pub reintroduced_findings: Vec<Finding>,
@@ -179,12 +191,19 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
     let mut new_findings = Vec::new();
     let mut persisting_findings = Vec::new();
     let mut changed_findings = Vec::new();
+    let mut worsened_findings = Vec::new();
+    let mut improved_findings = Vec::new();
     for analyser in &current.analysers {
         for finding in &analyser.findings {
             if let Some(prev) = baseline_by_fp.get(&finding.fingerprint) {
                 persisting_findings.push(finding.clone());
                 if prev.severity != finding.severity {
                     changed_findings.push(finding.clone());
+                    if finding.severity > prev.severity {
+                        worsened_findings.push(finding.clone());
+                    } else {
+                        improved_findings.push(finding.clone());
+                    }
                 }
             } else {
                 new_findings.push(finding.clone());
@@ -224,6 +243,8 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         resolved_count: resolved_findings.len(),
         unverified_count: unverified_findings.len(),
         changed_count: changed_findings.len(),
+        worsened_count: worsened_findings.len(),
+        improved_count: improved_findings.len(),
         reintroduced_count: 0,
     };
 
@@ -239,6 +260,8 @@ pub fn diff_reports(baseline: &AuditReport, current: &AuditReport) -> Regression
         resolved_findings,
         unverified_findings,
         changed_findings,
+        worsened_findings,
+        improved_findings,
         reintroduced_findings: Vec::new(),
         summary,
     }
@@ -267,6 +290,8 @@ fn cross_target_diff(baseline: &AuditReport, current: &AuditReport) -> Regressio
             .flat_map(|a| a.findings.iter().cloned())
             .collect(),
         changed_findings: Vec::new(),
+        worsened_findings: Vec::new(),
+        improved_findings: Vec::new(),
         reintroduced_findings: Vec::new(),
         summary: RegressionSummary {
             unverified_count: baseline.analysers.iter().map(|a| a.findings.len()).sum(),
@@ -301,6 +326,8 @@ pub fn diff_history(history: &[AuditReport], current: &AuditReport) -> Regressio
             resolved_findings: Vec::new(),
             unverified_findings: Vec::new(),
             changed_findings: Vec::new(),
+            worsened_findings: Vec::new(),
+            improved_findings: Vec::new(),
             reintroduced_findings: Vec::new(),
             summary: RegressionSummary {
                 new_count,
@@ -492,5 +519,53 @@ mod tests {
         );
         assert_eq!(diff.summary.reintroduced_count, 1);
         assert_eq!(diff.summary.new_count, 0);
+    }
+
+    #[test]
+    fn diff_reports_separates_worsened_and_improved_defects() {
+        let mut base = make_report("<html><body><h1>Title</h1></body></html>", Vec::new(), 100);
+        let mut curr = make_report("<html><body><h1>Title</h1></body></html>", Vec::new(), 200);
+        let base_findings = &mut base.analysers[0].findings;
+        let f_worsened = Finding {
+            fingerprint: FindingFingerprint("fp-worse".to_owned()),
+            rule_id: crate::domain::RuleId("r.worse".to_owned()),
+            category: crate::domain::FindingCategory::Security,
+            evidence_level: crate::domain::EvidenceLevel::Source,
+            kind: crate::domain::FindingKind::Deterministic,
+            severity: crate::domain::Severity::Low,
+            confidence: crate::domain::Confidence::High,
+            title: "Worsened".to_owned(),
+            summary: "s".to_owned(),
+            evidence_refs: Vec::new(),
+            remediation: None,
+        };
+        let f_improved = Finding {
+            fingerprint: FindingFingerprint("fp-improve".to_owned()),
+            rule_id: crate::domain::RuleId("r.improve".to_owned()),
+            category: crate::domain::FindingCategory::Security,
+            evidence_level: crate::domain::EvidenceLevel::Source,
+            kind: crate::domain::FindingKind::Deterministic,
+            severity: crate::domain::Severity::High,
+            confidence: crate::domain::Confidence::High,
+            title: "Improved".to_owned(),
+            summary: "s".to_owned(),
+            evidence_refs: Vec::new(),
+            remediation: None,
+        };
+        base_findings.push(f_worsened.clone());
+        base_findings.push(f_improved.clone());
+
+        let mut curr_worsened = f_worsened;
+        curr_worsened.severity = crate::domain::Severity::Critical;
+        let mut curr_improved = f_improved;
+        curr_improved.severity = crate::domain::Severity::Medium;
+        curr.analysers[0].findings.push(curr_worsened);
+        curr.analysers[0].findings.push(curr_improved);
+
+        let diff = diff_reports(&base, &curr);
+        assert_eq!(diff.summary.worsened_count, 1);
+        assert_eq!(diff.summary.improved_count, 1);
+        assert_eq!(diff.worsened_findings[0].fingerprint.0, "fp-worse");
+        assert_eq!(diff.improved_findings[0].fingerprint.0, "fp-improve");
     }
 }

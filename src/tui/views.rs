@@ -2510,13 +2510,14 @@ fn render_history(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 reg.current_captured_at_unix_secs
             )),
             Line::from(format!(
-                " New: {:<4} | Persisting: {:<4} | Resolved: {:<4} | Reintroduced: {:<4} | Unverified: {:<4} | Changed: {:<4}",
+                " New: {} | Persisting: {} | Worsened: {} | Improved: {} | Resolved: {} | Reintroduced: {} | Unverified: {}",
                 reg.summary.new_count,
                 reg.summary.persisting_count,
+                reg.summary.worsened_count,
+                reg.summary.improved_count,
                 reg.summary.resolved_count,
                 reg.summary.reintroduced_count,
                 reg.summary.unverified_count,
-                reg.summary.changed_count
             )),
             Line::from(format!(
                 " Rendered Text Fingerprint Diff: {}",
