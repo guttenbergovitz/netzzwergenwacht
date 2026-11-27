@@ -1463,13 +1463,9 @@ async fn run_check(
     let mut report = analysis::run_all(&snapshot);
 
     if let Some(history_path) = history
-        && let Err(err) = persistence::append_report(history_path, &report)
+        && let Err(code) = persist_check_history(history_path, &report).await
     {
-        eprintln!(
-            "failed to append audit history to {}: {err}",
-            history_path.display()
-        );
-        return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+        return code;
     }
 
     let eval = config::evaluate_policy(&report, &policy_cfg);
@@ -1498,6 +1494,32 @@ async fn run_check(
             code
         }
     }
+}
+
+async fn persist_check_history(
+    history_path: &Path,
+    report: &analysis::AuditReport,
+) -> Result<(), ExitCode> {
+    if let Err(err) = persistence::append_report(history_path, report) {
+        eprintln!(
+            "failed to append audit history to {}: {err}",
+            history_path.display()
+        );
+        return Err(ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR));
+    }
+    let store_path = history_path.with_extension("evidence.db");
+    if let Ok(store) = netzzwergenwacht::evidence_store::EvidenceStore::open(&store_path).await {
+        let run_id = format!("check-{}", report.captured_at_unix_secs);
+        let _ = store
+            .record_audit_report(
+                &run_id,
+                report.target.as_str(),
+                report,
+                report.captured_at_unix_secs,
+            )
+            .await;
+    }
+    Ok(())
 }
 
 async fn run_optional_ai(

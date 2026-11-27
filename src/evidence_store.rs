@@ -367,6 +367,164 @@ impl EvidenceStore {
         }
     }
 
+    /// Persists a single-target [`crate::analysis::AuditReport`] as a one-page
+    /// run in the shared evidence store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if `report.target` cannot be parsed or if writing
+    /// to the database fails.
+    pub async fn record_audit_report(
+        &self,
+        run_id: &str,
+        application: &str,
+        report: &crate::analysis::AuditReport,
+        recorded_at_unix_secs: u64,
+    ) -> Result<(), StoreError> {
+        let summary = audit_report_to_summary(report);
+        self.record_crawl(CrawlRecord {
+            run_id,
+            application,
+            summary: &summary,
+            recorded_at_unix_secs,
+        })
+        .await
+    }
+}
+
+fn audit_report_to_summary(
+    report: &crate::analysis::AuditReport,
+) -> crate::discovery::CrawlSummary {
+    use crate::discovery::{
+        CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageDiagnostics, PageType,
+        ResourceCoverage, RobotsOutcome,
+    };
+    use crate::domain::CollectorOutcome;
+
+    let seed = report.target.clone();
+
+    let (page_status, http_status, analysed_urls, failed_urls) = match &report.http {
+        CollectorOutcome::Captured { data } => {
+            (PageCrawlStatus::Investigated, Some(data.status_code), 1, 0)
+        }
+        CollectorOutcome::Partial { data, .. } => (
+            PageCrawlStatus::PartiallyInvestigated,
+            Some(data.status_code),
+            1,
+            0,
+        ),
+        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => {
+            (PageCrawlStatus::Unreachable, None, 0, 1)
+        }
+    };
+
+    let (
+        findings,
+        analysis_totals,
+        (checks_passed, checks_failed, checks_skipped, checks_unavailable),
+    ) = collect_analyser_totals(&report.analysers);
+
+    CrawlSummary {
+        seed: seed.clone(),
+        pages: vec![DiscoveredPage {
+            url: seed.clone(),
+            page_type: PageType::Homepage,
+            depth: 0,
+            status: page_status,
+        }],
+        page_diagnostics: vec![PageDiagnostics {
+            url: seed.as_str().to_owned(),
+            http_status,
+            page_type: PageType::Homepage,
+            status: page_status,
+            checks_passed,
+            checks_failed,
+            checks_skipped,
+            checks_unavailable,
+            findings,
+        }],
+        analysis_totals,
+        coverage: CrawlCoverage {
+            discovered_urls: 1,
+            fetched_urls: 1,
+            analysed_urls,
+            failed_urls,
+            skipped_budget_urls: 0,
+            cancelled_urls: 0,
+            robots_blocked_urls: 0,
+            reused_evidence_urls: 0,
+            unknown_urls: 0,
+            robots: RobotsOutcome::Absent,
+            queue_rejections: 0,
+            duplicate_offers: 0,
+            max_pages: 1,
+            max_depth: 0,
+            complete: analysed_urls == 1,
+            resources: ResourceCoverage::default(),
+        },
+        resources: Vec::new(),
+        page_resources: Vec::new(),
+        systemic_issues: Vec::new(),
+        budget_exhausted: false,
+        graph_results: Vec::new(),
+    }
+}
+
+fn collect_analyser_totals(
+    analysers: &[crate::domain::AnalyserResult],
+) -> (
+    Vec<crate::discovery::PageFinding>,
+    Vec<crate::discovery::DwarfAnalysisTotal>,
+    (usize, usize, usize, usize),
+) {
+    use crate::discovery::{DwarfAnalysisTotal, PageFinding};
+    use crate::domain::CheckStatus;
+
+    let mut findings = Vec::new();
+    let mut totals = Vec::new();
+    let (mut passed, mut failed, mut skipped, mut unavailable) = (0usize, 0usize, 0usize, 0usize);
+
+    for analyser in analysers {
+        let (mut dp, mut df, mut ds, mut du) = (0usize, 0usize, 0usize, 0usize);
+        for check in &analyser.checks {
+            match check {
+                CheckStatus::Passed { .. } => dp = dp.saturating_add(1),
+                CheckStatus::Failed { .. } => df = df.saturating_add(1),
+                CheckStatus::Skipped { .. } => ds = ds.saturating_add(1),
+                CheckStatus::Unavailable { .. } => du = du.saturating_add(1),
+            }
+        }
+        passed = passed.saturating_add(dp);
+        failed = failed.saturating_add(df);
+        skipped = skipped.saturating_add(ds);
+        unavailable = unavailable.saturating_add(du);
+        totals.push(DwarfAnalysisTotal {
+            dwarf_id: analyser.dwarf_id,
+            checks_evaluated: dp + df,
+            checks_passed: dp,
+            checks_failed: df,
+            checks_skipped: ds,
+            checks_unavailable: du,
+            findings_count: analyser.findings.len(),
+        });
+        for f in &analyser.findings {
+            findings.push(PageFinding {
+                rule_id: f.rule_id.clone(),
+                dwarf_id: analyser.dwarf_id,
+                severity: f.severity,
+                confidence: f.confidence,
+                title: f.title.clone(),
+                summary: f.summary.clone(),
+                remediation: f.remediation.clone(),
+                evidence_refs: f.evidence_refs.clone(),
+            });
+        }
+    }
+
+    (findings, totals, (passed, failed, skipped, unavailable))
+}
+
+impl EvidenceStore {
     async fn write_once(
         &self,
         connection: &turso::Connection,
@@ -2320,5 +2478,58 @@ mod tests {
             "a legacy run has no stored findings, which is not an error"
         );
         assert_eq!(store.dwarf_totals("legacy").await.expect("totals").len(), 0);
+    }
+
+    #[tokio::test]
+    async fn record_audit_report_persists_single_page_findings_and_totals() {
+        use crate::domain::{CollectorOutcome, Measurement};
+
+        let store = EvidenceStore::open(&store_path("record-audit-report"))
+            .await
+            .expect("open");
+        let snapshot = crate::domain::EvidenceSnapshot {
+            target: target("https://example.org/"),
+            captured_at_unix_secs: 1_700_000_000,
+            http: CollectorOutcome::Captured {
+                data: crate::domain::HttpEvidence {
+                    final_url: "https://example.org/".to_owned(),
+                    status_code: 200,
+                    headers: Vec::new(),
+                    body_text: "<html><body>Hello</body></html>".to_owned(),
+                    body_truncated: false,
+                    body_bytes: 33,
+                    redirect_chain: Vec::new(),
+                    elapsed_ms: Measurement::Measured {
+                        value: 12,
+                        unit: crate::domain::MeasurementUnit::Milliseconds,
+                    },
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "unit test".to_owned(),
+            },
+            lighthouse: CollectorOutcome::Skipped {
+                reason: "unit test".to_owned(),
+            },
+            browser: CollectorOutcome::Skipped {
+                reason: "unit test".to_owned(),
+            },
+            axe: CollectorOutcome::Skipped {
+                reason: "unit test".to_owned(),
+            },
+        };
+        let report = crate::analysis::run_all(&snapshot);
+        store
+            .record_audit_report("check-1", "https://example.org/", &report, 1_700_000_000)
+            .await
+            .expect("record audit report");
+
+        let runs = store.runs(10).await.expect("runs");
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].run_id, "check-1");
+        assert!(runs[0].complete);
+
+        let totals = store.dwarf_totals("check-1").await.expect("totals");
+        assert_ne!(totals.len(), 0);
     }
 }
