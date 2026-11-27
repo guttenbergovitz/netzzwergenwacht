@@ -615,7 +615,12 @@ pub(super) async fn crawl_concurrently(
     page_resources.dedup();
 
     page_diagnostics.sort_by(|left, right| left.url.cmp(&right.url));
-    let systemic_issues = cluster_systemic_issues(&page_reports);
+    let mut systemic_issues = cluster_systemic_issues(&page_reports);
+    systemic_issues.extend(super::cluster_failed_resource_dependencies(
+        &resource_observations,
+        &page_resources,
+        &pages,
+    ));
     let analysis_totals = aggregate_analysis_totals(&page_reports);
     let graph = ApplicationGraph::from_pages(&graph_inputs, complete);
     let graph_results = crate::analysis::graph::analyse(&graph);

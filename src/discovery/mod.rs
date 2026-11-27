@@ -772,6 +772,76 @@ pub fn cluster_systemic_issues(
     clusters
 }
 
+/// Attributes failed shared subresources (`ResourceStatus::Failed`) referenced by
+/// 2 or more discovered pages to a single [`SystemicIssue`] with exact affected
+/// page scope.
+#[must_use]
+pub fn cluster_failed_resource_dependencies(
+    resources: &[ResourceObservation],
+    page_resources: &[PageResourceEdge],
+    pages: &[DiscoveredPage],
+) -> Vec<SystemicIssue> {
+    let page_types: BTreeMap<&str, PageType> = pages
+        .iter()
+        .map(|p| (p.url.as_str(), p.page_type))
+        .collect();
+
+    let mut clusters = Vec::new();
+    for res in resources {
+        if res.status != ResourceStatus::Failed {
+            continue;
+        }
+        let mut affected_urls: Vec<String> = page_resources
+            .iter()
+            .filter(|edge| edge.resource_url == res.url)
+            .map(|edge| edge.page_url.clone())
+            .collect();
+        affected_urls.sort();
+        affected_urls.dedup();
+        if affected_urls.len() < 2 {
+            continue;
+        }
+
+        let mut affected_page_types: Vec<PageType> = affected_urls
+            .iter()
+            .filter_map(|u| page_types.get(u.as_str()).copied())
+            .collect();
+        affected_page_types.sort();
+        affected_page_types.dedup();
+
+        let status_detail = res
+            .http_status
+            .map(|s| format!("HTTP {s}"))
+            .or_else(|| res.error.clone())
+            .unwrap_or_else(|| "request failed".to_owned());
+
+        let severity = if matches!(res.kind, ResourceKind::Script | ResourceKind::Stylesheet) {
+            Severity::High
+        } else {
+            Severity::Medium
+        };
+
+        clusters.push(SystemicIssue {
+            id: format!("DEP-{}", clusters.len() + 1),
+            rule_id: RuleId("netz.dependency.shared_resource_failure".to_owned()),
+            affected_urls: affected_urls.clone(),
+            affected_page_types,
+            classification: SystemicClassification::SuspectedSharedTemplate,
+            summary: format!(
+                "Shared {:?} dependency `{}` failed ({status_detail}) across {} pages.",
+                res.kind,
+                res.url,
+                affected_urls.len()
+            ),
+            recurrence_confidence: Confidence::High,
+            shared_cause_confidence: Confidence::High,
+            severity,
+            dwarf_id: DwarfId::Netz,
+        });
+    }
+    clusters
+}
+
 /// Aggregates per-specialist work from page reports that the caller is about to release.
 ///
 /// The crawl analyses every page and then discards its report, which previously left the
@@ -1183,5 +1253,62 @@ mod tests {
             sitemaps[0].as_str(),
             "https://example.org/sitemap-custom.xml"
         );
+    }
+
+    #[test]
+    fn failed_shared_resource_is_attributed_as_systemic_dependency_issue() {
+        let p1 = AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).unwrap();
+        let p2 = AuditTarget::parse("https://example.org/about", TargetPolicy::PublicOnly).unwrap();
+        let pages = vec![
+            DiscoveredPage {
+                url: p1.clone(),
+                page_type: PageType::Homepage,
+                depth: 0,
+                status: PageCrawlStatus::Investigated,
+            },
+            DiscoveredPage {
+                url: p2.clone(),
+                page_type: PageType::Article,
+                depth: 1,
+                status: PageCrawlStatus::Investigated,
+            },
+        ];
+        let resources = vec![ResourceObservation {
+            url: "https://example.org/assets/app.js".to_owned(),
+            kind: ResourceKind::Script,
+            status: ResourceStatus::Failed,
+            http_status: Some(500),
+            content_type: None,
+            content_encoding: None,
+            byte_len: None,
+            cache_control: None,
+            etag_present: None,
+            last_modified_present: None,
+            truncated: false,
+            error: None,
+        }];
+        let edges = vec![
+            PageResourceEdge {
+                page_url: p1.as_str().to_owned(),
+                resource_url: "https://example.org/assets/app.js".to_owned(),
+                kind: ResourceKind::Script,
+            },
+            PageResourceEdge {
+                page_url: p2.as_str().to_owned(),
+                resource_url: "https://example.org/assets/app.js".to_owned(),
+                kind: ResourceKind::Script,
+            },
+        ];
+
+        let issues = cluster_failed_resource_dependencies(&resources, &edges, &pages);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0].rule_id.0,
+            "netz.dependency.shared_resource_failure"
+        );
+        assert_eq!(issues[0].affected_urls.len(), 2);
+        assert_eq!(issues[0].severity, Severity::High);
+        assert_eq!(issues[0].shared_cause_confidence, Confidence::High);
+        assert!(issues[0].summary.contains("HTTP 500"));
     }
 }
