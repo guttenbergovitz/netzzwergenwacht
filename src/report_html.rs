@@ -13,6 +13,7 @@ use crate::discovery::{
     CrawlCoverage, ResourceKind, ResourceObservation, ResourceStatus, SystemicIssue,
 };
 use crate::domain::{CollectorOutcome, Finding, Severity};
+use crate::persistence::RegressionReport;
 
 const HEAVY_UNCOMPRESSED_THRESHOLD_BYTES: u64 = 20 * 1024;
 
@@ -254,6 +255,110 @@ pub fn wrap_preformatted_html(title: &str, content: &str) -> String {
         escape_html(content),
     );
     wrap_document(title, &body)
+}
+
+/// Renders a cross-run [`RegressionReport`] (`diff` / `verify`) as a
+/// self-contained HTML5 document highlighting new, reintroduced, worsened,
+/// and resolved findings.
+#[must_use]
+pub fn render_diff_html(diff: &RegressionReport) -> String {
+    let mut body = String::new();
+    let s = &diff.summary;
+    let has_regressions = s.new_count > 0 || s.reintroduced_count > 0 || s.worsened_count > 0;
+    let badge_class = if diff.not_comparable_reason.is_some() {
+        "sev-med"
+    } else if has_regressions {
+        "sev-crit"
+    } else {
+        "sev-pass"
+    };
+    let badge_label = if diff.not_comparable_reason.is_some() {
+        "NOT COMPARABLE"
+    } else if has_regressions {
+        "REGRESSIONS"
+    } else {
+        "NO NEW REGRESSIONS"
+    };
+
+    let _ = writeln!(
+        body,
+        "<header class=\"hero\">\
+         <div>\
+           <p class=\"eyebrow\">NetzZwergenWacht &middot; {}</p>\
+           <h1>Regression Comparison</h1>\
+           <p class=\"meta\">Baseline: {} (Unix {}) &rarr; Current: {} (Unix {})</p>\
+         </div>\
+         <div class=\"verdict {badge_class}\">{badge_label}</div>\
+         </header>",
+        escape_html(MOTTO),
+        escape_html(&diff.baseline_target),
+        diff.baseline_captured_at_unix_secs,
+        escape_html(&diff.current_target),
+        diff.current_captured_at_unix_secs,
+    );
+
+    if let Some(reason) = &diff.not_comparable_reason {
+        let _ = writeln!(
+            body,
+            "<section class=\"panel\"><h2>Comparability Warning</h2><p>{}</p></section>",
+            escape_html(reason),
+        );
+    }
+
+    let _ = writeln!(
+        body,
+        "<section class=\"cards\">\
+         <div class=\"card {}\"><span class=\"label\">New</span><strong>{}</strong></div>\
+         <div class=\"card {}\"><span class=\"label\">Reintroduced</span><strong>{}</strong></div>\
+         <div class=\"card {}\"><span class=\"label\">Worsened</span><strong>{}</strong></div>\
+         <div class=\"card\"><span class=\"label\">Persisting</span><strong>{}</strong></div>\
+         <div class=\"card sev-pass\"><span class=\"label\">Resolved</span><strong>{}</strong></div>\
+         <div class=\"card\"><span class=\"label\">Unverified</span><strong>{}</strong></div>\
+         </section>",
+        if s.new_count > 0 { "sev-crit" } else { "" },
+        s.new_count,
+        if s.reintroduced_count > 0 {
+            "sev-crit"
+        } else {
+            ""
+        },
+        s.reintroduced_count,
+        if s.worsened_count > 0 { "sev-high" } else { "" },
+        s.worsened_count,
+        s.persisting_count,
+        s.resolved_count,
+        s.unverified_count,
+    );
+
+    render_diff_bucket(&mut body, "New Findings", &diff.new_findings);
+    render_diff_bucket(
+        &mut body,
+        "Reintroduced Findings",
+        &diff.reintroduced_findings,
+    );
+    render_diff_bucket(&mut body, "Worsened Findings", &diff.worsened_findings);
+    render_diff_bucket(&mut body, "Resolved Findings", &diff.resolved_findings);
+
+    wrap_document(
+        &format!("NetzZwergenWacht Regression Diff — {}", diff.current_target),
+        &body,
+    )
+}
+
+fn render_diff_bucket(out: &mut String, heading: &str, findings: &[Finding]) {
+    if findings.is_empty() {
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "<section class=\"panel\"><h2>{} ({})</h2>",
+        escape_html(heading),
+        findings.len(),
+    );
+    for finding in findings {
+        render_finding_card(out, finding);
+    }
+    let _ = writeln!(out, "</section>");
 }
 
 fn render_summary_cards(out: &mut String, report: &AuditReport) {
@@ -895,5 +1000,48 @@ mod tests {
         assert!(heavy_pos < small_pos);
         assert!(html.contains("uncompressed"));
         assert!(html.contains("Measured payload"));
+    }
+
+    #[test]
+    fn diff_html_renders_regressions_and_escapes_hostile_strings() {
+        let mut diff = crate::persistence::RegressionReport {
+            baseline_target: "https://example.com/".to_owned(),
+            current_target: "https://example.com/".to_owned(),
+            baseline_captured_at_unix_secs: 100,
+            current_captured_at_unix_secs: 200,
+            not_comparable_reason: None,
+            new_findings: vec![Finding {
+                fingerprint: FindingFingerprint("fp-new".to_owned()),
+                rule_id: RuleId("sec.test.new".to_owned()),
+                category: FindingCategory::Security,
+                evidence_level: EvidenceLevel::Source,
+                kind: FindingKind::Deterministic,
+                severity: Severity::High,
+                confidence: Confidence::High,
+                title: "New <script>alert(1)</script> regression".to_owned(),
+                summary: "Regression details".to_owned(),
+                evidence_refs: vec![],
+                remediation: Some("Fix it".to_owned()),
+            }],
+            persisting_findings: vec![],
+            resolved_findings: vec![],
+            unverified_findings: vec![],
+            changed_findings: vec![],
+            worsened_findings: vec![],
+            improved_findings: vec![],
+            reintroduced_findings: vec![],
+            summary: crate::persistence::RegressionSummary {
+                new_count: 1,
+                ..Default::default()
+            },
+            rendered_text: None,
+        };
+        diff.summary.resolved_count = 2;
+
+        let html = render_diff_html(&diff);
+        assert!(html.contains("REGRESSIONS"));
+        assert!(html.contains("New Findings (1)"));
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
     }
 }

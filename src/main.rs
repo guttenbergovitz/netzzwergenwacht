@@ -1410,24 +1410,13 @@ async fn run_verify(
             println!("- **New**: {}", diff.summary.new_count);
         }
         OutputFormat::Html => {
-            let summary = format!(
-                "Target: {}\nResolved: {}\nPersisting: {}\nUnverified: {}\nNew: {}",
-                diff.current_target,
-                diff.summary.resolved_count,
-                diff.summary.persisting_count,
-                diff.summary.unverified_count,
-                diff.summary.new_count
-            );
-            println!(
-                "{}",
-                netzzwergenwacht::report_html::wrap_preformatted_html(
-                    "Remediation Verification",
-                    &summary,
-                )
-            );
+            println!("{}", netzzwergenwacht::report_html::render_diff_html(&diff));
         }
         OutputFormat::Sarif => {
-            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+            println!(
+                "{}",
+                netzzwergenwacht::report_sarif::render_diff_sarif(&diff)
+            );
         }
     }
 
@@ -2109,22 +2098,14 @@ fn run_diff(baseline_path: &Path, current_path: &Path, format: OutputFormat) -> 
             code
         }
         OutputFormat::Html => {
-            let summary = format!(
-                "Baseline: {}\nCurrent:  {}\nSummary:  {} new, {} persisting, {} resolved",
-                diff.baseline_target,
-                diff.current_target,
-                diff.summary.new_count,
-                diff.summary.persisting_count,
-                diff.summary.resolved_count
-            );
-            println!(
-                "{}",
-                netzzwergenwacht::report_html::wrap_preformatted_html("Regression Diff", &summary)
-            );
+            println!("{}", netzzwergenwacht::report_html::render_diff_html(&diff));
             code
         }
         OutputFormat::Sarif => {
-            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+            println!(
+                "{}",
+                netzzwergenwacht::report_sarif::render_diff_sarif(&diff)
+            );
             code
         }
     }

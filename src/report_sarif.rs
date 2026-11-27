@@ -10,7 +10,8 @@ use serde_json::{Value, json};
 
 use crate::analysis::AuditReport;
 use crate::discovery::SystemicIssue;
-use crate::domain::Severity;
+use crate::domain::{Finding, Severity};
+use crate::persistence::RegressionReport;
 
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
@@ -35,44 +36,93 @@ pub fn render_audit_sarif(report: &AuditReport) -> String {
 
     for analyser in &report.analysers {
         for finding in &analyser.findings {
-            let rule_id = finding.rule_id.0.as_str();
-            let level = sarif_level(finding.severity);
-            rules_by_id.entry(rule_id).or_insert_with(|| {
-                json!({
-                    "id": rule_id,
-                    "shortDescription": { "text": finding.title },
-                    "fullDescription": { "text": finding.summary },
-                    "defaultConfiguration": { "level": level },
-                    "help": {
-                        "text": finding.remediation.as_deref().unwrap_or("Inspect captured evidence for remediation details.")
-                    }
-                })
-            });
-
-            let mut msg = format!("{}: {}", finding.title, finding.summary);
-            if let Some(remediation) = &finding.remediation {
-                msg.push_str(" Recommendation: ");
-                msg.push_str(remediation);
-            }
-
-            results.push(json!({
-                "ruleId": rule_id,
-                "level": level,
-                "message": { "text": msg },
-                "locations": [{
-                    "physicalLocation": {
-                        "artifactLocation": { "uri": uri }
-                    }
-                }],
-                "partialFingerprints": {
-                    "primaryLocationLineHash": finding.fingerprint.0
-                }
-            }));
+            push_finding_sarif(finding, uri, None, &mut rules_by_id, &mut results);
         }
     }
 
     let rules: Vec<Value> = rules_by_id.into_values().collect();
     build_sarif_envelope(&rules, &results)
+}
+
+/// Renders only new, reintroduced, and worsened findings from a [`RegressionReport`]
+/// as a SARIF 2.1.0 payload so CI gates annotate regressions without baseline noise.
+#[must_use]
+pub fn render_diff_sarif(diff: &RegressionReport) -> String {
+    let mut rules_by_id: BTreeMap<&str, Value> = BTreeMap::new();
+    let mut results = Vec::new();
+    let uri = diff.current_target.as_str();
+
+    for finding in &diff.new_findings {
+        push_finding_sarif(finding, uri, Some("[NEW] "), &mut rules_by_id, &mut results);
+    }
+    for finding in &diff.reintroduced_findings {
+        push_finding_sarif(
+            finding,
+            uri,
+            Some("[REINTRODUCED] "),
+            &mut rules_by_id,
+            &mut results,
+        );
+    }
+    for finding in &diff.worsened_findings {
+        push_finding_sarif(
+            finding,
+            uri,
+            Some("[WORSENED] "),
+            &mut rules_by_id,
+            &mut results,
+        );
+    }
+
+    let rules: Vec<Value> = rules_by_id.into_values().collect();
+    build_sarif_envelope(&rules, &results)
+}
+
+fn push_finding_sarif<'a>(
+    finding: &'a Finding,
+    uri: &str,
+    prefix: Option<&str>,
+    rules_by_id: &mut BTreeMap<&'a str, Value>,
+    results: &mut Vec<Value>,
+) {
+    let rule_id = finding.rule_id.0.as_str();
+    let level = sarif_level(finding.severity);
+    rules_by_id.entry(rule_id).or_insert_with(|| {
+        json!({
+            "id": rule_id,
+            "shortDescription": { "text": finding.title },
+            "fullDescription": { "text": finding.summary },
+            "defaultConfiguration": { "level": level },
+            "help": {
+                "text": finding.remediation.as_deref().unwrap_or("Inspect captured evidence for remediation details.")
+            }
+        })
+    });
+
+    let mut msg = format!(
+        "{}{}: {}",
+        prefix.unwrap_or(""),
+        finding.title,
+        finding.summary
+    );
+    if let Some(remediation) = &finding.remediation {
+        msg.push_str(" Recommendation: ");
+        msg.push_str(remediation);
+    }
+
+    results.push(json!({
+        "ruleId": rule_id,
+        "level": level,
+        "message": { "text": msg },
+        "locations": [{
+            "physicalLocation": {
+                "artifactLocation": { "uri": uri }
+            }
+        }],
+        "partialFingerprints": {
+            "primaryLocationLineHash": finding.fingerprint.0
+        }
+    }));
 }
 
 /// Renders clustered [`SystemicIssue`] records from a multi-page scan as a
@@ -268,5 +318,51 @@ mod tests {
             results[0]["relatedLocations"][0]["physicalLocation"]["artifactLocation"]["uri"],
             "https://example.com/checkout"
         );
+    }
+
+    #[test]
+    fn diff_sarif_emits_only_new_reintroduced_and_worsened_regressions() {
+        let make_finding = |id: &str, fp: &str| Finding {
+            fingerprint: FindingFingerprint(fp.to_owned()),
+            rule_id: RuleId(id.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: id.to_owned(),
+            summary: "summary".to_owned(),
+            evidence_refs: vec![],
+            remediation: None,
+        };
+        let diff = RegressionReport {
+            baseline_target: "https://example.com/".to_owned(),
+            current_target: "https://example.com/".to_owned(),
+            baseline_captured_at_unix_secs: 100,
+            current_captured_at_unix_secs: 200,
+            not_comparable_reason: None,
+            new_findings: vec![make_finding("sec.new", "fp-new")],
+            persisting_findings: vec![make_finding("sec.old", "fp-old")],
+            resolved_findings: vec![],
+            unverified_findings: vec![],
+            changed_findings: vec![],
+            worsened_findings: vec![],
+            improved_findings: vec![],
+            reintroduced_findings: vec![make_finding("sec.reintro", "fp-reintro")],
+            summary: crate::persistence::RegressionSummary {
+                new_count: 1,
+                persisting_count: 1,
+                reintroduced_count: 1,
+                ..Default::default()
+            },
+            rendered_text: None,
+        };
+
+        let sarif_str = render_diff_sarif(&diff);
+        let parsed: Value = serde_json::from_str(&sarif_str).unwrap();
+        let results = parsed["runs"][0]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0]["ruleId"], "sec.new");
+        assert_eq!(results[1]["ruleId"], "sec.reintro");
     }
 }
