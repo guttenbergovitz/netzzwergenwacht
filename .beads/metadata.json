@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "netzzwergenwacht",
+  "project_id": "50b6f5dc-6840-4f0d-854d-7154299d34c8"
+}
