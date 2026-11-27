@@ -1143,7 +1143,7 @@ async fn investigate(evaluation: String) -> InvestigationReport {
 #[tokio::test]
 async fn kommandant_cites_interactive_nodes_and_supports_the_hypothesis() {
     let evaluation = r#"{"status":"supported","interactive_element_nodes":[11],"evaluation_summary":"Two controls observed.","conclusion":"Interactive controls confirmed."}"#;
-    let report = investigate(evaluation.to_owned()).await;
+    let report = Box::pin(investigate(evaluation.to_owned())).await;
 
     assert!(
         report
@@ -1163,7 +1163,7 @@ async fn kommandant_cites_interactive_nodes_and_supports_the_hypothesis() {
 #[tokio::test]
 async fn kommandant_without_citation_forces_inconclusive() {
     let evaluation = r#"{"status":"supported","evaluation_summary":"No citation supplied.","conclusion":"Claimed without evidence."}"#;
-    let report = investigate(evaluation.to_owned()).await;
+    let report = Box::pin(investigate(evaluation.to_owned())).await;
 
     let hypothesis = report.hypotheses.first().expect("hypothesis recorded");
     assert_eq!(
@@ -1176,7 +1176,7 @@ async fn kommandant_without_citation_forces_inconclusive() {
 #[tokio::test]
 async fn retained_evidence_survives_saving_and_offline_reload() {
     let evaluation = r#"{"status":"supported","interactive_element_nodes":[11],"evaluation_summary":"Two controls observed.","conclusion":"Interactive controls confirmed."}"#;
-    let report = investigate(evaluation.to_owned()).await;
+    let report = Box::pin(investigate(evaluation.to_owned())).await;
 
     let retained = report
         .snapshot

@@ -590,6 +590,80 @@ function findBrowser() {
             }
           }
         }
+        const parseRgba = (raw) => {
+          if (!raw) return null;
+          const open = raw.indexOf('(');
+          const close = raw.lastIndexOf(')');
+          if (open < 0 || close <= open) return null;
+          const parts = raw.slice(open + 1, close).split(',').map((s) => Number(s.trim()));
+          if (parts.length < 3 || parts.slice(0, 3).some((n) => Number.isNaN(n))) return null;
+          const a = parts.length >= 4 && !Number.isNaN(parts[3]) ? parts[3] : 1;
+          return [parts[0], parts[1], parts[2], a];
+        };
+        const blendOver = (fg, bg) => {
+          const a = fg[3];
+          return [
+            fg[0] * a + bg[0] * (1 - a),
+            fg[1] * a + bg[1] * (1 - a),
+            fg[2] * a + bg[2] * (1 - a),
+            1,
+          ];
+        };
+        const relLum = (rgb) => {
+          const chan = (v) => {
+            const c = v / 255;
+            return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+          };
+          return 0.2126 * chan(rgb[0]) + 0.7152 * chan(rgb[1]) + 0.0722 * chan(rgb[2]);
+        };
+        const effectiveBg = (el) => {
+          const layers = [];
+          let cur = el;
+          while (cur && cur.nodeType === 1) {
+            const st = getComputedStyle(cur);
+            if (st.backgroundImage && st.backgroundImage !== 'none') return null;
+            const c = parseRgba(st.backgroundColor);
+            if (c && c[3] > 0) {
+              layers.push(c);
+              if (c[3] >= 0.999) break;
+            }
+            cur = cur.parentElement;
+          }
+          let acc = [255, 255, 255, 1];
+          for (let i = layers.length - 1; i >= 0; i--) {
+            acc = blendOver(layers[i], acc);
+          }
+          return acc;
+        };
+        const lowContrastElements = [];
+        const contrastNodes = Array.from(
+          document.querySelectorAll('main h1, main h2, main h3, main p, main a, main button, form label, form button, form input[type=submit]')
+        ).slice(0, 40);
+        for (const el of contrastNodes) {
+          if (lowContrastElements.length >= 10) break;
+          const r = el.getBoundingClientRect();
+          const st = getComputedStyle(el);
+          if (r.width < 4 || r.height < 4 || st.display === 'none' || st.visibility === 'hidden' || st.opacity === '0') continue;
+          const text = (el.textContent || el.value || '').trim();
+          if (!text) continue;
+          const fgRaw = parseRgba(st.color);
+          if (!fgRaw || fgRaw[3] <= 0.01) continue;
+          const bg = effectiveBg(el);
+          if (!bg) continue;
+          const fg = fgRaw[3] < 0.999 ? blendOver(fgRaw, bg) : fgRaw;
+          const l1 = relLum(fg);
+          const l2 = relLum(bg);
+          const ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+          const fs = parseFloat(st.fontSize) || 16;
+          const fw = parseInt(st.fontWeight, 10) || (st.fontWeight === 'bold' ? 700 : 400);
+          const isLarge = fs >= 24 || (fs >= 18.66 && fw >= 700);
+          const minRatio = isLarge ? 3.0 : 4.5;
+          if (ratio < minRatio) {
+            lowContrastElements.push(
+              el.tagName.toLowerCase() + ' [' + text.slice(0, 32) + '] contrast ' + ratio.toFixed(2) + ':1 < ' + minRatio.toFixed(1) + ':1'
+            );
+          }
+        }
         const nav = performance.getEntriesByType('navigation')[0];
         const p = window.__nzwPerf || {};
         const pos = (v) => (typeof v === 'number' && v >= 0 ? Math.round(v) : null);
@@ -664,6 +738,7 @@ function findBrowser() {
           rendered_error_marker: renderedErrorMarker,
           occluded_primary_controls: occludedPrimaryControls,
           dead_cta_links: deadCtaLinks,
+          low_contrast_elements: lowContrastElements,
           scroll_locked: (() => {
             const root = document.documentElement;
             const body = document.body;
@@ -1182,6 +1257,7 @@ function findBrowser() {
       rendered_error_marker: typeof domAndImages.rendered_error_marker === 'string' && domAndImages.rendered_error_marker ? domAndImages.rendered_error_marker : null,
       occluded_primary_controls: Array.isArray(domAndImages.occluded_primary_controls) ? domAndImages.occluded_primary_controls.slice(0, 12) : null,
       dead_cta_links: Array.isArray(domAndImages.dead_cta_links) ? domAndImages.dead_cta_links.slice(0, 10) : null,
+      low_contrast_elements: Array.isArray(domAndImages.low_contrast_elements) ? domAndImages.low_contrast_elements.slice(0, 10) : null,
       scroll_locked: typeof domAndImages.scroll_locked === 'boolean' ? domAndImages.scroll_locked : null,
       ax_tree: axTreeSummary,
       performance: domAndImages.performance || null,

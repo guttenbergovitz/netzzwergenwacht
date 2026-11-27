@@ -41,6 +41,7 @@ const RULE_BEHAVIOURAL_OBSCURED_FOCUS: &str = "a11y.behavioural.obscured_focus";
 const RULE_BEHAVIOURAL_FOCUS_RESTORATION: &str = "a11y.behavioural.focus_restoration";
 const RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE: &str = "a11y.behavioural.skip_link_effectiveness";
 const RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION: &str = "a11y.behavioural.keyboard_activation";
+const RULE_NATIVE_CONTRAST: &str = "a11y.rendered.native_contrast";
 
 /// Source-level rule identifiers owned by `ZugänglichkeitsZwerg`.
 pub const SOURCE_RULES: &[&str] = &[
@@ -105,6 +106,7 @@ pub fn analyse_with_browser(
 
     check_axe_violations(axe, &mut findings, &mut checks);
     check_ax_tree(browser, &mut findings, &mut checks);
+    check_native_contrast(browser, &mut findings, &mut checks);
     check_behavioural_a11y(browser, &mut findings, &mut checks);
 
     AnalyserResult {
@@ -216,6 +218,66 @@ fn check_ax_tree(
     }
 
     check_ax_ignored_ratio(tree, findings, checks);
+}
+
+fn check_native_contrast(
+    browser: &CollectorOutcome<BrowserEvidence>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let low_contrast = match browser {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+            data.low_contrast_elements.as_ref()
+        }
+        CollectorOutcome::Skipped { .. } | CollectorOutcome::Failed { .. } => None,
+    };
+
+    let Some(items) = low_contrast else {
+        checks.push(CheckStatus::Unavailable {
+            rule_id: RuleId(RULE_NATIVE_CONTRAST.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "Level 2 computed contrast probe unavailable".to_owned(),
+        });
+        return;
+    };
+
+    if items.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_NATIVE_CONTRAST.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_NATIVE_CONTRAST.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_NATIVE_CONTRAST.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Insufficient text contrast detected in rendered DOM ({})",
+                items.len()
+            ),
+            summary: format!(
+                "Computed styles showed {} visible text/control element(s) in `<main>`/`<form>` below WCAG 2.1 AA contrast thresholds (for example `{}`).",
+                items.len(),
+                items[0]
+            ),
+            evidence_refs: items
+                .iter()
+                .take(4)
+                .map(|entry| EvidenceRef::new(EvidenceSource::BrowserRuntime, entry.clone()))
+                .collect(),
+            remediation: Some(
+                "Increase foreground/background colour contrast to at least 4.5:1 for normal text and 3.0:1 for large text (WCAG 2.1 SC 1.4.3).".to_owned(),
+            ),
+        });
+    }
 }
 
 fn check_behavioural_a11y(
@@ -1453,5 +1515,22 @@ mod tests {
         assert!(ids.contains(&RULE_BEHAVIOURAL_OBSCURED_FOCUS));
         assert!(ids.contains(&RULE_BEHAVIOURAL_SKIP_LINK_EFFECTIVE));
         assert!(ids.contains(&RULE_BEHAVIOURAL_KEYBOARD_ACTIVATION));
+    }
+
+    #[test]
+    fn flags_native_low_contrast_elements() {
+        let obs = DocumentObservations::default();
+        let browser = CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                low_contrast_elements: Some(vec![
+                    "p [Light text] contrast 2.10:1 < 4.5:1".to_owned(),
+                ]),
+                ..BrowserEvidence::default()
+            },
+        };
+        let res = analyse_with_browser(&obs, &CollectorOutcome::default(), &browser);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_NATIVE_CONTRAST));
     }
 }

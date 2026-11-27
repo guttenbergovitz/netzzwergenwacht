@@ -1080,6 +1080,9 @@ pub struct BrowserEvidence {
     /// Visible navigation/CTA `<a>` links with dead `href` (`""`, `"#"`, `"#!"`, or `javascript:`) and no `role="button"`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dead_cta_links: Option<Vec<String>>,
+    /// Visible `<main>`/`<form>` text or control elements failing WCAG 2.1 AA contrast ratios (`4.5:1` normal, `3:1` large).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_contrast_elements: Option<Vec<String>>,
     /// Level 2 Accessibility Tree summary (`Accessibility.getFullAXTree`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ax_tree: Option<AccessibilityTreeSummary>,
