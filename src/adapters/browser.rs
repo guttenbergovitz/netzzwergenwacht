@@ -24,6 +24,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const targetUrl = process.argv[1];
+// Explicit arguments from the Rust parent take precedence over inherited
+// environment variables, because the parent clears the child environment to a
+// safe allow-list before spawning.
+const sessionPolicy = process.argv[3] || process.env.NZW_BROWSER_POLICY || '';
+const sessionLoadTimeoutMs = Number(process.argv[2] || process.env.NZW_LOAD_TIMEOUT_MS || 15000);
 if (!targetUrl) {
   console.error('missing target URL');
   process.exit(2);
@@ -282,7 +287,7 @@ function findBrowser() {
     });
 
     const isForbiddenSubresourceUrl = (raw) => {
-      if (process.env.NZW_BROWSER_POLICY !== 'public_only') return false;
+      if (sessionPolicy !== 'public_only') return false;
       try {
         const u = new URL(raw);
         if (u.protocol !== 'http:' && u.protocol !== 'https:') return false; // allow data:/blob:
@@ -388,14 +393,14 @@ function findBrowser() {
         window.__nzwPerf.longTaskObserverInstalled = true;
       } catch {}`,
     });
-    if (process.env.NZW_BROWSER_POLICY === 'public_only') {
+    if (sessionPolicy === 'public_only') {
       await call('Fetch.enable', { patterns: [{ urlPattern: '*' }] });
     }
 
     let loadTimedOut = false;
     let loadTimer;
     const inFlightRequestIds = new Set();
-    const loadTimeoutMs = Math.max(1000, Math.min(15000, Number(process.env.NZW_LOAD_TIMEOUT_MS || 15000)));
+    const loadTimeoutMs = Math.max(1000, Math.min(15000, Number.isFinite(sessionLoadTimeoutMs) ? sessionLoadTimeoutMs : 15000));
     const loaded = new Promise((resolve) => {
       loadResolve = resolve;
       loadTimer = setTimeout(() => {
@@ -1139,8 +1144,8 @@ pub async fn run_browser_with_policy(
     cmd.arg("-e")
         .arg(CDP_HARNESS_JS)
         .arg(target.as_str())
-        .env("NZW_BROWSER_POLICY", policy_env)
-        .env("NZW_LOAD_TIMEOUT_MS", load_timeout_ms.to_string());
+        .arg(load_timeout_ms.to_string())
+        .arg(policy_env);
 
     let stdout = match run_bounded_command("browser", &mut cmd, timeout).await {
         Ok(out) => out,
