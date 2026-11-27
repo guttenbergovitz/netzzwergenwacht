@@ -73,12 +73,26 @@ tasks:
     cmds:
       - cargo run --quiet --locked -- check {{.URL}}
 
+  audit:html:
+    desc: Run a single-page audit and write a self-contained HTML report (URL required; optional OUT=audit-report.html)
+    requires:
+      vars: [URL]
+    cmds:
+      - cargo run --quiet --locked -- check {{.URL}} --format html -o {{.OUT | default "audit-report.html"}}
+
   scan:
     desc: Crawl an application, retain its evidence and report coverage (URL required; optional BROWSER_SAMPLE=3)
     requires:
       vars: [URL]
     cmds:
       - cargo run --release --locked -- scan {{.URL}} --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}} --browser-sample {{.BROWSER_SAMPLE | default 0}}
+
+  scan:html:
+    desc: Crawl an application with browser sampling and write a self-contained HTML report (URL required; optional OUT=scan-report.html)
+    requires:
+      vars: [URL]
+    cmds:
+      - cargo run --release --locked -- scan {{.URL}} --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}} --browser-sample {{.BROWSER_SAMPLE | default 3}} --format html -o {{.OUT | default "scan-report.html"}}
 
   scan:private:
     desc: Crawl a loopback or private target, bypassing the public-only policy (URL required)

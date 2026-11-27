@@ -50,6 +50,9 @@ enum Command {
         /// Output format.
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
+        /// Optional file path to write the rendered output (`json`, `html`, `markdown`, `text`).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
         /// Allow loopback and private network targets (for local testing only).
         #[arg(long)]
         allow_private: bool,
@@ -158,6 +161,9 @@ enum Command {
         /// Run headless browser checks on up to N sampled pages from the crawl.
         #[arg(long, default_value_t = 0)]
         browser_sample: usize,
+        /// Optional file path to write the rendered scan report (`json`, `html`, `markdown`, `text`).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
         /// Directory for retained evidence (defaults to `.nzw/evidence`).
         #[arg(long)]
         evidence_dir: Option<PathBuf>,
@@ -606,6 +612,7 @@ async fn main() -> ExitCode {
             max_depth,
             audit_timeout_secs,
             browser_sample,
+            output,
             evidence_dir,
         } => {
             let discovery = config::ConfigDiscovery {
@@ -683,15 +690,20 @@ async fn main() -> ExitCode {
             };
             match format {
                 OutputFormat::Json => match serde_json::to_string_pretty(&report) {
-                    Ok(json) => println!("{json}"),
+                    Ok(json) => {
+                        if let Err(code) = write_output_or_stdout(output.as_deref(), &json) {
+                            return code;
+                        }
+                    }
                     Err(err) => {
                         eprintln!("scan error: {err}");
                         return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
                     }
                 },
                 OutputFormat::Text | OutputFormat::Markdown => {
-                    for line in report.render_lines() {
-                        println!("{line}");
+                    let rendered = report.render_lines().join("\n");
+                    if let Err(code) = write_output_or_stdout(output.as_deref(), &rendered) {
+                        return code;
                     }
                 }
                 OutputFormat::Html => {
@@ -707,7 +719,9 @@ async fn main() -> ExitCode {
                             stored_at: report.stored_at.as_deref(),
                         },
                     );
-                    println!("{html}");
+                    if let Err(code) = write_output_or_stdout(output.as_deref(), &html) {
+                        return code;
+                    }
                 }
             }
             if report.store_error.is_some() {
@@ -738,6 +752,7 @@ async fn main() -> ExitCode {
             config: config_path,
             profile: profile_path,
             format,
+            output,
             allow_private,
             timeout_secs,
             audit_timeout_secs,
@@ -778,6 +793,7 @@ async fn main() -> ExitCode {
                 config_path.as_deref(),
                 profile_path.as_deref(),
                 format,
+                output.as_deref(),
                 allow_private,
                 timeout_secs,
                 audit_timeout_secs,
@@ -1543,6 +1559,7 @@ async fn run_check(
     config_path: Option<&Path>,
     profile_path: Option<&Path>,
     format: OutputFormat,
+    output: Option<&Path>,
     allow_private: bool,
     timeout_secs: Option<u64>,
     audit_timeout_secs: Option<u64>,
@@ -1635,7 +1652,28 @@ async fn run_check(
         report.ai_synthesis = run_optional_ai(&report).await;
     }
 
-    emit_audit_output(&report, &eval, &assessment, format, code)
+    emit_audit_output(&report, &eval, &assessment, format, output, code)
+}
+
+fn write_output_or_stdout(output: Option<&Path>, content: &str) -> Result<(), ExitCode> {
+    if let Some(path) = output {
+        if let Some(parent) = path.parent()
+            && !parent.as_os_str().is_empty()
+            && let Err(err) = std::fs::create_dir_all(parent)
+        {
+            eprintln!("failed to create directory {}: {err}", parent.display());
+            return Err(ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR));
+        }
+        if let Err(err) = std::fs::write(path, content) {
+            eprintln!("failed to write {}: {err}", path.display());
+            return Err(ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR));
+        }
+        eprintln!("wrote report to {}", path.display());
+        Ok(())
+    } else {
+        println!("{content}");
+        Ok(())
+    }
 }
 
 fn emit_audit_output(
@@ -1643,14 +1681,15 @@ fn emit_audit_output(
     eval: &config::PolicyEvaluation,
     assessment: &analysis::assessment::QualityAssessment,
     format: OutputFormat,
+    output: Option<&Path>,
     code: ExitCode,
 ) -> ExitCode {
     match format {
         OutputFormat::Json => match serde_json::to_string_pretty(report) {
-            Ok(json) => {
-                println!("{json}");
-                code
-            }
+            Ok(json) => match write_output_or_stdout(output, &json) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            },
             Err(err) => {
                 eprintln!("failed to serialise JSON report: {err}");
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
@@ -1664,11 +1703,11 @@ fn emit_audit_output(
             code
         }
         OutputFormat::Html => {
-            println!(
-                "{}",
-                netzzwergenwacht::report_html::render_audit_html(report, assessment)
-            );
-            code
+            let html = netzzwergenwacht::report_html::render_audit_html(report, assessment);
+            match write_output_or_stdout(output, &html) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            }
         }
     }
 }
