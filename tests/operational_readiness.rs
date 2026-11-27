@@ -96,6 +96,29 @@ fn taskfile_exposes_the_documented_tasks() {
 }
 
 #[test]
+fn taskfile_uses_one_variable_name_for_the_target_url() {
+    let directives: Vec<&str> = TASKFILE
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect();
+    let body = directives.join("\n");
+    assert!(
+        !body.contains("vars: [TARGET]"),
+        "a task still requires TARGET; URL is the canonical argument name"
+    );
+    assert!(
+        body.contains("{{.URL | default .TARGET | default .DEFAULT_URL}}"),
+        "entry-point tasks must accept URL and keep TARGET as a legacy alias"
+    );
+    for line in directives {
+        assert!(
+            !line.contains("TARGET="),
+            "documented task usage still advertises TARGET: {line}"
+        );
+    }
+}
+
+#[test]
 fn configuration_documentation_covers_every_documented_surface() {
     for topic in [
         "Discovery and precedence",

@@ -10,10 +10,16 @@ version: "3"
 #
 # Every implementation wave updates this file: a capability that can only be
 # exercised by remembering Cargo incantations is not delivered.
+#
+# Task arguments follow one convention: the thing being inspected is always
+# `URL`, whether the task audits one page, crawls an application or opens the
+# workbench. `TARGET` is accepted as a legacy alias by the entry-point tasks and
+# will be removed once callers have migrated.
 
 vars:
   BIN: nzw
   INSTALL_DIR: '{{.HOME}}/.cargo/bin'
+  DEFAULT_URL: https://example.org
 
 tasks:
   default:
@@ -41,14 +47,14 @@ tasks:
       - cargo run --quiet --locked -- doctor
 
   dev:
-    desc: Build and run the workbench against a target URL (TARGET=https://example.org)
+    desc: Build and run the workbench against a target URL (URL=https://example.org)
     cmds:
-      - cargo run --quiet --locked -- tui {{.TARGET | default "https://example.org"}}
+      - cargo run --quiet --locked -- tui {{.URL | default .TARGET | default .DEFAULT_URL}}
 
   tui:
-    desc: Build and run the Zwergenleitstand workbench (TARGET default https://example.org)
+    desc: Build and run the Zwergenleitstand workbench (URL default https://example.org)
     cmds:
-      - cargo run --quiet --locked -- tui {{.TARGET | default "https://example.org"}}
+      - cargo run --quiet --locked -- tui {{.URL | default .TARGET | default .DEFAULT_URL}}
 
   run:
     desc: Run a deterministic single-page audit (URL required, e.g. task run URL=https://example.org)
