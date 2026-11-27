@@ -50,6 +50,18 @@ observed absence, `None` is an absence of evidence.
 - **Local only.** A single file on disk. No service, no remote endpoint, no
   synchronisation.
 
+## Producers
+
+`nzw scan` is the first production writer. It opens `.nzw/evidence/evidence.db`
+(overridable with `--evidence-dir`), records one run per reconnaissance and prints
+the coverage it retained. A failed store write is reported on stderr and exits
+non-zero: a persistence failure must not look like a successful run.
+
+`nzw patrol` and `nzw investigate` do not write to the store yet. Patrol still runs
+its own sampling pipeline rather than the concurrent crawl, and unifying the two is
+scheduled with the adaptive-sampling work; until then the store has exactly one
+producer and the patrol report remains its only record.
+
 ## What is not stored yet
 
 Schema version 2 deliberately stops at the observations the crawler already

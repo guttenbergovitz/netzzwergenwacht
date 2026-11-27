@@ -127,10 +127,18 @@ nzw check https://example.org --browser --axe --lighthouse
 nzw check https://example.org --format markdown --audience cto
 nzw batch targets.txt --max-concurrency 4 --history audit-history.jsonl
 nzw check https://example.org --fail-on high
+nzw scan https://example.org --max-pages 50
 ```
 
 `check` returns a non-zero exit code when the quality gate fails, which makes it usable directly in
 CI. `batch` reads one URL per line and ignores `#` comments.
+
+`scan` is the application-wide counterpart to `check`: it crawls the same-origin surface
+concurrently within an explicit page, depth and time bound, acquires each shared subresource once,
+evaluates the origin's `robots.txt` before requesting anything, and retains the coverage and
+resource observations in the local evidence store at `.nzw/evidence/evidence.db`. Coverage is
+reported as a partition of the discovered population, so a bounded scan never presents itself as a
+complete one.
 
 ## Agentic investigations
 

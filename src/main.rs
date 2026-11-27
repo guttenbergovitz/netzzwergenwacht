@@ -126,6 +126,36 @@ enum Command {
         #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
         format: OutputFormat,
     },
+    /// Run deterministic application-wide reconnaissance and retain the evidence.
+    ///
+    /// Unlike `check`, which inspects a single page, `scan` crawls the same-origin
+    /// application surface concurrently, acquires shared subresources once, records
+    /// explicit coverage and stores the observations in the local evidence store.
+    Scan {
+        /// Target HTTP or HTTPS URL to reconnaissance.
+        url: String,
+        /// Optional path to a TOML configuration file (`nzw.toml`).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
+        /// Allow loopback and private network targets (for local testing only).
+        #[arg(long)]
+        allow_private: bool,
+        /// Maximum number of pages to acquire.
+        #[arg(long, default_value_t = 50)]
+        max_pages: usize,
+        /// Maximum link-following depth from the seed URL.
+        #[arg(long, default_value_t = 2)]
+        max_depth: usize,
+        /// End-to-end crawl deadline in seconds.
+        #[arg(long)]
+        audit_timeout_secs: Option<u64>,
+        /// Directory for retained evidence (defaults to `.nzw/evidence`).
+        #[arg(long)]
+        evidence_dir: Option<PathBuf>,
+    },
     /// Compare a baseline and current audit report (JSON or JSONL) for regressions.
     Diff {
         /// Path to baseline JSON or JSONL report file.
@@ -366,6 +396,89 @@ struct BatchReport {
     items: Vec<BatchItem>,
 }
 
+/// Rendered reconnaissance result, including where its evidence was retained.
+#[derive(Debug, Serialize)]
+struct ScanReport {
+    run_id: String,
+    application: String,
+    seed_url: String,
+    coverage: netzzwergenwacht::discovery::CrawlCoverage,
+    resources: Vec<netzzwergenwacht::discovery::ResourceObservation>,
+    systemic_issues: Vec<netzzwergenwacht::discovery::SystemicIssue>,
+    stored_at: Option<String>,
+    store_error: Option<String>,
+}
+
+impl ScanReport {
+    fn render_lines(&self) -> Vec<String> {
+        let coverage = &self.coverage;
+        let resources = &coverage.resources;
+        let mut lines = vec![
+            format!("Reconnaissance: {}", self.application),
+            format!("  Run:                 {}", self.run_id),
+            String::new(),
+            "COVERAGE".to_owned(),
+            format!("  Discovered URLs:     {}", coverage.discovered_urls),
+            format!("  Fetched:             {}", coverage.fetched_urls),
+            format!("  Analysed:            {}", coverage.analysed_urls),
+            format!("  Failed:              {}", coverage.failed_urls),
+            format!("  Skipped (budget):    {}", coverage.skipped_budget_urls),
+            format!("  Cancelled:           {}", coverage.cancelled_urls),
+            format!("  Robots blocked:      {}", coverage.robots_blocked_urls),
+            format!("  Robots file:         {}", coverage.robots.label()),
+            format!("  Queue rejections:    {}", coverage.queue_rejections),
+            format!("  Duplicate offers:    {}", coverage.duplicate_offers),
+            format!(
+                "  Bounds:              {} pages, depth {}",
+                coverage.max_pages, coverage.max_depth
+            ),
+            format!(
+                "  Complete:            {}",
+                if coverage.complete { "yes" } else { "no" }
+            ),
+            String::new(),
+            "RESOURCES".to_owned(),
+            format!("  Discovered:          {}", resources.discovered_resources),
+            format!("  Fetched:             {}", resources.fetched_resources),
+            format!("  Failed:              {}", resources.failed_resources),
+            format!("  Skipped (budget):    {}", resources.skipped_resources),
+            format!("  Truncated:           {}", resources.truncated_resources),
+            format!("  External refused:    {}", resources.external_refused),
+            String::new(),
+            "DIAGNOSTICS".to_owned(),
+            format!("  Systemic issues:     {}", self.systemic_issues.len()),
+        ];
+        for issue in self.systemic_issues.iter().take(10) {
+            lines.push(format!(
+                "    {} on {} page(s)",
+                issue.rule_id.0,
+                issue.affected_urls.len()
+            ));
+        }
+        lines.push(String::new());
+        match (&self.stored_at, &self.store_error) {
+            (Some(path), _) => lines.push(format!("  Evidence retained:   {path}")),
+            (None, Some(error)) => lines.push(format!("  Evidence NOT stored: {error}")),
+            (None, None) => lines.push("  Evidence NOT stored: no store was opened".to_owned()),
+        }
+        lines
+    }
+}
+
+/// Builds a run identity from the seed origin and the current second.
+fn scan_run_id(target: &AuditTarget) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    target.as_str().hash(&mut hasher);
+    format!("scan-{}-{:016x}", unix_now_secs(), hasher.finish())
+}
+
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
 #[tokio::main]
 #[allow(clippy::too_many_lines)]
 async fn main() -> ExitCode {
@@ -430,6 +543,97 @@ async fn main() -> ExitCode {
                 ExitCode::from(EXIT_OK)
             } else {
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+            }
+        }
+        Command::Scan {
+            url,
+            config,
+            format,
+            allow_private,
+            max_pages,
+            max_depth,
+            audit_timeout_secs,
+            evidence_dir,
+        } => {
+            let discovery = config::ConfigDiscovery {
+                explicit: config,
+                ..config::ConfigDiscovery::from_process()
+            };
+            let loaded = match discovery.resolve() {
+                Ok(loaded) => loaded,
+                Err(err) => {
+                    eprintln!("{err}");
+                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                }
+            };
+            let policy = target_policy(allow_private);
+            let target = match AuditTarget::parse(&url, policy) {
+                Ok(target) => target,
+                Err(err) => {
+                    eprintln!("invalid target: {err}");
+                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                }
+            };
+            let exec_budget = budget_with_overrides(&loaded.config, None, audit_timeout_secs, None);
+            let crawl_budget = netzzwergenwacht::discovery::CrawlBudget {
+                max_pages: max_pages.max(1),
+                max_depth,
+                max_duration: exec_budget.audit_timeout,
+            };
+            let summary = netzzwergenwacht::discovery::crawl_and_cluster(
+                target.clone(),
+                crawl_budget,
+                exec_budget,
+                policy,
+            )
+            .await;
+
+            let run_id = scan_run_id(&target);
+            let directory = evidence_dir.unwrap_or_else(|| PathBuf::from(".nzw/evidence"));
+            let store_path = directory.join("evidence.db");
+            let record = netzzwergenwacht::evidence_store::CrawlRecord {
+                run_id: &run_id,
+                application: target.as_str(),
+                summary: &summary,
+                recorded_at_unix_secs: unix_now_secs(),
+            };
+            let (stored_at, store_error) =
+                match netzzwergenwacht::evidence_store::EvidenceStore::open(&store_path).await {
+                    Ok(store) => match store.record_crawl(record).await {
+                        Ok(()) => (Some(store_path.display().to_string()), None),
+                        Err(err) => (None, Some(err.to_string())),
+                    },
+                    Err(err) => (None, Some(err.to_string())),
+                };
+
+            let report = ScanReport {
+                run_id: run_id.clone(),
+                application: target.as_str().to_owned(),
+                seed_url: summary.seed.as_str().to_owned(),
+                coverage: summary.coverage,
+                resources: summary.resources.clone(),
+                systemic_issues: summary.systemic_issues.clone(),
+                stored_at,
+                store_error,
+            };
+            match format {
+                OutputFormat::Json => match serde_json::to_string_pretty(&report) {
+                    Ok(json) => println!("{json}"),
+                    Err(err) => {
+                        eprintln!("scan error: {err}");
+                        return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                    }
+                },
+                OutputFormat::Text | OutputFormat::Markdown => {
+                    for line in report.render_lines() {
+                        println!("{line}");
+                    }
+                }
+            }
+            if report.store_error.is_some() {
+                ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+            } else {
+                ExitCode::from(EXIT_OK)
             }
         }
         Command::Validate { url, allow_private } => {
