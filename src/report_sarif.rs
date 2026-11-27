@@ -1,0 +1,272 @@
+//! SARIF 2.1.0 exporter for CI/CD and GitHub Code Scanning integrations.
+//!
+//! Maps deterministic [`crate::domain::Finding`] items from single-page audits and clustered
+//! [`SystemicIssue`] records from application scans into OASIS SARIF 2.1.0
+//! JSON payloads without inventing locations or severities.
+
+use std::collections::BTreeMap;
+
+use serde_json::{Value, json};
+
+use crate::analysis::AuditReport;
+use crate::discovery::SystemicIssue;
+use crate::domain::Severity;
+
+const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
+const SARIF_VERSION: &str = "2.1.0";
+const TOOL_INFO_URI: &str = "https://github.com/guttenbergovitz/netzzwergenwacht";
+
+/// Maps internal finding [`Severity`] to OASIS SARIF result level.
+#[must_use]
+pub const fn sarif_level(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Critical | Severity::High => "error",
+        Severity::Medium => "warning",
+        Severity::Low | Severity::Info => "note",
+    }
+}
+
+/// Renders a single-page [`AuditReport`] as a SARIF 2.1.0 JSON string.
+#[must_use]
+pub fn render_audit_sarif(report: &AuditReport) -> String {
+    let mut rules_by_id: BTreeMap<&str, Value> = BTreeMap::new();
+    let mut results = Vec::new();
+    let uri = report.target.as_str();
+
+    for analyser in &report.analysers {
+        for finding in &analyser.findings {
+            let rule_id = finding.rule_id.0.as_str();
+            let level = sarif_level(finding.severity);
+            rules_by_id.entry(rule_id).or_insert_with(|| {
+                json!({
+                    "id": rule_id,
+                    "shortDescription": { "text": finding.title },
+                    "fullDescription": { "text": finding.summary },
+                    "defaultConfiguration": { "level": level },
+                    "help": {
+                        "text": finding.remediation.as_deref().unwrap_or("Inspect captured evidence for remediation details.")
+                    }
+                })
+            });
+
+            let mut msg = format!("{}: {}", finding.title, finding.summary);
+            if let Some(remediation) = &finding.remediation {
+                msg.push_str(" Recommendation: ");
+                msg.push_str(remediation);
+            }
+
+            results.push(json!({
+                "ruleId": rule_id,
+                "level": level,
+                "message": { "text": msg },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": uri }
+                    }
+                }],
+                "partialFingerprints": {
+                    "primaryLocationLineHash": finding.fingerprint.0
+                }
+            }));
+        }
+    }
+
+    let rules: Vec<Value> = rules_by_id.into_values().collect();
+    build_sarif_envelope(&rules, &results)
+}
+
+/// Renders clustered [`SystemicIssue`] records from a multi-page scan as a
+/// SARIF 2.1.0 JSON string.
+#[must_use]
+pub fn render_scan_sarif(seed_url: &str, systemic_issues: &[SystemicIssue]) -> String {
+    let mut rules_by_id: BTreeMap<&str, Value> = BTreeMap::new();
+    let mut results = Vec::new();
+
+    for issue in systemic_issues {
+        let rule_id = issue.rule_id.0.as_str();
+        let level = sarif_level(issue.severity);
+        rules_by_id.entry(rule_id).or_insert_with(|| {
+            json!({
+                "id": rule_id,
+                "shortDescription": { "text": format!("Systemic issue: {rule_id}") },
+                "fullDescription": { "text": issue.summary },
+                "defaultConfiguration": { "level": level }
+            })
+        });
+
+        let primary_uri = issue.affected_urls.first().map_or(seed_url, String::as_str);
+        let related_locations: Vec<Value> = issue
+            .affected_urls
+            .iter()
+            .skip(1)
+            .take(10)
+            .enumerate()
+            .map(|(idx, url)| {
+                json!({
+                    "id": idx + 1,
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": url }
+                    }
+                })
+            })
+            .collect();
+
+        results.push(json!({
+            "ruleId": rule_id,
+            "level": level,
+            "message": {
+                "text": format!(
+                    "{} (affects {} page(s))",
+                    issue.summary,
+                    issue.affected_urls.len()
+                )
+            },
+            "locations": [{
+                "physicalLocation": {
+                    "artifactLocation": { "uri": primary_uri }
+                }
+            }],
+            "relatedLocations": related_locations,
+            "partialFingerprints": {
+                "primaryLocationLineHash": issue.id
+            }
+        }));
+    }
+
+    let rules: Vec<Value> = rules_by_id.into_values().collect();
+    build_sarif_envelope(&rules, &results)
+}
+
+/// Renders a valid empty SARIF 2.1.0 envelope for commands without finding locations.
+#[must_use]
+pub fn empty_sarif() -> String {
+    build_sarif_envelope(&[], &[])
+}
+
+fn build_sarif_envelope(rules: &[Value], results: &[Value]) -> String {
+    let payload = json!({
+        "$schema": SARIF_SCHEMA,
+        "version": SARIF_VERSION,
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "NetzZwergenWacht",
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "informationUri": TOOL_INFO_URI,
+                    "rules": rules
+                }
+            },
+            "results": results
+        }]
+    });
+    serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis;
+    use crate::brigade::DwarfId;
+    use crate::discovery::SystemicClassification;
+    use crate::domain::{
+        AuditTarget, CollectorOutcome, Confidence, EvidenceLevel, EvidenceSnapshot, Finding,
+        FindingCategory, FindingFingerprint, FindingKind, HttpEvidence, Measurement,
+        MeasurementUnit, RuleId, TargetPolicy,
+    };
+
+    #[test]
+    fn audit_sarif_produces_valid_2_1_0_payload_with_rules_and_fingerprints() {
+        let target = AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).unwrap();
+        let body = "<html><head><title>Ok</title></head><body>Hi</body></html>";
+        let snapshot = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 1_700_000_000,
+            http: CollectorOutcome::Captured {
+                data: HttpEvidence {
+                    final_url: "https://example.com/".to_owned(),
+                    status_code: 200,
+                    redirect_chain: vec![],
+                    headers: vec![],
+                    body_bytes: body.len(),
+                    body_text: body.to_owned(),
+                    body_truncated: false,
+                    elapsed_ms: Measurement::Measured {
+                        value: 15,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                },
+            },
+            tls: CollectorOutcome::Skipped {
+                reason: "not requested".to_owned(),
+            },
+            browser: CollectorOutcome::Skipped {
+                reason: "not requested".to_owned(),
+            },
+            lighthouse: CollectorOutcome::Skipped {
+                reason: "not requested".to_owned(),
+            },
+            axe: CollectorOutcome::Skipped {
+                reason: "not requested".to_owned(),
+            },
+        };
+        let mut report = analysis::run_all(&snapshot);
+        report.analysers[0].findings.push(Finding {
+            fingerprint: FindingFingerprint("fp-sarif-1".to_owned()),
+            rule_id: RuleId("sec.headers.csp".to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Missing Content-Security-Policy".to_owned(),
+            summary: "Response has no CSP header.".to_owned(),
+            evidence_refs: vec![],
+            remediation: Some("Add a strict CSP header.".to_owned()),
+        });
+
+        let sarif_str = render_audit_sarif(&report);
+        let parsed: Value = serde_json::from_str(&sarif_str).unwrap();
+        assert_eq!(parsed["version"], "2.1.0");
+        let run = &parsed["runs"][0];
+        assert_eq!(run["tool"]["driver"]["name"], "NetzZwergenWacht");
+        let results = run["results"].as_array().unwrap();
+        let csp = results
+            .iter()
+            .find(|r| r["ruleId"] == "sec.headers.csp")
+            .unwrap();
+        assert_eq!(csp["level"], "error");
+        assert_eq!(
+            csp["partialFingerprints"]["primaryLocationLineHash"],
+            "fp-sarif-1"
+        );
+    }
+
+    #[test]
+    fn scan_sarif_clusters_systemic_issues_with_related_locations() {
+        let issues = vec![SystemicIssue {
+            id: "sys-1".to_owned(),
+            rule_id: RuleId("browser.runtime.client_error_fallback".to_owned()),
+            affected_urls: vec![
+                "https://example.com/".to_owned(),
+                "https://example.com/checkout".to_owned(),
+            ],
+            affected_page_types: vec![],
+            classification: SystemicClassification::VerifiedCommonCause,
+            summary: "Shared bundle crashed".to_owned(),
+            recurrence_confidence: Confidence::High,
+            shared_cause_confidence: Confidence::High,
+            severity: Severity::Critical,
+            dwarf_id: DwarfId::Browser,
+        }];
+
+        let sarif_str = render_scan_sarif("https://example.com/", &issues);
+        let parsed: Value = serde_json::from_str(&sarif_str).unwrap();
+        let results = parsed["runs"][0]["results"].as_array().unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["level"], "error");
+        assert_eq!(
+            results[0]["relatedLocations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+            "https://example.com/checkout"
+        );
+    }
+}

@@ -214,6 +214,7 @@ reads credentials from the environment variables named in configuration. Full de
 ```bash
 nzw check https://example.org --format json > audit.json
 nzw check https://example.org --format html -o audit-report.html
+nzw check https://example.org --format sarif -o audit-report.sarif
 nzw scan https://example.org --browser-sample 3 --format html -o scan-report.html
 nzw check https://example.org --history audit-history.jsonl
 nzw diff audit-baseline.json audit-current.json

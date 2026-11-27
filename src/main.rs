@@ -363,6 +363,7 @@ enum OutputFormat {
     Json,
     Markdown,
     Html,
+    Sarif,
 }
 
 #[derive(Debug, Subcommand)]
@@ -584,6 +585,9 @@ async fn main() -> ExitCode {
                                     )
                                 );
                             }
+                            OutputFormat::Sarif => {
+                                println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+                            }
                         }
                         ExitCode::from(EXIT_OK)
                     }
@@ -618,6 +622,9 @@ async fn main() -> ExitCode {
                             &report.render_lines().join("\n"),
                         )
                     );
+                }
+                OutputFormat::Sarif => {
+                    println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
                 }
             }
             if report.is_ready() {
@@ -743,6 +750,15 @@ async fn main() -> ExitCode {
                         },
                     );
                     if let Err(code) = write_output_or_stdout(output.as_deref(), &html) {
+                        return code;
+                    }
+                }
+                OutputFormat::Sarif => {
+                    let sarif = netzzwergenwacht::report_sarif::render_scan_sarif(
+                        &report.seed_url,
+                        &report.systemic_issues,
+                    );
+                    if let Err(code) = write_output_or_stdout(output.as_deref(), &sarif) {
                         return code;
                     }
                 }
@@ -1030,6 +1046,45 @@ async fn run_tui_cmd(options: TuiStartupOptions) -> ExitCode {
     ExitCode::from(EXIT_OK)
 }
 
+fn render_stored_patrol(
+    patrol: &netzzwergenwacht::patrol::PatrolReport,
+    raw: &str,
+    format: OutputFormat,
+    role: netzzwergenwacht::investigation::RolePerspective,
+) {
+    match format {
+        OutputFormat::Json => println!("{raw}"),
+        OutputFormat::Markdown => {
+            println!(
+                "{}",
+                netzzwergenwacht::patrol::render_patrol_markdown(patrol, role)
+            );
+        }
+        OutputFormat::Text => {
+            println!(
+                "NETZZWERGENWACHT — Stored Patrol #{} ({MOTTO})",
+                patrol.patrol_number
+            );
+            println!("Target: {}", patrol.target.as_str());
+            println!("Summary: {}", patrol.executive_summary);
+            println!("Coverage: {}", patrol.coverage_summary);
+        }
+        OutputFormat::Html => {
+            let md = netzzwergenwacht::patrol::render_patrol_markdown(patrol, role);
+            println!(
+                "{}",
+                netzzwergenwacht::report_html::wrap_preformatted_html(
+                    &format!("Stored Patrol #{}", patrol.patrol_number),
+                    &md,
+                )
+            );
+        }
+        OutputFormat::Sarif => {
+            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+        }
+    }
+}
+
 fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> ExitCode {
     let raw = match std::fs::read_to_string(file) {
         Ok(s) => s,
@@ -1041,34 +1096,7 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
     let role: netzzwergenwacht::investigation::RolePerspective = audience.into();
 
     if let Ok(patrol) = serde_json::from_str::<netzzwergenwacht::patrol::PatrolReport>(&raw) {
-        match format {
-            OutputFormat::Json => println!("{raw}"),
-            OutputFormat::Markdown => {
-                println!(
-                    "{}",
-                    netzzwergenwacht::patrol::render_patrol_markdown(&patrol, role)
-                );
-            }
-            OutputFormat::Text => {
-                println!(
-                    "NETZZWERGENWACHT — Stored Patrol #{} ({MOTTO})",
-                    patrol.patrol_number
-                );
-                println!("Target: {}", patrol.target.as_str());
-                println!("Summary: {}", patrol.executive_summary);
-                println!("Coverage: {}", patrol.coverage_summary);
-            }
-            OutputFormat::Html => {
-                let md = netzzwergenwacht::patrol::render_patrol_markdown(&patrol, role);
-                println!(
-                    "{}",
-                    netzzwergenwacht::report_html::wrap_preformatted_html(
-                        &format!("Stored Patrol #{}", patrol.patrol_number),
-                        &md,
-                    )
-                );
-            }
-        }
+        render_stored_patrol(&patrol, &raw, format, role);
         return ExitCode::from(EXIT_OK);
     }
 
@@ -1094,6 +1122,9 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
                     )
                 );
             }
+            OutputFormat::Sarif => {
+                println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+            }
         }
         return ExitCode::from(EXIT_OK);
     }
@@ -1118,6 +1149,12 @@ fn run_report_cmd(file: &Path, format: OutputFormat, audience: AudienceArg) -> E
                     println!(
                         "{}",
                         netzzwergenwacht::report_html::render_audit_html(&audit, &assessment)
+                    );
+                }
+                OutputFormat::Sarif => {
+                    println!(
+                        "{}",
+                        netzzwergenwacht::report_sarif::render_audit_sarif(&audit)
                     );
                 }
             }
@@ -1247,6 +1284,9 @@ async fn run_patrol_cmd(
                 )
             );
         }
+        OutputFormat::Sarif => {
+            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+        }
     }
 
     if !report.execution_succeeded {
@@ -1301,6 +1341,9 @@ fn render_portfolio_patrol(
                 "{}",
                 netzzwergenwacht::report_html::wrap_preformatted_html("Portfolio Patrol", &summary)
             );
+        }
+        OutputFormat::Sarif => {
+            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
         }
     }
     if portfolio.succeeded_count < portfolio.total_applications {
@@ -1383,6 +1426,9 @@ async fn run_verify(
                 )
             );
         }
+        OutputFormat::Sarif => {
+            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+        }
     }
 
     if matches!(current.http, CollectorOutcome::Failed { .. }) {
@@ -1462,6 +1508,9 @@ async fn run_investigate(
                 "{}",
                 netzzwergenwacht::report_html::wrap_preformatted_html("Investigation Report", &md)
             );
+        }
+        OutputFormat::Sarif => {
+            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
         }
     }
     match report.state {
@@ -1728,6 +1777,13 @@ fn emit_audit_output(
         OutputFormat::Html => {
             let html = netzzwergenwacht::report_html::render_audit_html(report, assessment);
             match write_output_or_stdout(output, &html) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            }
+        }
+        OutputFormat::Sarif => {
+            let sarif = netzzwergenwacht::report_sarif::render_audit_sarif(report);
+            match write_output_or_stdout(output, &sarif) {
                 Ok(()) => code,
                 Err(err_code) => err_code,
             }
@@ -2007,6 +2063,10 @@ fn render_batch_report(
             );
             code
         }
+        OutputFormat::Sarif => {
+            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
+            code
+        }
     }
 }
 
@@ -2061,6 +2121,10 @@ fn run_diff(baseline_path: &Path, current_path: &Path, format: OutputFormat) -> 
                 "{}",
                 netzzwergenwacht::report_html::wrap_preformatted_html("Regression Diff", &summary)
             );
+            code
+        }
+        OutputFormat::Sarif => {
+            println!("{}", netzzwergenwacht::report_sarif::empty_sarif());
             code
         }
     }
