@@ -1247,6 +1247,7 @@ mod tests {
                 ),
             ],
             analysis_totals: Vec::new(),
+            page_diagnostics: Vec::new(),
         }
     }
 

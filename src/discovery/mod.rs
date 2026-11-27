@@ -28,8 +28,8 @@ use crate::analysis::{AuditReport, header_value};
 use crate::brigade::DwarfId;
 use crate::collection;
 use crate::domain::{
-    AnalyserResult, AuditTarget, CollectorOutcome, Confidence, ExecutionBudget, Origin, RuleId,
-    Severity, TargetPolicy,
+    AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, Confidence, EvidenceRef,
+    ExecutionBudget, Origin, RuleId, Severity, TargetPolicy,
 };
 
 /// Severity assumed for systemic clusters deserialised from reports that predate attribution.
@@ -165,8 +165,129 @@ pub struct DwarfAnalysisTotal {
     pub dwarf_id: DwarfId,
     /// Checks the specialist evaluated across every analysed page.
     pub checks_evaluated: usize,
+    /// Checks that produced a passing verdict.
+    pub checks_passed: usize,
+    /// Checks that produced a failing verdict.
+    pub checks_failed: usize,
+    /// Checks deliberately not evaluated on some page.
+    pub checks_skipped: usize,
+    /// Checks that could not be evaluated for lack of evidence.
+    pub checks_unavailable: usize,
     /// Findings the specialist raised across every analysed page.
     pub findings_count: usize,
+}
+
+/// One deterministic finding retained from a page analysis.
+///
+/// The finding is retained verbatim (including its [`EvidenceRef`]s) rather than reduced to a
+/// count, because a finding without its evidence cannot be inspected or defended later.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageFinding {
+    /// Stable rule identifier.
+    pub rule_id: RuleId,
+    /// Specialist that produced the finding.
+    pub dwarf_id: DwarfId,
+    /// Impact severity reported by the rule.
+    pub severity: Severity,
+    /// Confidence reported by the rule.
+    pub confidence: Confidence,
+    /// Concise human-readable title.
+    pub title: String,
+    /// Explanation grounded in the observed evidence.
+    pub summary: String,
+    /// Optional remediation guidance from the rule.
+    pub remediation: Option<String>,
+    /// References into the captured evidence for the page that produced the finding.
+    pub evidence_refs: Vec<EvidenceRef>,
+}
+
+/// Deterministic diagnostics retained for one crawled page.
+///
+/// Retained so the workbench and later queries can inspect what was actually decided about a page,
+/// including the observed HTTP status, the rule verdicts and every finding with its evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PageDiagnostics {
+    /// Page URL.
+    pub url: String,
+    /// HTTP status actually observed for the page, absent when no response was received.
+    pub http_status: Option<u16>,
+    /// Page category inferred during acquisition.
+    pub page_type: PageType,
+    /// Acquisition outcome for the page.
+    pub status: PageCrawlStatus,
+    /// Checks that produced a passing verdict.
+    pub checks_passed: usize,
+    /// Checks that produced a failing verdict.
+    pub checks_failed: usize,
+    /// Checks deliberately not evaluated.
+    pub checks_skipped: usize,
+    /// Checks that could not be evaluated for lack of evidence.
+    pub checks_unavailable: usize,
+    /// Findings raised for this page.
+    pub findings: Vec<PageFinding>,
+}
+
+impl PageDiagnostics {
+    /// Projects one page's analyser output into retained diagnostics.
+    ///
+    /// `http_status` is absent when the page produced no response; it is never defaulted to a
+    /// plausible value. A page with no analyser output keeps zeroed verdict counts, which is an
+    /// observation about the analysis, not about the page.
+    #[must_use]
+    pub fn from_report(
+        url: &str,
+        http_status: Option<u16>,
+        page_type: PageType,
+        status: PageCrawlStatus,
+        report: Option<&AuditReport>,
+    ) -> Self {
+        let mut diagnostics = Self {
+            url: url.to_owned(),
+            http_status,
+            page_type,
+            status,
+            checks_passed: 0,
+            checks_failed: 0,
+            checks_skipped: 0,
+            checks_unavailable: 0,
+            findings: Vec::new(),
+        };
+        let Some(report) = report else {
+            return diagnostics;
+        };
+        for analyser in &report.analysers {
+            for check in &analyser.checks {
+                match check {
+                    CheckStatus::Passed { .. } => {
+                        diagnostics.checks_passed = diagnostics.checks_passed.saturating_add(1);
+                    }
+                    CheckStatus::Failed { .. } => {
+                        diagnostics.checks_failed = diagnostics.checks_failed.saturating_add(1);
+                    }
+                    CheckStatus::Skipped { .. } => {
+                        diagnostics.checks_skipped = diagnostics.checks_skipped.saturating_add(1);
+                    }
+                    CheckStatus::Unavailable { .. } => {
+                        diagnostics.checks_unavailable =
+                            diagnostics.checks_unavailable.saturating_add(1);
+                    }
+                }
+            }
+            for finding in &analyser.findings {
+                diagnostics.findings.push(PageFinding {
+                    rule_id: finding.rule_id.clone(),
+                    dwarf_id: analyser.dwarf_id,
+                    severity: finding.severity,
+                    confidence: finding.confidence,
+                    title: finding.title.clone(),
+                    summary: finding.summary.clone(),
+                    remediation: finding.remediation.clone(),
+                    evidence_refs: finding.evidence_refs.clone(),
+                });
+            }
+        }
+        diagnostics
+    }
 }
 
 /// Explicit acquisition accounting for one crawl.
@@ -276,6 +397,9 @@ pub struct CrawlSummary {
     /// Per-specialist totals accumulated before the page reports were released.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub analysis_totals: Vec<DwarfAnalysisTotal>,
+    /// Per-page deterministic diagnostics, sorted by URL.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub page_diagnostics: Vec<PageDiagnostics>,
 }
 
 /// Extracts normalised, deduplicated, same-origin [`AuditTarget`] links from `obs`.
@@ -653,10 +777,22 @@ pub fn aggregate_analysis_totals(
                 .or_insert(DwarfAnalysisTotal {
                     dwarf_id: analyser.dwarf_id,
                     checks_evaluated: 0,
+                    checks_passed: 0,
+                    checks_failed: 0,
+                    checks_skipped: 0,
+                    checks_unavailable: 0,
                     findings_count: 0,
                 });
             entry.checks_evaluated += analyser.checks.len();
             entry.findings_count += analyser.findings.len();
+            for check in &analyser.checks {
+                match check {
+                    CheckStatus::Passed { .. } => entry.checks_passed += 1,
+                    CheckStatus::Failed { .. } => entry.checks_failed += 1,
+                    CheckStatus::Skipped { .. } => entry.checks_skipped += 1,
+                    CheckStatus::Unavailable { .. } => entry.checks_unavailable += 1,
+                }
+            }
         }
     }
     totals.into_values().collect()

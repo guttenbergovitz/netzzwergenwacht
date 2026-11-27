@@ -78,6 +78,7 @@ fn taskfile_exposes_the_documented_tasks() {
         "install:",
         "uninstall:",
         "test:browser:",
+        "test:tui:",
         "test:integration:",
         "test:crawler:",
         "test:store:",

@@ -683,8 +683,8 @@ pub struct TargetSurfaceRow {
     pub state: TargetInspectionState,
     /// Available evidence levels summary (`Source`, `Source + Rendered`, etc.).
     pub evidence_summary: String,
-    /// Number of findings associated with this page.
-    pub findings_count: usize,
+    /// Findings observed for this page, absent when the page was never analysed.
+    pub findings_count: Option<usize>,
 }
 
 /// Sort order for the `4:Findings` table.
@@ -1492,7 +1492,7 @@ impl AppState {
                 } else {
                     String::from("Source (Level 1)")
                 },
-                findings_count: self.findings.len(),
+                findings_count: Some(self.findings.len()),
             });
         }
 
@@ -1519,7 +1519,7 @@ impl AppState {
                     http_status: None,
                     state,
                     evidence_summary: String::from("Source (Level 1)"),
-                    findings_count: 0,
+                    findings_count: None,
                 }
             })
             .collect();
@@ -1528,10 +1528,10 @@ impl AppState {
 
     /// Projects a reconnaissance crawl into the brigade and findings surfaces.
     ///
-    /// A crawl analyses every acquired page but keeps only aggregates, so the workbench can
-    /// show which specialist evaluated what and which rules recurred across the surface.
-    /// Systemic clusters are recurrence evidence, not proven shared causes; their severity and
-    /// owning dwarf come from the findings that produced them.
+    /// The crawl retains diagnostics per page, so the workbench can show exactly which rules
+    /// fired on which page and with which evidence references. Brigade rows receive the verdict
+    /// breakdown, because "0/900 checks" previously meant the counts were never carried across
+    /// rather than that nothing was evaluated.
     fn populate_findings_from_crawl(&mut self, crawl: &crate::discovery::CrawlSummary) {
         for total in &crawl.analysis_totals {
             if let Some(row) = self
@@ -1540,6 +1540,10 @@ impl AppState {
                 .find(|row| row.dwarf_id == total.dwarf_id)
             {
                 row.checks_total = total.checks_evaluated;
+                row.checks_passed = total.checks_passed;
+                row.checks_failed = total.checks_failed;
+                row.checks_skipped = total.checks_skipped;
+                row.checks_inconclusive = total.checks_unavailable;
                 row.findings_count = total.findings_count;
                 row.status = if total.checks_evaluated == 0 {
                     OperationalStatus::Skipped
@@ -1547,44 +1551,97 @@ impl AppState {
                     OperationalStatus::Done
                 };
                 row.current_activity = format!(
-                    "Evaluated {} checks across the crawled surface ({} findings)",
-                    total.checks_evaluated, total.findings_count
+                    "{} passed, {} failed, {} skipped, {} unevaluable across the crawled surface",
+                    total.checks_passed,
+                    total.checks_failed,
+                    total.checks_skipped,
+                    total.checks_unavailable
                 );
             }
         }
 
         let mut rows = Vec::new();
-        for issue in &crawl.systemic_issues {
-            let index = rows.len();
-            let affected = issue.affected_urls.len();
-            rows.push(FindingRow {
-                index,
-                dwarf_id: issue.dwarf_id,
-                rule_id: sanitize_line(&issue.rule_id.0, 80),
-                severity: issue.severity,
-                confidence: issue.recurrence_confidence,
-                evidence_level: EvidenceLevel::Source,
-                target_url: sanitize_url_for_display(
-                    issue.affected_urls.first().map_or("", String::as_str),
-                    120,
-                ),
-                title: sanitize_line(
-                    &format!("{} recurs on {affected} page(s)", issue.rule_id.0),
-                    120,
-                ),
-                description: sanitize_multiline(&issue.summary, 360),
-                recommendation: String::from(
-                    "Correct the shared template or component rather than each affected page.",
-                ),
-                evidence_refs: Vec::new(),
-                primary_evidence_category: EvidenceCategory::Http,
-            });
+        for page in &crawl.page_diagnostics {
+            for finding in &page.findings {
+                let index = rows.len();
+                let category = finding
+                    .evidence_refs
+                    .first()
+                    .map_or(EvidenceCategory::Http, |reference| {
+                        evidence_category_for(reference.source, &reference.detail)
+                    });
+                rows.push(FindingRow {
+                    index,
+                    dwarf_id: finding.dwarf_id,
+                    rule_id: sanitize_line(&finding.rule_id.0, 80),
+                    severity: finding.severity,
+                    confidence: finding.confidence,
+                    evidence_level: EvidenceLevel::Source,
+                    target_url: sanitize_url_for_display(&page.url, 120),
+                    title: sanitize_line(&finding.title, 120),
+                    description: sanitize_multiline(&finding.summary, 360),
+                    recommendation: sanitize_multiline(
+                        finding
+                            .remediation
+                            .as_deref()
+                            .unwrap_or("No specific remediation guidance."),
+                        360,
+                    ),
+                    evidence_refs: finding
+                        .evidence_refs
+                        .iter()
+                        .map(|reference| EvidenceRef {
+                            source: reference.source,
+                            detail: sanitize_line(&reference.detail, 140),
+                        })
+                        .collect(),
+                    primary_evidence_category: category,
+                });
+            }
         }
+
+        // A crawl that retained no page diagnostics still knows which rules recurred, so the
+        // clusters remain visible rather than the view falling empty.
+        if rows.is_empty() {
+            for issue in &crawl.systemic_issues {
+                let index = rows.len();
+                let affected = issue.affected_urls.len();
+                rows.push(FindingRow {
+                    index,
+                    dwarf_id: issue.dwarf_id,
+                    rule_id: sanitize_line(&issue.rule_id.0, 80),
+                    severity: issue.severity,
+                    confidence: issue.recurrence_confidence,
+                    evidence_level: EvidenceLevel::Source,
+                    target_url: sanitize_url_for_display(
+                        issue.affected_urls.first().map_or("", String::as_str),
+                        120,
+                    ),
+                    title: sanitize_line(
+                        &format!("{} recurs on {affected} page(s)", issue.rule_id.0),
+                        120,
+                    ),
+                    description: sanitize_multiline(&issue.summary, 360),
+                    recommendation: String::from(
+                        "Correct the shared template or component rather than each affected page.",
+                    ),
+                    evidence_refs: Vec::new(),
+                    primary_evidence_category: EvidenceCategory::Http,
+                });
+            }
+        }
+
         self.findings = rows;
         self.refresh_visible_findings();
     }
 
     fn populate_targets_from_crawl(&mut self, crawl: &crate::discovery::CrawlSummary) {
+        let diagnostics: std::collections::HashMap<&str, &crate::discovery::PageDiagnostics> =
+            crawl
+                .page_diagnostics
+                .iter()
+                .map(|page| (page.url.as_str(), page))
+                .collect();
         let mut rows = Vec::new();
         for page in &crawl.pages {
             let (state, summary) = match page.status {
@@ -1605,15 +1662,16 @@ impl AppState {
                     String::from("Acquisition failed"),
                 ),
             };
+            let observed = diagnostics.get(page.url.as_str());
             rows.push(TargetSurfaceRow {
                 display_url: sanitize_url_for_display(page.url.as_str(), 100),
                 discovery_source: String::from("crawl"),
                 depth: page.depth,
                 page_type: format!("{:?}", page.page_type),
-                http_status: None,
+                http_status: observed.and_then(|page| page.http_status),
                 state,
                 evidence_summary: summary,
-                findings_count: 0,
+                findings_count: observed.map(|page| page.findings.len()),
             });
         }
         if !rows.is_empty() {
@@ -1633,7 +1691,7 @@ impl AppState {
                 http_status: None,
                 state: TargetInspectionState::Completed,
                 evidence_summary: String::from("Patrol sample"),
-                findings_count: 0,
+                findings_count: None,
             });
         }
         for reused in &patrol.sampling_plan.reused_urls {
@@ -1645,7 +1703,7 @@ impl AppState {
                 http_status: Some(304),
                 state: TargetInspectionState::ReusedUnchanged,
                 evidence_summary: String::from("Conditional HTTP verified"),
-                findings_count: 0,
+                findings_count: None,
             });
         }
         if !rows.is_empty() {
@@ -1833,80 +1891,78 @@ fn outcome_summary<T>(outcome: &CollectorOutcome<T>) -> String {
     }
 }
 
+fn evidence_category_for(source: EvidenceSource, detail: &str) -> EvidenceCategory {
+    match source {
+        EvidenceSource::HttpStatus
+        | EvidenceSource::HttpFinalUrl
+        | EvidenceSource::HttpRedirectChain
+        | EvidenceSource::HttpHeaders
+        | EvidenceSource::HttpTiming
+        | EvidenceSource::HttpBody => EvidenceCategory::Http,
+        EvidenceSource::TlsCertificate => EvidenceCategory::Tls,
+        EvidenceSource::BrowserRuntime | EvidenceSource::VisualLayout => {
+            if detail.starts_with("rendered-block") {
+                EvidenceCategory::RenderedContent
+            } else if detail.starts_with("source-vs-rendered") {
+                EvidenceCategory::SourceRenderedDiff
+            } else if detail.starts_with("timeline-event") {
+                EvidenceCategory::BrowserTimeline
+            } else if detail.starts_with("interactive-element")
+                || detail.starts_with("application-state")
+                || detail.starts_with("interaction-step")
+            {
+                EvidenceCategory::InteractiveAndState
+            } else if detail.starts_with("geometry-element") || detail.starts_with("ax-node") {
+                EvidenceCategory::VisualGeometryAndAx
+            } else if detail.starts_with("cookie=")
+                || detail.starts_with("third-party-origin=")
+                || detail.starts_with("security-posture")
+                || detail.starts_with("security-challenge")
+            {
+                EvidenceCategory::SecurityAndPrivacy
+            } else if detail.starts_with("performance-attribution")
+                || detail.starts_with("media-asset")
+                || detail.starts_with("font-asset")
+            {
+                EvidenceCategory::PerformanceAndMedia
+            } else if detail.starts_with("indexability-authority")
+                || detail.starts_with("structured-entity")
+            {
+                EvidenceCategory::SeoAndStructuredData
+            } else if detail.starts_with("responsive-anomaly") || detail.starts_with("link-graph") {
+                EvidenceCategory::ResponsiveAndLinks
+            } else if detail.starts_with("visual-artifacts")
+                || detail.starts_with("service-worker")
+                || detail.starts_with("tls-caa")
+            {
+                EvidenceCategory::VisualSwAndTlsCaa
+            } else if detail.contains("console") || detail.contains("runtime") {
+                EvidenceCategory::RuntimeErrors
+            } else if detail.contains("ax") || detail.contains("focus") {
+                EvidenceCategory::Accessibility
+            } else if detail.contains("lcp") || detail.contains("cls") || detail.contains("cpu") {
+                EvidenceCategory::Performance
+            } else {
+                EvidenceCategory::NetworkResources
+            }
+        }
+        EvidenceSource::AxeReport => EvidenceCategory::Axe,
+        EvidenceSource::LighthouseReport => EvidenceCategory::Lighthouse,
+    }
+}
+
 fn finding_to_row(
     index: usize,
     dwarf_id: DwarfId,
     target_url: &str,
     finding: &Finding,
 ) -> FindingRow {
-    let primary_evidence_category =
-        finding
-            .evidence_refs
-            .first()
-            .map_or(EvidenceCategory::Http, |e| match e.source {
-                EvidenceSource::HttpStatus
-                | EvidenceSource::HttpFinalUrl
-                | EvidenceSource::HttpRedirectChain
-                | EvidenceSource::HttpHeaders
-                | EvidenceSource::HttpTiming
-                | EvidenceSource::HttpBody => EvidenceCategory::Http,
-                EvidenceSource::TlsCertificate => EvidenceCategory::Tls,
-                EvidenceSource::BrowserRuntime | EvidenceSource::VisualLayout => {
-                    if e.detail.starts_with("rendered-block") {
-                        EvidenceCategory::RenderedContent
-                    } else if e.detail.starts_with("source-vs-rendered") {
-                        EvidenceCategory::SourceRenderedDiff
-                    } else if e.detail.starts_with("timeline-event") {
-                        EvidenceCategory::BrowserTimeline
-                    } else if e.detail.starts_with("interactive-element")
-                        || e.detail.starts_with("application-state")
-                        || e.detail.starts_with("interaction-step")
-                    {
-                        EvidenceCategory::InteractiveAndState
-                    } else if e.detail.starts_with("geometry-element")
-                        || e.detail.starts_with("ax-node")
-                    {
-                        EvidenceCategory::VisualGeometryAndAx
-                    } else if e.detail.starts_with("cookie=")
-                        || e.detail.starts_with("third-party-origin=")
-                        || e.detail.starts_with("security-posture")
-                        || e.detail.starts_with("security-challenge")
-                    {
-                        EvidenceCategory::SecurityAndPrivacy
-                    } else if e.detail.starts_with("performance-attribution")
-                        || e.detail.starts_with("media-asset")
-                        || e.detail.starts_with("font-asset")
-                    {
-                        EvidenceCategory::PerformanceAndMedia
-                    } else if e.detail.starts_with("indexability-authority")
-                        || e.detail.starts_with("structured-entity")
-                    {
-                        EvidenceCategory::SeoAndStructuredData
-                    } else if e.detail.starts_with("responsive-anomaly")
-                        || e.detail.starts_with("link-graph")
-                    {
-                        EvidenceCategory::ResponsiveAndLinks
-                    } else if e.detail.starts_with("visual-artifacts")
-                        || e.detail.starts_with("service-worker")
-                        || e.detail.starts_with("tls-caa")
-                    {
-                        EvidenceCategory::VisualSwAndTlsCaa
-                    } else if e.detail.contains("console") || e.detail.contains("runtime") {
-                        EvidenceCategory::RuntimeErrors
-                    } else if e.detail.contains("ax") || e.detail.contains("focus") {
-                        EvidenceCategory::Accessibility
-                    } else if e.detail.contains("lcp")
-                        || e.detail.contains("cls")
-                        || e.detail.contains("cpu")
-                    {
-                        EvidenceCategory::Performance
-                    } else {
-                        EvidenceCategory::NetworkResources
-                    }
-                }
-                EvidenceSource::AxeReport => EvidenceCategory::Axe,
-                EvidenceSource::LighthouseReport => EvidenceCategory::Lighthouse,
-            });
+    let primary_evidence_category = finding
+        .evidence_refs
+        .first()
+        .map_or(EvidenceCategory::Http, |reference| {
+            evidence_category_for(reference.source, &reference.detail)
+        });
 
     let sanitized_refs = finding
         .evidence_refs
@@ -1960,9 +2016,10 @@ pub fn format_rendered_diff_summary(diff: Option<&RenderedTextDiff>) -> String {
 mod tests {
     use super::*;
     use crate::discovery::{
-        CrawlCoverage, CrawlSummary, DwarfAnalysisTotal, SystemicClassification, SystemicIssue,
+        CrawlCoverage, CrawlSummary, DiscoveredPage, DwarfAnalysisTotal, PageCrawlStatus,
+        PageDiagnostics, PageFinding, PageType, SystemicClassification, SystemicIssue,
     };
-    use crate::domain::{AuditTarget, Severity};
+    use crate::domain::{AuditTarget, Confidence, EvidenceRef, EvidenceSource, RuleId, Severity};
 
     fn issue(severity: Severity, dwarf_id: DwarfId) -> SystemicIssue {
         SystemicIssue {
@@ -1980,6 +2037,98 @@ mod tests {
             severity,
             dwarf_id,
         }
+    }
+
+    #[test]
+    fn a_crawl_exposes_per_page_findings_and_target_observations() {
+        let target =
+            AuditTarget::parse("https://example.org/a", TargetPolicy::PublicOnly).expect("target");
+        let mut state = AppState::default();
+        let artefacts = DiagnosticArtefacts {
+            target: String::from("https://example.org/"),
+            mode: crate::events::DiagnosticRunMode::ReconnaissanceCrawl,
+            snapshot: None,
+            audit_report: None,
+            investigation_report: None,
+            patrol_report: None,
+            crawl_summary: Some(CrawlSummary {
+                seed: target.clone(),
+                pages: vec![DiscoveredPage {
+                    url: target.clone(),
+                    page_type: PageType::Article,
+                    depth: 0,
+                    status: PageCrawlStatus::Investigated,
+                }],
+                systemic_issues: Vec::new(),
+                budget_exhausted: false,
+                graph_results: Vec::new(),
+                coverage: CrawlCoverage::default(),
+                resources: Vec::new(),
+                page_resources: Vec::new(),
+                analysis_totals: vec![DwarfAnalysisTotal {
+                    dwarf_id: DwarfId::Netz,
+                    checks_evaluated: 10,
+                    checks_passed: 7,
+                    checks_failed: 1,
+                    checks_skipped: 2,
+                    checks_unavailable: 0,
+                    findings_count: 1,
+                }],
+                page_diagnostics: vec![PageDiagnostics {
+                    url: String::from("https://example.org/a"),
+                    http_status: Some(404),
+                    page_type: PageType::Article,
+                    status: PageCrawlStatus::Investigated,
+                    checks_passed: 7,
+                    checks_failed: 1,
+                    checks_skipped: 2,
+                    checks_unavailable: 0,
+                    findings: vec![PageFinding {
+                        rule_id: RuleId("netz.http.status_error".to_owned()),
+                        dwarf_id: DwarfId::Netz,
+                        severity: Severity::High,
+                        confidence: Confidence::High,
+                        title: String::from("HTTP 404"),
+                        summary: String::from("The page returned 404 Not Found."),
+                        remediation: Some(String::from("Publish the page or remove the link.")),
+                        evidence_refs: vec![EvidenceRef {
+                            source: EvidenceSource::HttpStatus,
+                            detail: String::from("status=404"),
+                        }],
+                    }],
+                }],
+            }),
+            history_reports: Vec::new(),
+            regression_report: None,
+            elapsed_ms: 500,
+        };
+
+        state.ingest_artefacts(artefacts);
+
+        assert_eq!(state.findings.len(), 1, "one page finding becomes one row");
+        let finding = &state.findings[0];
+        assert_eq!(finding.rule_id, "netz.http.status_error");
+        assert_eq!(
+            finding.evidence_refs.len(),
+            1,
+            "the finding keeps the evidence it was raised from"
+        );
+        assert_eq!(finding.evidence_refs[0].detail, "status=404");
+
+        let row = state.target_rows.first().expect("target row");
+        assert_eq!(row.http_status, Some(404), "the observed status is shown");
+        assert_eq!(row.findings_count, Some(1), "the page finding is counted");
+
+        let brigade = state
+            .brigade_rows
+            .iter()
+            .find(|row| row.dwarf_id == DwarfId::Netz)
+            .expect("network row");
+        assert_eq!(brigade.checks_total, 10);
+        assert_eq!(brigade.checks_passed, 7);
+        assert_eq!(brigade.checks_failed, 1);
+        assert_eq!(brigade.checks_skipped, 2);
+        assert_eq!(brigade.checks_inconclusive, 0);
     }
 
     #[test]
@@ -2006,8 +2155,13 @@ mod tests {
                 analysis_totals: vec![DwarfAnalysisTotal {
                     dwarf_id: DwarfId::Sicherheits,
                     checks_evaluated: 12,
+                    checks_passed: 9,
+                    checks_failed: 2,
+                    checks_skipped: 1,
+                    checks_unavailable: 0,
                     findings_count: 1,
                 }],
+                page_diagnostics: Vec::new(),
             }),
             history_reports: Vec::new(),
             regression_report: None,

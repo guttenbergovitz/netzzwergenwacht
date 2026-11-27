@@ -41,6 +41,8 @@ struct PageOutcome {
     links: Vec<AuditTarget>,
     graph_input: Option<GraphPageInput>,
     report: Option<AuditReport>,
+    /// HTTP status observed for the page, absent when no response was received.
+    http_status: Option<u16>,
     /// Same-origin subresources referenced by the captured document.
     resources: Vec<ResourceRef>,
     /// Cross-origin subresource references observed but not acquired.
@@ -118,6 +120,12 @@ async fn acquire_page(
         ..exec_budget
     };
     let snapshot = collection::collect_http_cached(&target, &per_page_budget, policy, &cache).await;
+    let http_status = match &snapshot.http {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+            Some(data.status_code)
+        }
+        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => None,
+    };
 
     let (status, page_type, links, graph_input, report, resources, external_resources) =
         match &snapshot.http {
@@ -194,6 +202,7 @@ async fn acquire_page(
         links,
         graph_input,
         report,
+        http_status,
         resources,
         external_resources,
     }
@@ -333,6 +342,7 @@ pub(super) async fn crawl_concurrently(
 
     let mut pages: Vec<DiscoveredPage> = Vec::new();
     let mut page_reports = Vec::new();
+    let mut page_diagnostics: Vec<super::PageDiagnostics> = Vec::new();
     let mut graph_inputs = Vec::new();
     let mut in_flight: JoinSet<PageOutcome> = JoinSet::new();
     let mut per_origin_in_flight: HashMap<String, usize> = HashMap::new();
@@ -454,6 +464,13 @@ pub(super) async fn crawl_concurrently(
         if let Some(input) = outcome.graph_input {
             graph_inputs.push(input);
         }
+        page_diagnostics.push(super::PageDiagnostics::from_report(
+            outcome.target.as_str(),
+            outcome.http_status,
+            outcome.page_type,
+            outcome.status,
+            outcome.report.as_ref(),
+        ));
         if let Some(report) = outcome.report {
             page_reports.push((outcome.target.clone(), outcome.page_type, report));
         }
@@ -592,6 +609,7 @@ pub(super) async fn crawl_concurrently(
     page_resources.sort();
     page_resources.dedup();
 
+    page_diagnostics.sort_by(|left, right| left.url.cmp(&right.url));
     let systemic_issues = cluster_systemic_issues(&page_reports);
     let analysis_totals = aggregate_analysis_totals(&page_reports);
     let graph = ApplicationGraph::from_pages(&graph_inputs, complete);
@@ -607,6 +625,7 @@ pub(super) async fn crawl_concurrently(
         resources: resource_observations,
         page_resources,
         analysis_totals,
+        page_diagnostics,
     }
 }
 

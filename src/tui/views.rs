@@ -700,7 +700,8 @@ fn render_targets(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 http,
                 row.depth.to_string(),
                 fit_tail(&row.display_url, url_width),
-                row.findings_count.to_string(),
+                row.findings_count
+                    .map_or_else(|| String::from("—"), |n| n.to_string()),
             ])
             .style(style)
         })
@@ -746,7 +747,12 @@ fn render_targets(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 Line::from(format!(" Depth:     {}", selected.depth)),
                 Line::from(format!(" Page Type: {}", selected.page_type)),
                 Line::from(format!(" Evidence:  {}", selected.evidence_summary)),
-                Line::from(format!(" Findings:  {}", selected.findings_count)),
+                Line::from(format!(
+                    " Findings:  {}",
+                    selected
+                        .findings_count
+                        .map_or_else(|| String::from("Not analysed"), |n| n.to_string())
+                )),
             ]
         } else {
             vec![Line::from(Span::styled(
@@ -2990,7 +2996,7 @@ mod navigation_tests {
             http_status: Some(200),
             state: TargetInspectionState::Completed,
             evidence_summary: String::from("Source"),
-            findings_count: 0,
+            findings_count: None,
         }
     }
 

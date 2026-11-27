@@ -866,7 +866,7 @@ fn reduce_diagnostic_event(state: &mut AppState, event: DiagnosticEvent) {
                     http_status: None,
                     state: insp_state,
                     evidence_summary: String::from("Pending"),
-                    findings_count: 0,
+                    findings_count: None,
                 });
             }
             state.push_activity(&format!("Target {display_url} ({status})"));

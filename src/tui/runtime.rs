@@ -1083,7 +1083,7 @@ async fn store_crawl_evidence(
     application: &str,
     crawl: &crate::discovery::CrawlSummary,
     sink: &DiagnosticEventSink,
-) {
+) -> Result<(), String> {
     let record = crate::evidence_store::CrawlRecord {
         run_id,
         application,
@@ -1099,17 +1099,30 @@ async fn store_crawl_evidence(
         }
     })
     .await;
-    if let Err(err) = stored {
-        sink.emit(
-            EventContext::new().with_target(application),
-            DiagnosticEventPayload::Warning {
-                message: format!(
-                    "reconnaissance evidence not stored at {}: {err}",
-                    store_path.display()
-                ),
-            },
-        );
+    match stored {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let message = format!(
+                "reconnaissance evidence not stored at {}: {err}",
+                store_path.display()
+            );
+            sink.emit(
+                EventContext::new().with_target(application),
+                DiagnosticEventPayload::Warning {
+                    message: message.clone(),
+                },
+            );
+            Err(message)
+        }
     }
+}
+
+/// Identifies one reconnaissance run by wall-clock instant, so two runs cannot collide.
+fn crawl_run_id() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    format!("tui-scan-{}-{:09}", now.as_secs(), now.subsec_nanos())
 }
 
 /// Everything a reconnaissance crawl needs, bundled so the run signature stays readable.
@@ -1189,24 +1202,23 @@ async fn run_reconnaissance_crawl(
     emit_crawl_completion(&target_str, &crawl, sink);
 
     let store_path = evidence_dir.join("evidence.db");
-    let run_id = format!(
-        "tui-scan-{}",
-        u64::try_from(start.elapsed().as_millis()).unwrap_or(0)
-    );
-    store_crawl_evidence(&store_path, &run_id, &target_str, &crawl, sink).await;
+    let run_id = crawl_run_id();
+    let stored = store_crawl_evidence(&store_path, &run_id, &target_str, &crawl, sink).await;
 
     let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-    sink.emit(
-        EventContext::new().with_target(&target_str),
-        DiagnosticEventPayload::RunCompleted {
-            summary: format!(
-                "Reconnaissance crawl analysed {} of {} discovered URLs, {} systemic clusters, in {elapsed_ms} ms",
-                crawl.coverage.analysed_urls,
-                crawl.coverage.discovered_urls,
-                crawl.systemic_issues.len()
-            ),
-        },
+    let summary = format!(
+        "Reconnaissance crawl analysed {} of {} discovered URLs, {} systemic clusters, in {elapsed_ms} ms",
+        crawl.coverage.analysed_urls,
+        crawl.coverage.discovered_urls,
+        crawl.systemic_issues.len()
     );
+    let completion = match &stored {
+        Ok(()) => DiagnosticEventPayload::RunCompleted { summary },
+        Err(error) => DiagnosticEventPayload::RunPartiallyCompleted {
+            reason: format!("{summary}, but the evidence was not retained: {error}"),
+        },
+    };
+    sink.emit(EventContext::new().with_target(&target_str), completion);
 
     Ok(DiagnosticArtefacts {
         target: target_str,

@@ -2196,6 +2196,7 @@ mod tests {
                     resources: Vec::new(),
                     page_resources: Vec::new(),
                     analysis_totals: Vec::new(),
+                    page_diagnostics: Vec::new(),
                 }
             })
         }
@@ -2653,6 +2654,7 @@ mod tests {
                     resources: Vec::new(),
                     page_resources: Vec::new(),
                     analysis_totals: Vec::new(),
+                    page_diagnostics: Vec::new(),
                 }
             })
         }

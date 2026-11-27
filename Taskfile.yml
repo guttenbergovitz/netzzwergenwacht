@@ -102,6 +102,12 @@ tasks:
     cmds:
       - cargo test --all-targets --locked
 
+  test:tui:
+    desc: Run the Zwergenleitstand rendering, navigation and crawl-projection tests
+    cmds:
+      - "cargo test --locked --lib tui::"
+      - "cargo test --locked --test zwergenleitstand_tui"
+
   test:integration:
     desc: Run the integration suites only
     cmds:
