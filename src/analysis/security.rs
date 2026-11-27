@@ -52,6 +52,7 @@ const RULE_COOKIE_INVALID_DOMAIN: &str = "sec.cookies.invalid_domain_scope";
 const RULE_COOKIE_INSECURE_SAMESITE: &str = "sec.cookies.insecure_samesite_none";
 const RULE_COOKIE_INCONSISTENT_ATTRS: &str = "sec.cookies.inconsistent_attributes";
 const RULE_PERSISTENT_IDENTIFIERS: &str = "sec.privacy.persistent_identifiers";
+const RULE_LOCALHOST_LEAK: &str = "sec.deploy.localhost_leak";
 
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
@@ -95,6 +96,7 @@ const ALL_RULES: &[&str] = &[
     RULE_COOKIE_INSECURE_SAMESITE,
     RULE_COOKIE_INCONSISTENT_ATTRS,
     RULE_PERSISTENT_IDENTIFIERS,
+    RULE_LOCALHOST_LEAK,
 ];
 
 const VALID_REFERRER_POLICIES: &[&str] = &[
@@ -166,6 +168,7 @@ pub fn analyse_with_document(
         check_cross_origin_forms(http, doc, &mut findings, &mut checks);
         check_sensitive_get_forms(doc, &mut findings, &mut checks);
         check_csp_form_action(http, doc, &mut findings, &mut checks);
+        check_localhost_leaks(http, doc, &mut findings, &mut checks);
     } else {
         for rule in [
             RULE_MIXED_CONTENT,
@@ -176,6 +179,7 @@ pub fn analyse_with_document(
             RULE_FORM_CROSS_ORIGIN,
             RULE_SENSITIVE_GET_FORM,
             RULE_CSP_FORM_ACTION,
+            RULE_LOCALHOST_LEAK,
         ] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
@@ -2296,6 +2300,111 @@ fn check_sensitive_get_forms(
     }
 }
 
+fn is_local_or_dev_host(host: &str) -> bool {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    h == "localhost"
+        || h == "127.0.0.1"
+        || h == "0.0.0.0"
+        || h == "::1"
+        || h == "[::1]"
+        || h.rsplit_once('.')
+            .is_some_and(|(_, tld)| tld == "local" || tld == "localhost")
+}
+
+fn check_localhost_leaks(
+    http: &HttpEvidence,
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let page_host = url::Url::parse(&http.final_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_owned));
+    if page_host.as_deref().is_some_and(is_local_or_dev_host) {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_LOCALHOST_LEAK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "target host itself is a local or development host".to_owned(),
+        });
+        return;
+    }
+
+    let mut leaks = Vec::new();
+    let mut inspect = |kind: &str, raw: &str| {
+        if leaks.len() >= 10 {
+            return;
+        }
+        if let Ok(parsed) = url::Url::parse(raw.trim())
+            && let Some(host) = parsed.host_str()
+            && is_local_or_dev_host(host)
+        {
+            leaks.push(format!("{kind}: {}", parsed.as_str()));
+        }
+    };
+
+    for script in &obs.scripts {
+        if let Some(src) = &script.src {
+            inspect("script", src);
+        }
+    }
+    for sheet in &obs.stylesheets {
+        inspect("stylesheet", &sheet.href);
+    }
+    for img in &obs.images {
+        if let Some(src) = &img.src {
+            inspect("image", src);
+        }
+    }
+    for form in &obs.forms {
+        if let Some(action) = &form.action {
+            inspect("form", action);
+        }
+    }
+    for link in &obs.links {
+        inspect("link", &link.href);
+    }
+
+    if leaks.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_LOCALHOST_LEAK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    } else {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_LOCALHOST_LEAK.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_LOCALHOST_LEAK.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!(
+                "Local/development URLs leaked into public HTML ({})",
+                leaks.len()
+            ),
+            summary: format!(
+                "Public page `{}` references {} local/development endpoint(s) (for example `{}`), indicating a misconfigured build or deployment base URL.",
+                http.final_url,
+                leaks.len(),
+                leaks[0]
+            ),
+            evidence_refs: leaks
+                .iter()
+                .take(4)
+                .map(|entry| EvidenceRef::new(EvidenceSource::HttpBody, entry.clone()))
+                .collect(),
+            remediation: Some(
+                "Replace `localhost`, `127.0.0.1`, and `.local` URLs with production origins or relative paths in build-time environment variables."
+                    .to_owned(),
+            ),
+        });
+    }
+}
+
 fn check_privacy_browser_signals(
     browser: &CollectorOutcome<crate::domain::BrowserEvidence>,
     findings: &mut Vec<Finding>,
@@ -3107,5 +3216,41 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_REJECT_INEFFECTIVE)
         );
+    }
+
+    #[test]
+    fn flags_localhost_leaks_on_public_target_and_skips_on_local_target() {
+        let mut snap = snapshot_with_headers("https://example.com/", Vec::new());
+        let html = r#"<!doctype html><html><body>
+            <script src="http://localhost:3000/bundle.js"></script>
+            <a href="http://127.0.0.1:8080/admin">Admin</a>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_text = html.to_owned();
+            data.body_bytes = html.len();
+        }
+        let result = analyse_with_document(&snap, Some(&obs));
+        assert!(
+            result
+                .findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_LOCALHOST_LEAK)
+        );
+
+        let local_target =
+            AuditTarget::parse("http://127.0.0.1:8080/", TargetPolicy::AllowPrivate).unwrap();
+        let mut local_snap = EvidenceSnapshot {
+            target: local_target,
+            ..snap
+        };
+        if let CollectorOutcome::Captured { data } = &mut local_snap.http {
+            data.final_url = "http://127.0.0.1:8080/".to_owned();
+        }
+        let local_res = analyse_with_document(&local_snap, Some(&obs));
+        assert!(local_res.checks.iter().any(|c| matches!(
+            c,
+            CheckStatus::Skipped { rule_id, .. } if rule_id.0 == RULE_LOCALHOST_LEAK
+        )));
     }
 }
