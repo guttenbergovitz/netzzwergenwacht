@@ -968,8 +968,10 @@ const fn status_label(status: crate::discovery::PageCrawlStatus) -> &'static str
     match status {
         PageCrawlStatus::Investigated => "investigated",
         PageCrawlStatus::PartiallyInvestigated => "partial",
-        PageCrawlStatus::SkippedBudget => "skipped",
+        PageCrawlStatus::ReusedEvidence => "reused",
+        PageCrawlStatus::SkippedBudget | PageCrawlStatus::Excluded => "skipped",
         PageCrawlStatus::Unreachable => "failed",
+        PageCrawlStatus::Unknown => "unknown",
     }
 }
 

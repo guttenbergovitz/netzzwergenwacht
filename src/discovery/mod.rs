@@ -74,10 +74,16 @@ pub enum PageCrawlStatus {
     Investigated,
     /// Page was fetched with partial/truncated evidence.
     PartiallyInvestigated,
+    /// Page was not re-fetched because fresh prior evidence was reused.
+    ReusedEvidence,
     /// Page was discovered but skipped due to [`CrawlBudget`].
     SkippedBudget,
+    /// Page was excluded by origin robots rules or scope policy.
+    Excluded,
     /// Page failed collection or was unreachable.
     Unreachable,
+    /// Page was discovered but its inspection outcome is not yet determined.
+    Unknown,
 }
 
 /// Record of a discovered URL and its crawl outcome.
@@ -315,6 +321,12 @@ pub struct CrawlCoverage {
     /// These URLs were discovered but never fetched. They are counted separately from budget
     /// skips because the reason for exclusion is the origin's policy, not our budget.
     pub robots_blocked_urls: usize,
+    /// URLs whose prior evidence was reused without re-fetching.
+    #[serde(default)]
+    pub reused_evidence_urls: usize,
+    /// URLs discovered whose final outcome remains unknown.
+    #[serde(default)]
+    pub unknown_urls: usize,
     /// How the robots exclusion file was obtained for the seed origin.
     pub robots: RobotsOutcome,
     /// Link discoveries rejected because the bounded frontier was full.

@@ -41,6 +41,12 @@ pub enum UserAction {
     CycleSort,
     /// Cycle severity filter in Findings view.
     CycleSeverityFilter,
+    /// Cycle specialist/dwarf filter in Findings view.
+    CycleSpecialistFilter,
+    /// Scroll the finding details pane down.
+    ScrollDetailDown,
+    /// Scroll the finding details pane up.
+    ScrollDetailUp,
     /// Select an evidence category directly.
     SelectEvidenceCategory(EvidenceCategory),
     /// Open the Launcher modal to configure or start a new run.

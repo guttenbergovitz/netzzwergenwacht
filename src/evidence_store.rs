@@ -1483,8 +1483,11 @@ const fn page_status_label(status: PageCrawlStatus) -> &'static str {
     match status {
         PageCrawlStatus::Investigated => "investigated",
         PageCrawlStatus::PartiallyInvestigated => "partially_investigated",
+        PageCrawlStatus::ReusedEvidence => "reused_evidence",
         PageCrawlStatus::SkippedBudget => "skipped_budget",
+        PageCrawlStatus::Excluded => "excluded",
         PageCrawlStatus::Unreachable => "unreachable",
+        PageCrawlStatus::Unknown => "unknown",
     }
 }
 
@@ -1492,8 +1495,11 @@ fn page_status_from_label(label: &str) -> Option<PageCrawlStatus> {
     match label {
         "investigated" => Some(PageCrawlStatus::Investigated),
         "partially_investigated" => Some(PageCrawlStatus::PartiallyInvestigated),
+        "reused_evidence" => Some(PageCrawlStatus::ReusedEvidence),
         "skipped_budget" => Some(PageCrawlStatus::SkippedBudget),
+        "excluded" => Some(PageCrawlStatus::Excluded),
         "unreachable" => Some(PageCrawlStatus::Unreachable),
+        "unknown" => Some(PageCrawlStatus::Unknown),
         _ => None,
     }
 }
@@ -1587,6 +1593,8 @@ mod tests {
             skipped_budget_urls: 1,
             cancelled_urls: 0,
             robots_blocked_urls: 1,
+            reused_evidence_urls: 0,
+            unknown_urls: 0,
             robots: RobotsOutcome::Observed,
             queue_rejections: 3,
             duplicate_offers: 5,

@@ -259,15 +259,28 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         .map(|b| b.checks_skipped + b.checks_inconclusive)
         .sum();
 
+    let (verdict_badge, verdict_detail) = state.quality_verdict_summary();
+    let verdict_style = match verdict_badge {
+        "FAIL" => state.theme.severity_style(Severity::Critical),
+        "INSUFF" => state.theme.severity_style(Severity::Medium),
+        "PASS" => state
+            .theme
+            .status_style(crate::tui::theme::OperationalStatus::Done),
+        _ => state.theme.muted_style(),
+    };
+
     let surface_lines = vec![
+        Line::from(vec![
+            Span::raw(" Verdict: "),
+            Span::styled(format!(" {verdict_badge} "), verdict_style),
+            Span::raw(format!(" {}", sanitize_line(&verdict_detail, 44))),
+        ]),
         Line::from(format!(
             " Pages discovered: {discovered:<6}  Inspected: {inspected}"
         )),
         Line::from(format!(
-            " Queued:           {queued:<6}  Failed:    {failed}"
+            " Queued:           {queued:<6}  Failed:    {failed}  Deferred: {skipped}"
         )),
-        Line::from(format!(" Budget-deferred:  {skipped}")),
-        Line::from(""),
         Line::from(format!(
             " Checks evaluated: {total_checks} ({unverified_checks} unverified/skipped)"
         )),
@@ -395,6 +408,41 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
             ),
             Span::styled(sanitize_line(detail, 28), state.theme.muted_style()),
         ]));
+    }
+    if let Some(report) = &state.audit_report {
+        let assessment = crate::analysis::assessment::assess_audit_report(report);
+        right_lines.push(Line::from(""));
+        right_lines.push(Line::from(Span::styled(
+            " Quality Domains:",
+            state.theme.title_style(),
+        )));
+        for chunk in assessment.domains.chunks(2) {
+            let mut spans = Vec::new();
+            for dom in chunk {
+                let badge = dom.verdict.badge();
+                let style = match dom.verdict {
+                    crate::analysis::assessment::DomainVerdict::Fail => {
+                        state.theme.severity_style(Severity::Critical)
+                    }
+                    crate::analysis::assessment::DomainVerdict::InsufficientEvidence => {
+                        state.theme.severity_style(Severity::Medium)
+                    }
+                    crate::analysis::assessment::DomainVerdict::Pass => state
+                        .theme
+                        .status_style(crate::tui::theme::OperationalStatus::Done),
+                    crate::analysis::assessment::DomainVerdict::NotApplicable
+                    | crate::analysis::assessment::DomainVerdict::Waived => {
+                        state.theme.muted_style()
+                    }
+                };
+                spans.push(Span::raw(format!(
+                    " {:<18} ",
+                    sanitize_line(dom.domain.label(), 18)
+                )));
+                spans.push(Span::styled(format!("{badge:<6} "), style));
+            }
+            right_lines.push(Line::from(spans));
+        }
     }
     if !state.hypotheses.is_empty() {
         right_lines.push(Line::from(""));
@@ -831,11 +879,12 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         .collect();
 
     let title = format!(
-        " FINDINGS ({}/{} | Sort: {} | Filter: {}) ",
+        " FINDINGS ({}/{} | Sort: {} | Sev: {} | Who: {}) ",
         total_visible,
         state.findings.len(),
         state.finding_sort.label(),
-        state.finding_filter.severity_label()
+        state.finding_filter.severity_label(),
+        state.finding_filter.dwarf_label(),
     );
     let table = Table::new(
         rows,
@@ -910,12 +959,13 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     };
 
     let detail_block = Block::default()
-        .title(" FINDING DETAILS ")
+        .title(" FINDING DETAILS ([ / ] scroll) ")
         .borders(Borders::ALL)
         .border_style(state.theme.border_style(false));
     frame.render_widget(
         Paragraph::new(detail_lines)
             .block(detail_block)
+            .scroll((state.finding_detail_scroll, 0))
             .wrap(Wrap { trim: false }),
         cols[1],
     );
@@ -2913,6 +2963,8 @@ fn render_help_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from("  /              Focus live search & filter bar in Findings"),
         Line::from("  s              Cycle Findings sort order"),
         Line::from("  v              Cycle Findings minimum severity filter"),
+        Line::from("  d              Cycle Findings specialist (dwarf) filter"),
+        Line::from("  [ / ]          Scroll Finding Details pane up / down"),
         Line::from("  n              Open Launcher to configure or start a new run"),
         Line::from("  w              Save current AuditReport to JSON"),
         Line::from("  t / a          Cycle theme (Dark/Contrast/Mono) / Toggle ASCII"),

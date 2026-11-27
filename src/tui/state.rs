@@ -759,6 +759,27 @@ impl FindingFilterState {
             Some(Severity::Info) => "Info+",
         }
     }
+
+    /// Cycles the specialist filter (`All` -> each specialist in `ZWERGENBRIGADE` -> `All`).
+    pub fn cycle_dwarf(&mut self) {
+        let brigade = crate::brigade::ZWERGENBRIGADE;
+        self.dwarf = match self.dwarf {
+            None => brigade.first().map(|p| p.id),
+            Some(current) => {
+                let pos = brigade.iter().position(|p| p.id == current);
+                pos.and_then(|i| brigade.get(i + 1).map(|p| p.id))
+            }
+        };
+    }
+
+    /// Human-readable specialist filter label.
+    #[must_use]
+    pub fn dwarf_label(&self) -> &'static str {
+        match self.dwarf {
+            None => "All Dwarves",
+            Some(d) => d.display_name(),
+        }
+    }
 }
 
 /// Sanitized, display-ready finding record in `4:Findings`.
@@ -1007,6 +1028,8 @@ pub struct AppState {
     pub visible_finding_indices: Vec<usize>,
     /// Selected position inside `visible_finding_indices`.
     pub selected_finding_pos: usize,
+    /// Vertical scroll offset for the `FINDING DETAILS` pane.
+    pub finding_detail_scroll: u16,
     /// Active finding filter criteria.
     pub finding_filter: FindingFilterState,
     /// Active finding sort order.
@@ -1103,6 +1126,7 @@ impl AppState {
             findings: Vec::new(),
             visible_finding_indices: Vec::new(),
             selected_finding_pos: 0,
+            finding_detail_scroll: 0,
             finding_filter: FindingFilterState::default(),
             finding_sort: FindingSortOrder::SeverityDesc,
             evidence_category: EvidenceCategory::Http,
@@ -1247,7 +1271,57 @@ impl AppState {
             self.selected_finding_pos = pos;
         } else if self.selected_finding_pos >= self.visible_finding_indices.len() {
             self.selected_finding_pos = self.visible_finding_indices.len().saturating_sub(1);
+            self.finding_detail_scroll = 0;
         }
+    }
+
+    /// Computes a concise, honest quality verdict and rationale for `1:Overview`.
+    #[must_use]
+    pub fn quality_verdict_summary(&self) -> (&'static str, String) {
+        if let Some(report) = &self.audit_report {
+            let assessment = crate::analysis::assessment::assess_audit_report(report);
+            let detail = if !assessment.blockers.is_empty() {
+                assessment.blockers.join("; ")
+            } else if !assessment.limitations.is_empty() {
+                assessment.limitations[0].clone()
+            } else {
+                "Evaluated checks within scope passed.".to_owned()
+            };
+            return (assessment.overall_verdict.badge(), detail);
+        }
+
+        if self.findings.is_empty() && self.target_rows.is_empty() {
+            return ("NOT RUN", "No inspection has been executed yet.".to_owned());
+        }
+
+        let crit_high = self
+            .findings
+            .iter()
+            .filter(|f| f.severity >= Severity::High)
+            .count();
+        if crit_high > 0 {
+            return (
+                "FAIL",
+                format!("{crit_high} critical/high finding(s) observed within scope."),
+            );
+        }
+
+        let unverified: usize = self
+            .brigade_rows
+            .iter()
+            .map(|b| b.checks_skipped + b.checks_inconclusive)
+            .sum();
+        if unverified > 0 {
+            return (
+                "INSUFF",
+                format!("{unverified} check(s) skipped/inconclusive; cannot assert pass."),
+            );
+        }
+
+        (
+            "PASS",
+            "No blocking findings within inspected scope.".to_owned(),
+        )
     }
 
     /// Returns the currently selected [`FindingRow`], if any.
@@ -1508,8 +1582,12 @@ impl AppState {
                 let state = match p.status {
                     PageCrawlStatus::Investigated => TargetInspectionState::Completed,
                     PageCrawlStatus::PartiallyInvestigated => TargetInspectionState::Partial,
-                    PageCrawlStatus::SkippedBudget => TargetInspectionState::SkippedBudget,
+                    PageCrawlStatus::ReusedEvidence => TargetInspectionState::ReusedUnchanged,
+                    PageCrawlStatus::SkippedBudget | PageCrawlStatus::Excluded => {
+                        TargetInspectionState::SkippedBudget
+                    }
                     PageCrawlStatus::Unreachable => TargetInspectionState::Failed,
+                    PageCrawlStatus::Unknown => TargetInspectionState::Queued,
                 };
                 TargetSurfaceRow {
                     display_url: sanitize_url_for_display(p.url.as_str(), 100),
@@ -1653,13 +1731,25 @@ impl AppState {
                     TargetInspectionState::Partial,
                     String::from("Fetched with truncated evidence"),
                 ),
+                PageCrawlStatus::ReusedEvidence => (
+                    TargetInspectionState::ReusedUnchanged,
+                    String::from("Reused prior fresh evidence"),
+                ),
                 PageCrawlStatus::SkippedBudget => (
                     TargetInspectionState::SkippedBudget,
                     String::from("Discovered but not acquired within budget"),
                 ),
+                PageCrawlStatus::Excluded => (
+                    TargetInspectionState::SkippedBudget,
+                    String::from("Excluded by robots or scope policy"),
+                ),
                 PageCrawlStatus::Unreachable => (
                     TargetInspectionState::Failed,
                     String::from("Acquisition failed"),
+                ),
+                PageCrawlStatus::Unknown => (
+                    TargetInspectionState::Queued,
+                    String::from("Discovered; outcome unknown"),
                 ),
             };
             let observed = diagnostics.get(page.url.as_str());

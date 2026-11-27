@@ -597,6 +597,11 @@ pub(super) async fn crawl_concurrently(
         skipped_budget_urls,
         cancelled_urls: cancelled,
         robots_blocked_urls: robots_blocked,
+        reused_evidence_urls: 0,
+        unknown_urls: pages
+            .iter()
+            .filter(|page| page.status == PageCrawlStatus::Unknown)
+            .count(),
         robots: robots_outcome,
         queue_rejections: frontier.queue_full_count(),
         duplicate_offers: frontier.duplicate_count(),

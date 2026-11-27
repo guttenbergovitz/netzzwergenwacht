@@ -220,11 +220,32 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
         UserAction::CycleSeverityFilter => {
             state.finding_filter.cycle_severity();
             state.refresh_visible_findings();
+            state.finding_detail_scroll = 0;
             state.status_message = format!(
                 "Severity filter: {} ({} visible)",
                 state.finding_filter.severity_label(),
                 state.visible_finding_indices.len()
             );
+        }
+        UserAction::CycleSpecialistFilter => {
+            state.finding_filter.cycle_dwarf();
+            state.refresh_visible_findings();
+            state.finding_detail_scroll = 0;
+            state.status_message = format!(
+                "Specialist filter: {} ({} visible)",
+                state.finding_filter.dwarf_label(),
+                state.visible_finding_indices.len()
+            );
+        }
+        UserAction::ScrollDetailDown => {
+            if state.active_view == WorkbenchView::Findings {
+                state.finding_detail_scroll = state.finding_detail_scroll.saturating_add(3);
+            }
+        }
+        UserAction::ScrollDetailUp => {
+            if state.active_view == WorkbenchView::Findings {
+                state.finding_detail_scroll = state.finding_detail_scroll.saturating_sub(3);
+            }
         }
         UserAction::SelectEvidenceCategory(cat) => {
             state.active_view = WorkbenchView::Evidence;
@@ -656,11 +677,15 @@ fn move_selection(state: &mut AppState, delta: isize) {
                 step_index(state.selected_target_index, state.target_rows.len(), delta);
         }
         WorkbenchView::Findings => {
+            let prev = state.selected_finding_pos;
             state.selected_finding_pos = step_index(
                 state.selected_finding_pos,
                 state.visible_finding_indices.len(),
                 delta,
             );
+            if state.selected_finding_pos != prev {
+                state.finding_detail_scroll = 0;
+            }
         }
         WorkbenchView::Evidence => {
             if delta.abs() >= 16 {
@@ -717,11 +742,15 @@ fn move_to_edge(state: &mut AppState, last: bool) {
             };
         }
         WorkbenchView::Findings => {
+            let prev = state.selected_finding_pos;
             state.selected_finding_pos = if last {
                 state.visible_finding_indices.len().saturating_sub(1)
             } else {
                 0
             };
+            if state.selected_finding_pos != prev {
+                state.finding_detail_scroll = 0;
+            }
         }
         WorkbenchView::Evidence => {
             if !last {
@@ -1354,5 +1383,30 @@ mod tests {
 
         assert_eq!(state.launcher.connection, ConnectionOutcome::NotTested);
         assert_eq!(state.launcher.discovered_models.len(), 0);
+    }
+
+    #[test]
+    fn specialist_filter_and_detail_scroll_work_in_findings_view() {
+        let mut state = AppState {
+            active_view: WorkbenchView::Findings,
+            launcher: crate::tui::state::LauncherState {
+                open: false,
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+
+        let _ = reduce(&mut state, AppAction::User(UserAction::ScrollDetailDown));
+        assert_eq!(state.finding_detail_scroll, 3);
+        let _ = reduce(&mut state, AppAction::User(UserAction::ScrollDetailUp));
+        assert_eq!(state.finding_detail_scroll, 0);
+
+        assert!(state.finding_filter.dwarf.is_none());
+        let _ = reduce(
+            &mut state,
+            AppAction::User(UserAction::CycleSpecialistFilter),
+        );
+        assert!(state.finding_filter.dwarf.is_some());
+        assert_eq!(state.finding_detail_scroll, 0);
     }
 }
