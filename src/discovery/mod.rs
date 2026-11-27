@@ -181,6 +181,40 @@ pub struct CrawlCoverage {
     pub resources: ResourceCoverage,
 }
 
+/// Progress notification emitted while a concurrent crawl is still running.
+///
+/// These are operational events, not evidence: they help an operator see that acquisition
+/// is advancing and how far it has reached. Every count they carry is a count of work
+/// already completed, so a progress report can never claim more than the crawl has done.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CrawlProgressEvent {
+    /// A URL was admitted to the frontier.
+    Discovered {
+        /// Normalised URL.
+        url: String,
+        /// Link depth from the seed.
+        depth: usize,
+        /// How the URL was found.
+        source: DiscoverySource,
+    },
+    /// A page finished acquisition and analysis.
+    PageCompleted {
+        /// Normalised URL.
+        url: String,
+        /// Final crawl status for this page.
+        status: PageCrawlStatus,
+        /// Pages that have reached a final status so far.
+        completed_pages: usize,
+        /// Of those, pages whose HTML was analysed.
+        analysed_pages: usize,
+        /// Of those, pages that could not be acquired.
+        failed_pages: usize,
+    },
+}
+
+/// Callback receiving [`CrawlProgressEvent`]s while a crawl is in flight.
+pub type CrawlObserver<'a> = &'a (dyn Fn(CrawlProgressEvent) + Send + Sync);
+
 /// Output of a bounded multi-page crawl and systemic clustering run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrawlSummary {
@@ -558,7 +592,22 @@ pub async fn crawl_and_cluster(
     exec_budget: ExecutionBudget,
     policy: TargetPolicy,
 ) -> CrawlSummary {
-    crawl::crawl_concurrently(seed, crawl_budget, exec_budget, policy).await
+    crawl_and_cluster_with_progress(seed, crawl_budget, exec_budget, policy, &|_event| {}).await
+}
+
+/// Performs a bounded crawl while reporting acquisition progress to `observer`.
+///
+/// The observer is called from the scheduler as pages are admitted and completed, so a caller
+/// can surface live progress instead of waiting for the final [`CrawlSummary`]. Observer work
+/// must be cheap: it runs between acquisitions, not concurrently with them.
+pub async fn crawl_and_cluster_with_progress(
+    seed: AuditTarget,
+    crawl_budget: CrawlBudget,
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+    observer: CrawlObserver<'_>,
+) -> CrawlSummary {
+    crawl::crawl_concurrently(seed, crawl_budget, exec_budget, policy, observer).await
 }
 
 pub(crate) fn build_captured_graph_input(

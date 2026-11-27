@@ -54,6 +54,21 @@ impl DiscoverySource {
             Self::PreviousRun => 4,
         }
     }
+
+    /// Stable lower-case label for display and event payloads.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Seed => "seed",
+            Self::Sitemap => "sitemap",
+            Self::RobotsSitemap => "robots_sitemap",
+            Self::Link => "link",
+            Self::Canonical => "canonical",
+            Self::Hreflang => "hreflang",
+            Self::Pagination => "pagination",
+            Self::PreviousRun => "previous_run",
+        }
+    }
 }
 
 /// A URL waiting to be acquired.

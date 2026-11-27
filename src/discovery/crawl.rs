@@ -293,6 +293,7 @@ pub(super) async fn crawl_concurrently(
     crawl_budget: CrawlBudget,
     exec_budget: ExecutionBudget,
     policy: TargetPolicy,
+    observer: super::CrawlObserver<'_>,
 ) -> CrawlSummary {
     let started = Instant::now();
     let global_limit = exec_budget.max_concurrency.max(1);
@@ -309,10 +310,23 @@ pub(super) async fn crawl_concurrently(
     let cache = Arc::new(collection::CrawlHttpCache::new(global_limit.max(2)));
 
     let _ = frontier.enqueue(seed.clone(), 0, DiscoverySource::Seed);
+    observer(super::CrawlProgressEvent::Discovered {
+        url: seed.as_str().to_owned(),
+        depth: 0,
+        source: DiscoverySource::Seed,
+    });
     if crawl_budget.max_depth > 0 && crawl_budget.max_pages > 1 {
         for url in seed_sitemap_urls(&seed, exec_budget, policy).await {
             sitemap_urls.insert(url.as_str().to_owned());
-            let _ = frontier.enqueue(url, 1, DiscoverySource::Sitemap);
+            if frontier.enqueue(url.clone(), 1, DiscoverySource::Sitemap)
+                == EnqueueOutcome::Enqueued
+            {
+                observer(super::CrawlProgressEvent::Discovered {
+                    url: url.as_str().to_owned(),
+                    depth: 1,
+                    source: DiscoverySource::Sitemap,
+                });
+            }
         }
     }
 
@@ -323,6 +337,8 @@ pub(super) async fn crawl_concurrently(
     let mut per_origin_in_flight: HashMap<String, usize> = HashMap::new();
     let mut pending: Vec<super::frontier::FrontierEntry> = Vec::new();
     let mut fetched = 0usize;
+    let mut analysed_pages = 0usize;
+    let mut failed_pages = 0usize;
     let mut cancelled = 0usize;
     let mut robots_blocked = 0usize;
     let mut resource_refs: HashMap<String, ResourceRef> = HashMap::new();
@@ -410,9 +426,16 @@ pub(super) async fn crawl_concurrently(
         }
 
         for link in outcome.links {
-            match frontier.enqueue(link, outcome.depth + 1, DiscoverySource::Link) {
+            match frontier.enqueue(link.clone(), outcome.depth + 1, DiscoverySource::Link) {
                 EnqueueOutcome::QueueFull => budget_exhausted = true,
-                EnqueueOutcome::Enqueued | EnqueueOutcome::Duplicate => {}
+                EnqueueOutcome::Enqueued => {
+                    observer(super::CrawlProgressEvent::Discovered {
+                        url: link.as_str().to_owned(),
+                        depth: outcome.depth + 1,
+                        source: DiscoverySource::Link,
+                    });
+                }
+                EnqueueOutcome::Duplicate => {}
             }
         }
 
@@ -433,11 +456,28 @@ pub(super) async fn crawl_concurrently(
         if let Some(report) = outcome.report {
             page_reports.push((outcome.target.clone(), outcome.page_type, report));
         }
+        let completed_url = outcome.target.as_str().to_owned();
+        let completed_status = outcome.status;
+        if matches!(
+            completed_status,
+            PageCrawlStatus::Investigated | PageCrawlStatus::PartiallyInvestigated
+        ) {
+            analysed_pages = analysed_pages.saturating_add(1);
+        } else if completed_status == PageCrawlStatus::Unreachable {
+            failed_pages = failed_pages.saturating_add(1);
+        }
         pages.push(DiscoveredPage {
             url: outcome.target,
             page_type: outcome.page_type,
             depth: outcome.depth,
-            status: outcome.status,
+            status: completed_status,
+        });
+        observer(super::CrawlProgressEvent::PageCompleted {
+            url: completed_url,
+            status: completed_status,
+            completed_pages: pages.len(),
+            analysed_pages,
+            failed_pages,
         });
     }
 
@@ -705,6 +745,7 @@ mod tests {
                 ..ExecutionBudget::default()
             },
             TargetPolicy::AllowPrivate,
+            &|_event| {},
         )
         .await;
 
@@ -746,6 +787,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn progress_observer_reports_discovery_and_completion_while_crawling() {
+        use std::sync::Mutex;
+
+        let fixture = spawn_fixture().await;
+        let seed = AuditTarget::parse(
+            &format!("http://{}/", fixture.addr),
+            TargetPolicy::AllowPrivate,
+        )
+        .unwrap();
+        let events = Mutex::new(Vec::new());
+        let summary = crawl_concurrently(
+            seed,
+            CrawlBudget {
+                max_pages: 8,
+                max_depth: 1,
+                max_duration: Duration::from_secs(20),
+            },
+            ExecutionBudget {
+                max_concurrency: 4,
+                ..ExecutionBudget::default()
+            },
+            TargetPolicy::AllowPrivate,
+            &|event| {
+                if let Ok(mut seen) = events.lock() {
+                    seen.push(event);
+                }
+            },
+        )
+        .await;
+
+        let observed = events.into_inner().unwrap_or_default();
+        let discovered = observed
+            .iter()
+            .filter(|event| matches!(event, super::super::CrawlProgressEvent::Discovered { .. }))
+            .count();
+        let completed: Vec<(usize, usize)> = observed
+            .iter()
+            .filter_map(|event| match event {
+                super::super::CrawlProgressEvent::PageCompleted {
+                    completed_pages,
+                    analysed_pages,
+                    ..
+                } => Some((*completed_pages, *analysed_pages)),
+                super::super::CrawlProgressEvent::Discovered { .. } => None,
+            })
+            .collect();
+
+        assert_eq!(
+            discovered, summary.coverage.discovered_urls,
+            "every discovered URL is reported once"
+        );
+        assert_eq!(
+            completed.len(),
+            summary.pages.len(),
+            "every page that reached a final status is reported"
+        );
+        assert_eq!(
+            completed.iter().map(|(done, _)| *done).max(),
+            Some(summary.pages.len()),
+            "the last report accounts for the whole population"
+        );
+        assert!(
+            completed.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "completed counts advance monotonically"
+        );
+    }
+
+    #[tokio::test]
     async fn shared_resources_are_acquired_once_and_reported() {
         let fixture = spawn_fixture().await;
         let seed = AuditTarget::parse(
@@ -765,6 +874,7 @@ mod tests {
                 ..ExecutionBudget::default()
             },
             TargetPolicy::AllowPrivate,
+            &|_event| {},
         )
         .await;
 
@@ -845,6 +955,7 @@ mod tests {
                 ..ExecutionBudget::default()
             },
             TargetPolicy::AllowPrivate,
+            &|_event| {},
         )
         .await;
 

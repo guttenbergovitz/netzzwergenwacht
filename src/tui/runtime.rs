@@ -808,10 +808,16 @@ pub async fn execute_diagnostic_run_cancellable(
             })
         }
         DiagnosticRunMode::ReconnaissanceCrawl => {
-            Box::pin(run_reconnaissance_crawl(
-                target, target_str, spec, policy, budget, start, &cancel, &sink,
-            ))
-            .await
+            let request = CrawlRequest {
+                target,
+                target_str,
+                max_pages: spec.max_pages,
+                max_depth: spec.max_depth,
+                evidence_dir: spec.evidence_dir.clone(),
+                policy,
+                budget,
+            };
+            Box::pin(run_reconnaissance_crawl(request, start, &cancel, &sink)).await
         }
         DiagnosticRunMode::AgenticInvestigation => {
             if *cancel.borrow() {
@@ -956,16 +962,149 @@ pub async fn execute_diagnostic_run_cancellable(
 /// Kept in its own future so the crawl and evidence-store state do not inflate the
 /// top-level run future; the caller boxes it for the same reason.
 #[allow(clippy::too_many_arguments)]
-async fn run_reconnaissance_crawl(
+/// Lower-case crawl status label understood by the workbench reducer.
+const fn status_label(status: crate::discovery::PageCrawlStatus) -> &'static str {
+    use crate::discovery::PageCrawlStatus;
+    match status {
+        PageCrawlStatus::Investigated => "investigated",
+        PageCrawlStatus::PartiallyInvestigated => "partial",
+        PageCrawlStatus::SkippedBudget => "skipped",
+        PageCrawlStatus::Unreachable => "failed",
+    }
+}
+
+/// Runs the crawl while translating scheduler progress into workbench events.
+///
+/// The observer runs between acquisitions, so it reports work already done rather than
+/// an estimate of what is left: the discovery collector row shows completed pages against
+/// the configured bound, and each newly admitted URL appears in the target surface as queued.
+async fn crawl_with_progress(
     target: AuditTarget,
-    target_str: String,
-    spec: RunLaunchSpec,
-    policy: TargetPolicy,
+    target_str: &str,
+    crawl_budget: crate::discovery::CrawlBudget,
     budget: ExecutionBudget,
+    policy: TargetPolicy,
+    max_pages: usize,
+    sink: &DiagnosticEventSink,
+) -> crate::discovery::CrawlSummary {
+    let observer = |event: crate::discovery::CrawlProgressEvent| match event {
+        crate::discovery::CrawlProgressEvent::Discovered { url, depth, source } => {
+            sink.emit(
+                EventContext::new()
+                    .with_target(target_str)
+                    .with_collector(CollectorId::Discovery)
+                    .with_page(&url),
+                DiagnosticEventPayload::TargetDiscovered {
+                    url,
+                    depth,
+                    source: source.label().to_owned(),
+                    status: String::from("queued"),
+                },
+            );
+        }
+        crate::discovery::CrawlProgressEvent::PageCompleted {
+            url,
+            status,
+            completed_pages,
+            analysed_pages,
+            failed_pages,
+        } => {
+            sink.emit(
+                EventContext::new()
+                    .with_target(target_str)
+                    .with_collector(CollectorId::Discovery)
+                    .with_page(&url),
+                DiagnosticEventPayload::CollectionProgress {
+                    collector: CollectorId::Discovery,
+                    completed_units: completed_pages,
+                    total_units: Some(max_pages),
+                    detail: format!(
+                        "analysed {analysed_pages} · failed {failed_pages} · {} · {url}",
+                        status_label(status)
+                    ),
+                },
+            );
+        }
+    };
+    crate::discovery::crawl_and_cluster_with_progress(
+        target,
+        crawl_budget,
+        budget,
+        policy,
+        &observer,
+    )
+    .await
+}
+
+/// Persists a completed crawl, reporting a failed write instead of hiding it.
+async fn store_crawl_evidence(
+    store_path: &std::path::Path,
+    run_id: &str,
+    application: &str,
+    crawl: &crate::discovery::CrawlSummary,
+    sink: &DiagnosticEventSink,
+) {
+    let record = crate::evidence_store::CrawlRecord {
+        run_id,
+        application,
+        summary: crawl,
+        recorded_at_unix_secs: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs()),
+    };
+    let stored = Box::pin(async {
+        match crate::evidence_store::EvidenceStore::open(store_path).await {
+            Ok(store) => store.record_crawl(record).await,
+            Err(err) => Err(err),
+        }
+    })
+    .await;
+    if let Err(err) = stored {
+        sink.emit(
+            EventContext::new().with_target(application),
+            DiagnosticEventPayload::Warning {
+                message: format!(
+                    "reconnaissance evidence not stored at {}: {err}",
+                    store_path.display()
+                ),
+            },
+        );
+    }
+}
+
+/// Everything a reconnaissance crawl needs, bundled so the run signature stays readable.
+struct CrawlRequest {
+    /// Validated seed target.
+    target: AuditTarget,
+    /// Seed as entered, used for event context and artefact identity.
+    target_str: String,
+    /// Page bound requested by the operator.
+    max_pages: usize,
+    /// Depth bound requested by the operator.
+    max_depth: usize,
+    /// Directory holding the evidence store.
+    evidence_dir: std::path::PathBuf,
+    /// Target validation policy.
+    policy: TargetPolicy,
+    /// Execution budget for the run.
+    budget: ExecutionBudget,
+}
+
+async fn run_reconnaissance_crawl(
+    request: CrawlRequest,
     start: Instant,
     cancel: &watch::Receiver<bool>,
     sink: &DiagnosticEventSink,
 ) -> Result<DiagnosticArtefacts, String> {
+    let CrawlRequest {
+        target,
+        target_str,
+        max_pages,
+        max_depth,
+        evidence_dir,
+        policy,
+        budget,
+    } = request;
     if *cancel.borrow() {
         return Err(String::from("cancelled by operator before crawl"));
     }
@@ -978,11 +1117,20 @@ async fn run_reconnaissance_crawl(
         },
     );
     let crawl_budget = crate::discovery::CrawlBudget {
-        max_pages: spec.max_pages.max(1),
-        max_depth: spec.max_depth,
+        max_pages: max_pages.max(1),
+        max_depth,
         max_duration: budget.audit_timeout,
     };
-    let crawl = crate::discovery::crawl_and_cluster(target, crawl_budget, budget, policy).await;
+    let crawl = crawl_with_progress(
+        target,
+        &target_str,
+        crawl_budget,
+        budget,
+        policy,
+        max_pages.max(1),
+        sink,
+    )
+    .await;
 
     for page in &crawl.pages {
         sink.emit(
@@ -993,55 +1141,30 @@ async fn run_reconnaissance_crawl(
                 url: page.url.as_str().to_owned(),
                 source: String::from("crawl"),
                 depth: page.depth,
-                status: format!("{:?}", page.status),
+                status: status_label(page.status).to_owned(),
             },
         );
     }
 
-    let store_path = spec.evidence_dir.join("evidence.db");
+    let store_path = evidence_dir.join("evidence.db");
     let run_id = format!(
         "tui-scan-{}",
         u64::try_from(start.elapsed().as_millis()).unwrap_or(0)
     );
-    let record = crate::evidence_store::CrawlRecord {
-        run_id: &run_id,
-        application: &target_str,
-        summary: &crawl,
-        recorded_at_unix_secs: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs()),
-    };
-    let stored = Box::pin(async {
-        match crate::evidence_store::EvidenceStore::open(&store_path).await {
-            Ok(store) => store.record_crawl(record).await,
-            Err(err) => Err(err),
-        }
-    })
-    .await;
-    if let Err(err) = stored {
-        sink.emit(
-            EventContext::new().with_target(&target_str),
-            DiagnosticEventPayload::Warning {
-                message: format!(
-                    "reconnaissance evidence not stored at {}: {err}",
-                    store_path.display()
-                ),
-            },
-        );
-    }
+    store_crawl_evidence(&store_path, &run_id, &target_str, &crawl, sink).await;
 
     let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     sink.emit(
-                EventContext::new().with_target(&target_str),
-                DiagnosticEventPayload::RunCompleted {
-                    summary: format!(
-                        "Reconnaissance crawl analysed {} of {} discovered URLs, {} systemic clusters, in {elapsed_ms} ms",
-                        crawl.coverage.analysed_urls,
-                        crawl.coverage.discovered_urls,
-                        crawl.systemic_issues.len()
-                    ),
-                },
-            );
+        EventContext::new().with_target(&target_str),
+        DiagnosticEventPayload::RunCompleted {
+            summary: format!(
+                "Reconnaissance crawl analysed {} of {} discovered URLs, {} systemic clusters, in {elapsed_ms} ms",
+                crawl.coverage.analysed_urls,
+                crawl.coverage.discovered_urls,
+                crawl.systemic_issues.len()
+            ),
+        },
+    );
 
     Ok(DiagnosticArtefacts {
         target: target_str,
