@@ -29,6 +29,7 @@ const RULE_THIRD_PARTY_FAILURES: &str = "browser.network.third_party_failures";
 const RULE_REDIRECTED_SUBRESOURCES: &str = "browser.network.redirected_subresources";
 const RULE_CLIENT_ERROR_FALLBACK: &str = "browser.runtime.client_error_fallback";
 const RULE_STUCK_LOADING_STATE: &str = "browser.runtime.stuck_loading_state";
+const RULE_OCCLUDED_PRIMARY_CONTROLS: &str = "browser.interaction.occluded_primary_controls";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -48,6 +49,7 @@ pub const ALL_RULES: &[&str] = &[
     RULE_REDIRECTED_SUBRESOURCES,
     RULE_CLIENT_ERROR_FALLBACK,
     RULE_STUCK_LOADING_STATE,
+    RULE_OCCLUDED_PRIMARY_CONTROLS,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -91,6 +93,7 @@ pub fn analyse_with_document(
     check_redirected_subresources(browser, &mut findings, &mut checks);
     check_client_error_fallback(browser, &mut findings, &mut checks);
     check_stuck_loading_state(browser, &mut findings, &mut checks);
+    check_occluded_primary_controls(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -985,6 +988,59 @@ fn check_stuck_loading_state(
     }
 }
 
+fn check_occluded_primary_controls(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(occluded) = &browser.occluded_primary_controls else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_OCCLUDED_PRIMARY_CONTROLS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "primary control hit-testing was not collected".to_owned(),
+        });
+        return;
+    };
+
+    if occluded.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_OCCLUDED_PRIMARY_CONTROLS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_OCCLUDED_PRIMARY_CONTROLS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_OCCLUDED_PRIMARY_CONTROLS.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: format!(
+                "Primary interactive controls covered by overlapping elements ({})",
+                occluded.len()
+            ),
+            summary: format!(
+                "Hit-testing (`elementFromPoint`) showed {} primary control(s) inside `<main>`/`<form>` cannot be clicked directly because another element sits over their centre (for example `{}`).",
+                occluded.len(),
+                occluded[0]
+            ),
+            evidence_refs: occluded
+                .iter()
+                .take(4)
+                .map(|entry| EvidenceRef::new(EvidenceSource::BrowserRuntime, entry.clone()))
+                .collect(),
+            remediation: Some(
+                "Adjust sticky headers, cookie overlays, or floating widgets (`z-index`, spacing, or dismiss flow) so primary actions remain clickable.".to_owned(),
+            ),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1224,5 +1280,21 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_CLIENT_ERROR_FALLBACK));
         assert!(ids.contains(&RULE_STUCK_LOADING_STATE));
+    }
+
+    #[test]
+    fn flags_occluded_primary_controls() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                occluded_primary_controls: Some(vec![
+                    "button \"Buy now\" covered by div#promo-overlay".to_owned(),
+                ]),
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_OCCLUDED_PRIMARY_CONTROLS));
     }
 }

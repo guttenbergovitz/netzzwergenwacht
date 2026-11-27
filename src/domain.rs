@@ -1071,6 +1071,9 @@ pub struct BrowserEvidence {
     /// Explicit client-side crash/error-boundary marker observed in rendered text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rendered_error_marker: Option<String>,
+    /// Visible primary interactive controls (`<main>`, `<form>`) covered by another element at their centre.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occluded_primary_controls: Option<Vec<String>>,
     /// Level 2 Accessibility Tree summary (`Accessibility.getFullAXTree`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ax_tree: Option<AccessibilityTreeSummary>,

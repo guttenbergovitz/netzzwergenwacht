@@ -664,3 +664,61 @@ async fn live_browser_detects_client_error_fallback_and_stuck_loading() {
         "expected browser.runtime.stuck_loading_state, got: {rules:?}"
     );
 }
+
+#[ignore = "requires local Chromium/Chrome and Node.js with ws"]
+#[tokio::test]
+async fn live_browser_detects_occluded_primary_cta_button() {
+    use netzzwergenwacht::analysis;
+    use netzzwergenwacht::collection;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let body = r#"<!doctype html><html lang="en"><head><title>CTA Occlusion Test</title></head><body style="margin:0;">
+            <main style="padding:20px;">
+              <h1>Checkout</h1>
+              <button type="button" id="buy-btn" style="width:160px;height:44px;">Buy now</button>
+            </main>
+            <div id="promo-overlay" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:999;"></div>
+        </body></html>"#;
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+
+    let target =
+        AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+    let mut snapshot = collection::collect_http(
+        &target,
+        &netzzwergenwacht::domain::ExecutionBudget::default(),
+        TargetPolicy::AllowPrivate,
+    )
+    .await;
+    snapshot.browser =
+        run_browser_with_policy(&target, Duration::from_secs(30), TargetPolicy::AllowPrivate).await;
+    server.abort();
+
+    let report = analysis::run_all(&snapshot);
+    let rules: Vec<&str> = report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+    assert!(
+        rules.contains(&"browser.interaction.occluded_primary_controls"),
+        "expected browser.interaction.occluded_primary_controls, got: {rules:?}"
+    );
+}

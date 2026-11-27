@@ -279,6 +279,7 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
                 rendered_word_count: Some(500),
                 visible_busy_indicators: None,
                 rendered_error_marker: None,
+                occluded_primary_controls: None,
                 rendered_content: None,
                 ax_tree: None,
                 performance: None,

@@ -555,6 +555,24 @@ function findBrowser() {
         ];
         const lowerText = renderedText.toLowerCase();
         const renderedErrorMarker = crashPhrases.find((phrase) => lowerText.includes(phrase)) || null;
+        const primaryControls = Array.from(
+          document.querySelectorAll('main button, main a[href], form button, form input[type=submit]')
+        ).slice(0, 12);
+        const occludedPrimaryControls = [];
+        for (const el of primaryControls) {
+          const r = el.getBoundingClientRect();
+          const st = getComputedStyle(el);
+          if (r.width < 8 || r.height < 8 || st.display === 'none' || st.visibility === 'hidden') continue;
+          const cx = Math.round(r.left + r.width / 2);
+          const cy = Math.round(r.top + r.height / 2);
+          if (cx < 0 || cy < 0 || cx >= vw || cy >= vh) continue;
+          const hit = document.elementFromPoint(cx, cy);
+          if (hit && !el.contains(hit) && !hit.contains(el)) {
+            const label = (el.textContent || el.value || el.getAttribute('aria-label') || el.tagName).trim().slice(0, 40);
+            const blocker = (hit.tagName || 'el').toLowerCase() + (hit.id ? '#' + hit.id : '');
+            occludedPrimaryControls.push(el.tagName.toLowerCase() + ' [' + label + '] covered by ' + blocker);
+          }
+        }
         const nav = performance.getEntriesByType('navigation')[0];
         const p = window.__nzwPerf || {};
         const pos = (v) => (typeof v === 'number' && v >= 0 ? Math.round(v) : null);
@@ -627,6 +645,7 @@ function findBrowser() {
           rendered_word_count: renderedWords,
           visible_busy_indicators: visibleBusyIndicators,
           rendered_error_marker: renderedErrorMarker,
+          occluded_primary_controls: occludedPrimaryControls,
           csp_violations: Array.isArray(window.__nzwCspViolations) ? window.__nzwCspViolations : [],
           performance: perfObs,
           storage_summary: storageSummary,
@@ -1130,6 +1149,7 @@ function findBrowser() {
       rendered_word_count: typeof domAndImages.rendered_word_count === 'number' ? domAndImages.rendered_word_count : null,
       visible_busy_indicators: typeof domAndImages.visible_busy_indicators === 'number' ? domAndImages.visible_busy_indicators : null,
       rendered_error_marker: typeof domAndImages.rendered_error_marker === 'string' && domAndImages.rendered_error_marker ? domAndImages.rendered_error_marker : null,
+      occluded_primary_controls: Array.isArray(domAndImages.occluded_primary_controls) ? domAndImages.occluded_primary_controls.slice(0, 12) : null,
       ax_tree: axTreeSummary,
       performance: domAndImages.performance || null,
       storage_summary: domAndImages.storage_summary || null,
