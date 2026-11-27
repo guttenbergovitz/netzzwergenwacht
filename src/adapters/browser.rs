@@ -34,21 +34,40 @@ if (!targetUrl) {
   process.exit(2);
 }
 
-const candidates = [
+const explicitCandidates = [
   process.env.NZW_CHROMIUM_BIN,
-  'chromium',
-  'google-chrome',
-  '/opt/homebrew/bin/chromium',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/opt/homebrew/bin/chromium',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/google-chrome',
 ].filter(Boolean);
 
+function findInPath(cmd) {
+  const pathEnv = process.env.PATH || '';
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, cmd);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch (_) {}
+  }
+  return null;
+}
+
 function findBrowser() {
-  for (const bin of candidates) {
+  for (const bin of explicitCandidates) {
     if (bin.includes(path.sep)) {
       if (fs.existsSync(bin)) return bin;
     } else {
-      return bin;
+      const resolved = findInPath(bin);
+      if (resolved) return resolved;
     }
+  }
+  for (const cmd of ['chromium', 'chromium-browser', 'google-chrome']) {
+    const resolved = findInPath(cmd);
+    if (resolved) return resolved;
   }
   return 'chromium';
 }
