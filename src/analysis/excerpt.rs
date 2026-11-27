@@ -2,12 +2,12 @@
 //!
 //! Extracts bounded, single-line source excerpts with 1-based line/column
 //! coordinates and caret underline spans from an [`EvidenceSnapshot`] so TUI
-//! and report views can pinpoint the exact header, HTML element, or selector
-//! behind a finding without holding full page bodies inside findings.
+//! and report views can pinpoint the exact header, HTML element, TLS field,
+//! Lighthouse metric, runtime event, or selector behind a finding.
 
 use crate::domain::{
     AnalyserResult, CollectorOutcome, EvidenceExcerpt, EvidenceRef, EvidenceSnapshot,
-    EvidenceSource, Finding, HttpEvidence,
+    EvidenceSource, Finding, HttpEvidence, Measurement,
 };
 
 const MAX_EXCERPT_CHARS: usize = 120;
@@ -16,24 +16,37 @@ const MAX_HELP_CHARS: usize = 120;
 
 const KNOWN_HEADERS: &[&str] = &[
     "strict-transport-security",
+    "content-security-policy-report-only",
     "content-security-policy",
     "x-frame-options",
     "x-content-type-options",
+    "x-xss-protection",
+    "x-dns-prefetch-control",
+    "x-robots-tag",
+    "x-powered-by",
+    "x-aspnet-version",
     "referrer-policy",
     "permissions-policy",
     "cross-origin-opener-policy",
     "cross-origin-embedder-policy",
     "cross-origin-resource-policy",
+    "access-control-allow-origin",
     "cache-control",
     "content-encoding",
     "content-type",
     "set-cookie",
-    "access-control-allow-origin",
+    "expect-ct",
+    "alt-svc",
+    "last-modified",
+    "expires",
+    "pragma",
     "server",
-    "x-powered-by",
     "location",
     "etag",
     "vary",
+    "age",
+    "via",
+    "link",
 ];
 
 /// Enriches [`EvidenceRef`] entries across `analysers` with bounded source excerpts
@@ -134,12 +147,22 @@ fn build_excerpt_for_ref(
                 help: help.map(str::to_owned),
             })
         }),
+        EvidenceSource::HttpTiming => {
+            http.map(|h| excerpt_from_timing(h, location, &ev.detail, label, help))
+        }
+        EvidenceSource::TlsCertificate => Some(excerpt_from_tls(
+            snapshot, location, rule_id, &ev.detail, label, help,
+        )),
+        EvidenceSource::BrowserRuntime => {
+            excerpt_from_prefixed("Browser runtime: ", location, &ev.detail, label, help)
+        }
+        EvidenceSource::LighthouseReport => Some(excerpt_from_lighthouse(
+            snapshot, location, rule_id, &ev.detail, label, help,
+        )),
         EvidenceSource::AxeReport => excerpt_from_axe(snapshot, location, &ev.detail, label, help),
-        EvidenceSource::HttpTiming
-        | EvidenceSource::TlsCertificate
-        | EvidenceSource::BrowserRuntime
-        | EvidenceSource::LighthouseReport
-        | EvidenceSource::VisualLayout => None,
+        EvidenceSource::VisualLayout => {
+            excerpt_from_prefixed("Visual layout: ", location, &ev.detail, label, help)
+        }
     }
 }
 
@@ -151,44 +174,64 @@ fn excerpt_from_headers(
     label: &str,
     help: Option<&str>,
 ) -> Option<EvidenceExcerpt> {
-    let header_name = detect_header_name(rule_id, detail)?;
-    if let Some(value) = http.first_header_value(header_name) {
-        let prefix = format!("{header_name}: ");
-        let raw_line = format!("{prefix}{value}");
+    if let Some(header_name) = detect_header_name(rule_id, detail) {
+        if let Some(value) = http.first_header_value(header_name) {
+            let prefix = format!("{header_name}: ");
+            let raw_line = format!("{prefix}{value}");
+            let snippet = truncate_chars(&raw_line, MAX_EXCERPT_CHARS);
+            let prefix_chars = prefix.chars().count();
+            let snippet_chars = snippet.chars().count();
+            let highlight_start = prefix_chars.min(snippet_chars);
+            let highlight_len = snippet_chars.saturating_sub(highlight_start).max(1);
+            return Some(EvidenceExcerpt {
+                location: location.to_owned(),
+                line: None,
+                column: None,
+                snippet,
+                highlight_start: Some(highlight_start),
+                highlight_len: Some(highlight_len),
+                label: Some(label.to_owned()),
+                help: help.map(str::to_owned),
+            });
+        }
+
+        let missing_phrase = format!("missing `{header_name}`");
+        let raw_line = format!(
+            "HTTP {} (response headers: {missing_phrase})",
+            http.status_code
+        );
         let snippet = truncate_chars(&raw_line, MAX_EXCERPT_CHARS);
-        let prefix_chars = prefix.chars().count();
-        let snippet_chars = snippet.chars().count();
-        let highlight_start = prefix_chars.min(snippet_chars);
-        let highlight_len = snippet_chars.saturating_sub(highlight_start).max(1);
+        let start = snippet
+            .find(header_name)
+            .map(|b| snippet[..b].chars().count());
+        let len = start.map(|_| header_name.chars().count());
         return Some(EvidenceExcerpt {
             location: location.to_owned(),
             line: None,
             column: None,
             snippet,
-            highlight_start: Some(highlight_start),
-            highlight_len: Some(highlight_len),
+            highlight_start: start,
+            highlight_len: len,
             label: Some(label.to_owned()),
             help: help.map(str::to_owned),
         });
     }
 
-    let missing_phrase = format!("missing `{header_name}`");
-    let raw_line = format!(
-        "HTTP {} (response headers: {missing_phrase})",
-        http.status_code
-    );
-    let snippet = truncate_chars(&raw_line, MAX_EXCERPT_CHARS);
-    let start = snippet
-        .find(header_name)
-        .map(|b| snippet[..b].chars().count());
-    let len = start.map(|_| header_name.chars().count());
+    let trimmed = detail.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let prefix = format!("HTTP {} headers: ", http.status_code);
+    let snippet = truncate_chars(&format!("{prefix}{trimmed}"), MAX_EXCERPT_CHARS);
+    let start = prefix.chars().count().min(snippet.chars().count());
+    let len = snippet.chars().count().saturating_sub(start).max(1);
     Some(EvidenceExcerpt {
         location: location.to_owned(),
         line: None,
         column: None,
         snippet,
-        highlight_start: start,
-        highlight_len: len,
+        highlight_start: Some(start),
+        highlight_len: Some(len),
         label: Some(label.to_owned()),
         help: help.map(str::to_owned),
     })
@@ -238,6 +281,205 @@ fn detect_header_name(rule_id: &str, detail: &str) -> Option<&'static str> {
     None
 }
 
+fn excerpt_from_timing(
+    http: &HttpEvidence,
+    location: &str,
+    detail: &str,
+    label: &str,
+    help: Option<&str>,
+) -> EvidenceExcerpt {
+    let timing_text = match http.elapsed_ms {
+        Measurement::Measured { value, .. } => format!("{value} ms"),
+        Measurement::Unavailable { .. } => "unavailable".to_owned(),
+        Measurement::Failed { .. } => "failed".to_owned(),
+        Measurement::Skipped { .. } => "skipped".to_owned(),
+    };
+    let extra = if detail.trim().is_empty() {
+        String::new()
+    } else {
+        format!(" | {}", detail.trim())
+    };
+    let raw = format!("HTTP {} timing: {timing_text}{extra}", http.status_code);
+    let snippet = truncate_chars(&raw, MAX_EXCERPT_CHARS);
+    let start = snippet
+        .find(&timing_text)
+        .map_or(0, |b| snippet[..b].chars().count());
+    let len = timing_text
+        .chars()
+        .count()
+        .min(snippet.chars().count().saturating_sub(start))
+        .max(1);
+    EvidenceExcerpt {
+        location: location.to_owned(),
+        line: None,
+        column: None,
+        snippet,
+        highlight_start: Some(start),
+        highlight_len: Some(len),
+        label: Some(label.to_owned()),
+        help: help.map(str::to_owned),
+    }
+}
+
+fn excerpt_from_tls(
+    snapshot: &EvidenceSnapshot,
+    location: &str,
+    rule_id: &str,
+    detail: &str,
+    label: &str,
+    help: Option<&str>,
+) -> EvidenceExcerpt {
+    let raw = match &snapshot.tls {
+        CollectorOutcome::Captured { data: tls } | CollectorOutcome::Partial { data: tls, .. } => {
+            if rule_id.to_ascii_lowercase().contains("caa") {
+                format!(
+                    "TLS CAA: outcome={:?} records={}",
+                    tls.caa_lookup_outcome,
+                    tls.caa_records.len()
+                )
+            } else {
+                format!(
+                    "TLS subject={} | expires_in={}d | self_signed={}",
+                    tls.subject, tls.days_until_expiry, tls.self_signed
+                )
+            }
+        }
+        CollectorOutcome::Failed { error } => format!("TLS failed: {error}"),
+        CollectorOutcome::Skipped { reason } => {
+            let text = if detail.trim().is_empty() {
+                reason.as_str()
+            } else {
+                detail.trim()
+            };
+            format!("TLS: {text}")
+        }
+    };
+    let snippet = truncate_chars(&raw, MAX_EXCERPT_CHARS);
+    let highlight_start = snippet.find(' ').map_or(0, |b| b + 1);
+    let highlight_len = snippet
+        .chars()
+        .count()
+        .saturating_sub(highlight_start)
+        .max(1);
+    EvidenceExcerpt {
+        location: location.to_owned(),
+        line: None,
+        column: None,
+        snippet,
+        highlight_start: Some(highlight_start),
+        highlight_len: Some(highlight_len),
+        label: Some(label.to_owned()),
+        help: help.map(str::to_owned),
+    }
+}
+
+fn excerpt_from_lighthouse(
+    snapshot: &EvidenceSnapshot,
+    location: &str,
+    rule_id: &str,
+    detail: &str,
+    label: &str,
+    help: Option<&str>,
+) -> EvidenceExcerpt {
+    let raw = match &snapshot.lighthouse {
+        CollectorOutcome::Captured { data: lh } | CollectorOutcome::Partial { data: lh, .. } => {
+            let perf = lh
+                .performance_score
+                .map_or_else(|| "n/a".to_owned(), |s| format!("{s}/100"));
+            format!(
+                "Lighthouse: perf={perf} LCP={} CLS={} TBT={}",
+                format_ms_measurement(&lh.lcp_ms),
+                format_cls_measurement(&lh.cls_milli),
+                format_ms_measurement(&lh.tbt_ms),
+            )
+        }
+        CollectorOutcome::Failed { error } => format!("Lighthouse failed: {error}"),
+        CollectorOutcome::Skipped { reason } => {
+            let text = if detail.trim().is_empty() {
+                reason.as_str()
+            } else {
+                detail.trim()
+            };
+            format!("Lighthouse: {text}")
+        }
+    };
+    let snippet = truncate_chars(&raw, MAX_EXCERPT_CHARS);
+    let rule_lower = rule_id.to_ascii_lowercase();
+    let metric_token = if rule_lower.contains("lcp") {
+        "LCP="
+    } else if rule_lower.contains("cls") {
+        "CLS="
+    } else if rule_lower.contains("tbt") {
+        "TBT="
+    } else {
+        "perf="
+    };
+    let highlight_start = snippet.find(metric_token).map_or_else(
+        || snippet.find(' ').map_or(0, |b| b + 1),
+        |b| snippet[..b].chars().count(),
+    );
+    let highlight_len = snippet
+        .chars()
+        .skip(highlight_start)
+        .take_while(|c| !c.is_whitespace())
+        .count()
+        .max(1);
+    EvidenceExcerpt {
+        location: location.to_owned(),
+        line: None,
+        column: None,
+        snippet,
+        highlight_start: Some(highlight_start),
+        highlight_len: Some(highlight_len),
+        label: Some(label.to_owned()),
+        help: help.map(str::to_owned),
+    }
+}
+
+fn format_ms_measurement(m: &Measurement<u64>) -> String {
+    match m {
+        Measurement::Measured { value, .. } => format!("{value}ms"),
+        Measurement::Unavailable { .. } => "unavail".to_owned(),
+        Measurement::Failed { .. } => "failed".to_owned(),
+        Measurement::Skipped { .. } => "skipped".to_owned(),
+    }
+}
+
+fn format_cls_measurement(m: &Measurement<u64>) -> String {
+    match m {
+        Measurement::Measured { value, .. } => format!("{}.{:03}", value / 1000, value % 1000),
+        Measurement::Unavailable { .. } => "unavail".to_owned(),
+        Measurement::Failed { .. } => "failed".to_owned(),
+        Measurement::Skipped { .. } => "skipped".to_owned(),
+    }
+}
+
+fn excerpt_from_prefixed(
+    prefix: &str,
+    location: &str,
+    detail: &str,
+    label: &str,
+    help: Option<&str>,
+) -> Option<EvidenceExcerpt> {
+    let trimmed = detail.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let snippet = truncate_chars(&format!("{prefix}{trimmed}"), MAX_EXCERPT_CHARS);
+    let prefix_chars = prefix.chars().count().min(snippet.chars().count());
+    let highlight_len = snippet.chars().count().saturating_sub(prefix_chars).max(1);
+    Some(EvidenceExcerpt {
+        location: location.to_owned(),
+        line: None,
+        column: None,
+        snippet,
+        highlight_start: Some(prefix_chars),
+        highlight_len: Some(highlight_len),
+        label: Some(label.to_owned()),
+        help: help.map(str::to_owned),
+    })
+}
+
 fn excerpt_from_html(
     body: &str,
     location: &str,
@@ -246,7 +488,7 @@ fn excerpt_from_html(
     label: &str,
     help: Option<&str>,
 ) -> Option<EvidenceExcerpt> {
-    let needle_hit = find_html_target_span(body, rule_id, detail)?;
+    let needle_hit = find_html_target_span(body, rule_id, detail);
     build_line_excerpt(
         body,
         needle_hit.start_byte,
@@ -262,14 +504,18 @@ struct ByteSpan {
     end_byte: usize,
 }
 
-fn find_html_target_span(body: &str, rule_id: &str, detail: &str) -> Option<ByteSpan> {
+fn find_html_target_span(body: &str, rule_id: &str, detail: &str) -> ByteSpan {
     let rule_lower = rule_id.to_ascii_lowercase();
     let detail_lower = detail.to_ascii_lowercase();
 
     if (rule_lower.contains("alt") || (rule_lower.contains("img") && detail_lower.contains("alt")))
         && let Some(span) = find_img_without_alt(body)
     {
-        return Some(span);
+        return span;
+    }
+
+    if let Some(span) = find_detail_literal_span(body, detail) {
+        return span;
     }
 
     let candidate_needles: &[&str] =
@@ -289,22 +535,112 @@ fn find_html_target_span(body: &str, rule_id: &str, detail: &str) -> Option<Byte
             &["<html"]
         } else if rule_lower.contains("h1") || detail_lower.contains("<h1") {
             &["<h1", "<body"]
+        } else if rule_lower.contains("heading") {
+            &["<h1", "<h2", "<h3", "<body"]
+        } else if rule_lower.contains("script")
+            || rule_lower.contains("defer")
+            || rule_lower.contains("async")
+            || rule_lower.contains("render_block")
+        {
+            &["<script", "<head"]
+        } else if rule_lower.contains("style") {
+            &["<style", "style=", "<link"]
+        } else if rule_lower.contains("stylesheet")
+            || rule_lower.contains("preload")
+            || rule_lower.contains("preconnect")
+            || rule_lower.contains("favicon")
+            || rule_lower.contains("icon")
+            || rule_lower.contains("hreflang")
+        {
+            &["<link", "<head"]
+        } else if rule_lower.contains("form")
+            || rule_lower.contains("input")
+            || rule_lower.contains("label")
+            || rule_lower.contains("autocomplete")
+        {
+            &["<input", "<form", "<label"]
+        } else if rule_lower.contains("button") {
+            &["<button", "<a "]
+        } else if rule_lower.contains("table") {
+            &["<table"]
+        } else if rule_lower.contains("iframe") {
+            &["<iframe"]
+        } else if rule_lower.contains("video")
+            || rule_lower.contains("audio")
+            || rule_lower.contains("caption")
+        {
+            &["<video", "<audio"]
+        } else if rule_lower.contains("svg") {
+            &["<svg"]
+        } else if rule_lower.contains("tabindex") {
+            &["tabindex="]
+        } else if rule_lower.contains("aria") {
+            &["aria-"]
+        } else if rule_lower.contains("role") {
+            &["role="]
+        } else if rule_lower.contains("duplicate_id") {
+            &["id="]
+        } else if rule_lower.contains("og") || rule_lower.contains("open_graph") {
+            &["property=\"og:", "property='og:", "<head"]
+        } else if rule_lower.contains("twitter") {
+            &["name=\"twitter:", "name='twitter:", "<head"]
+        } else if rule_lower.contains("schema") || rule_lower.contains("json_ld") {
+            &["application/ld+json", "<head"]
+        } else if rule_lower.contains("microdata") {
+            &["itemscope", "<body"]
+        } else if rule_lower.contains("mixed_content") {
+            &["http://"]
+        } else if rule_lower.contains("copyright") || rule_lower.contains("footer") {
+            &["<footer", "&copy;", "©"]
         } else if rule_lower.contains("img") || detail_lower.contains("<img") {
             &["<img"]
         } else if rule_lower.contains("link") || detail_lower.contains("<a") {
             &["<a "]
-        } else if rule_lower.contains("schema") || rule_lower.contains("json_ld") {
-            &["application/ld+json", "<head"]
         } else {
-            &[]
+            &["<html", "<!doctype"]
         };
 
     for &needle in candidate_needles {
         if let Some(span) = find_tag_or_needle_span(body, needle) {
-            return Some(span);
+            return span;
         }
     }
 
+    ByteSpan {
+        start_byte: 0,
+        end_byte: body.find('\n').unwrap_or(body.len()).min(MAX_EXCERPT_CHARS),
+    }
+}
+
+fn find_detail_literal_span(body: &str, detail: &str) -> Option<ByteSpan> {
+    if let Some(tag_start) = detail.find('<')
+        && let Some(tag_len) = detail[tag_start..].find([' ', '>', ';'])
+    {
+        let tag = &detail[tag_start..tag_start + tag_len];
+        if tag.len() >= 2
+            && let Some(span) = find_tag_or_needle_span(body, tag)
+        {
+            return Some(span);
+        }
+    }
+    if let Some(url_start) = detail.find("http://").or_else(|| detail.find("https://")) {
+        let url_end = detail[url_start..]
+            .find([' ', ';', ',', ')'])
+            .map_or(detail.len(), |i| url_start + i);
+        let url = &detail[url_start..url_end];
+        if url.len() >= 10
+            && let Some(span) = find_tag_or_needle_span(body, url)
+        {
+            return Some(span);
+        }
+    }
+    if detail.contains("body-element=") {
+        for tag in ["<p", "<h1", "<h2", "<section", "<article", "<main"] {
+            if let Some(span) = find_tag_or_needle_span(body, tag) {
+                return Some(span);
+            }
+        }
+    }
     None
 }
 
@@ -520,8 +856,9 @@ mod tests {
     use super::*;
     use crate::brigade::DwarfId;
     use crate::domain::{
-        AuditTarget, Confidence, EvidenceLevel, FindingFingerprint, FindingKind, HttpHeader,
-        Measurement, MeasurementUnit, RuleId, Severity, TargetPolicy,
+        AuditTarget, CaaLookupOutcome, Confidence, EvidenceLevel, FindingFingerprint, FindingKind,
+        HttpHeader, LighthouseMetrics, MeasurementUnit, RuleId, Severity, TargetPolicy,
+        TlsEvidence,
     };
 
     fn sample_snapshot(html: &str, headers: Vec<HttpHeader>) -> EvidenceSnapshot {
@@ -543,18 +880,67 @@ mod tests {
                     body_text: html.to_owned(),
                 },
             },
-            tls: CollectorOutcome::Skipped {
-                reason: "test".to_owned(),
+            tls: CollectorOutcome::Captured {
+                data: TlsEvidence {
+                    subject: "CN=example.com".to_owned(),
+                    issuer: "CN=Example CA".to_owned(),
+                    not_before_unix_secs: None,
+                    not_after_unix_secs: 1_800_000_000,
+                    days_until_expiry: 14,
+                    san_entries: vec!["example.com".to_owned()],
+                    public_key_algorithm: None,
+                    signature_algorithm: None,
+                    self_signed: false,
+                    caa_records: Vec::new(),
+                    caa_query_succeeded: true,
+                    caa_lookup_outcome: CaaLookupOutcome::NoRecordsObserved,
+                },
             },
             browser: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
-            lighthouse: CollectorOutcome::Skipped {
-                reason: "test".to_owned(),
+            lighthouse: CollectorOutcome::Captured {
+                data: LighthouseMetrics {
+                    lighthouse_version: "12.0.0".to_owned(),
+                    lcp_ms: Measurement::Measured {
+                        value: 4200,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    cls_milli: Measurement::Measured {
+                        value: 150,
+                        unit: MeasurementUnit::Count,
+                    },
+                    fcp_ms: Measurement::Measured {
+                        value: 1200,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    tbt_ms: Measurement::Measured {
+                        value: 450,
+                        unit: MeasurementUnit::Milliseconds,
+                    },
+                    performance_score: Some(54),
+                    provenance: None,
+                },
             },
             axe: CollectorOutcome::Skipped {
                 reason: "test".to_owned(),
             },
+        }
+    }
+
+    fn make_finding(rule_id: &str, title: &str, source: EvidenceSource, detail: &str) -> Finding {
+        Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(rule_id.to_owned()),
+            category: crate::domain::FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: title.to_owned(),
+            summary: title.to_owned(),
+            evidence_refs: vec![EvidenceRef::new(source, detail)],
+            remediation: Some("Remediate.".to_owned()),
         }
     }
 
@@ -564,22 +950,12 @@ mod tests {
         let snapshot = sample_snapshot(html, Vec::new());
         let mut analysers = vec![AnalyserResult {
             dwarf_id: DwarfId::Zugaenglichkeits,
-            findings: vec![Finding {
-                fingerprint: FindingFingerprint::default(),
-                rule_id: RuleId("zugaenglichkeits.img.missing_alt".to_owned()),
-                category: crate::domain::FindingCategory::Accessibility,
-                evidence_level: EvidenceLevel::Source,
-                kind: FindingKind::Deterministic,
-                severity: Severity::Medium,
-                confidence: Confidence::High,
-                title: "Image missing alt attribute".to_owned(),
-                summary: "An <img> element has no alt attribute.".to_owned(),
-                evidence_refs: vec![EvidenceRef::new(
-                    EvidenceSource::HttpBody,
-                    "1 image missing alt",
-                )],
-                remediation: Some("Add descriptive alt text or alt=\"\".".to_owned()),
-            }],
+            findings: vec![make_finding(
+                "zugaenglichkeits.img.missing_alt",
+                "Image missing alt attribute",
+                EvidenceSource::HttpBody,
+                "1 image missing alt",
+            )],
             checks: Vec::new(),
         }];
 
@@ -601,22 +977,12 @@ mod tests {
         let snapshot = sample_snapshot("<html></html>", Vec::new());
         let mut analysers = vec![AnalyserResult {
             dwarf_id: DwarfId::Sicherheits,
-            findings: vec![Finding {
-                fingerprint: FindingFingerprint::default(),
-                rule_id: RuleId("sicherheits.headers.missing_hsts".to_owned()),
-                category: crate::domain::FindingCategory::Security,
-                evidence_level: EvidenceLevel::Source,
-                kind: FindingKind::Deterministic,
-                severity: Severity::High,
-                confidence: Confidence::High,
-                title: "Missing Strict-Transport-Security header".to_owned(),
-                summary: "HSTS header is absent.".to_owned(),
-                evidence_refs: vec![EvidenceRef::new(
-                    EvidenceSource::HttpHeaders,
-                    "strict-transport-security header absent",
-                )],
-                remediation: Some("Send Strict-Transport-Security on HTTPS responses.".to_owned()),
-            }],
+            findings: vec![make_finding(
+                "sicherheits.headers.missing_hsts",
+                "Missing Strict-Transport-Security header",
+                EvidenceSource::HttpHeaders,
+                "strict-transport-security header absent",
+            )],
             checks: Vec::new(),
         }];
 
@@ -628,5 +994,67 @@ mod tests {
             .expect("header excerpt should be attached");
         assert!(excerpt.snippet.contains("strict-transport-security"));
         assert!(excerpt.highlight_start.is_some());
+    }
+
+    #[test]
+    fn enriches_timing_tls_browser_lighthouse_and_visual_sources() {
+        let snapshot = sample_snapshot(
+            "<html><body><script src=\"/app.js\"></script></body></html>",
+            Vec::new(),
+        );
+        let mut analysers = vec![AnalyserResult {
+            dwarf_id: DwarfId::Netz,
+            findings: vec![
+                make_finding(
+                    "netz.http.slow_ttfb",
+                    "Slow HTTP response",
+                    EvidenceSource::HttpTiming,
+                    "elapsed=42ms",
+                ),
+                make_finding(
+                    "sicherheits.tls.expiring_soon",
+                    "Certificate expiring soon",
+                    EvidenceSource::TlsCertificate,
+                    "14 days remaining",
+                ),
+                make_finding(
+                    "browser.console.error",
+                    "Uncaught console error",
+                    EvidenceSource::BrowserRuntime,
+                    "TypeError: Cannot read properties of undefined",
+                ),
+                make_finding(
+                    "leistungs.lighthouse.poor_lcp",
+                    "Poor LCP",
+                    EvidenceSource::LighthouseReport,
+                    "lcp_ms=4200",
+                ),
+                make_finding(
+                    "gestaltungs.layout.horizontal_overflow",
+                    "Horizontal overflow",
+                    EvidenceSource::VisualLayout,
+                    "scrollWidth=1420 > innerWidth=1280",
+                ),
+                make_finding(
+                    "leistungs.js.render_blocking",
+                    "Render-blocking script",
+                    EvidenceSource::HttpBody,
+                    "<script src=\"/app.js\">",
+                ),
+            ],
+            checks: Vec::new(),
+        }];
+
+        enrich_evidence_excerpts(&snapshot, &mut analysers);
+
+        for (idx, f) in analysers[0].findings.iter().enumerate() {
+            let excerpt = f.evidence_refs[0]
+                .excerpt
+                .as_ref()
+                .unwrap_or_else(|| panic!("finding {idx} ({}) missing excerpt", f.rule_id.0));
+            assert_ne!(excerpt.snippet, "");
+            assert!(excerpt.highlight_start.is_some());
+            assert!(excerpt.highlight_len.is_some());
+        }
     }
 }
