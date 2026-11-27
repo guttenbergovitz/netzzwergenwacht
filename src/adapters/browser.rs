@@ -573,6 +573,23 @@ function findBrowser() {
             occludedPrimaryControls.push(el.tagName.toLowerCase() + ' [' + label + '] covered by ' + blocker);
           }
         }
+        const deadCtaLinks = [];
+        const ctaAnchors = Array.from(document.querySelectorAll('main a[href], nav a[href], header a[href]')).slice(0, 40);
+        for (const a of ctaAnchors) {
+          if (deadCtaLinks.length >= 10) break;
+          const r = a.getBoundingClientRect();
+          const st = getComputedStyle(a);
+          if (r.width < 8 || r.height < 8 || st.display === 'none' || st.visibility === 'hidden') continue;
+          if ((a.getAttribute('role') || '').toLowerCase() === 'button') continue;
+          const rawHref = (a.getAttribute('href') || '').trim();
+          const lowerHref = rawHref.toLowerCase();
+          if (rawHref === '' || rawHref === '#' || rawHref === '#!' || lowerHref.startsWith('javascript:')) {
+            const label = (a.textContent || a.getAttribute('aria-label') || 'link').trim().slice(0, 40);
+            if (label) {
+              deadCtaLinks.push('a [' + label + '] href=' + (rawHref || '(empty)'));
+            }
+          }
+        }
         const nav = performance.getEntriesByType('navigation')[0];
         const p = window.__nzwPerf || {};
         const pos = (v) => (typeof v === 'number' && v >= 0 ? Math.round(v) : null);
@@ -646,6 +663,7 @@ function findBrowser() {
           visible_busy_indicators: visibleBusyIndicators,
           rendered_error_marker: renderedErrorMarker,
           occluded_primary_controls: occludedPrimaryControls,
+          dead_cta_links: deadCtaLinks,
           scroll_locked: (() => {
             const root = document.documentElement;
             const body = document.body;
@@ -1163,6 +1181,7 @@ function findBrowser() {
       visible_busy_indicators: typeof domAndImages.visible_busy_indicators === 'number' ? domAndImages.visible_busy_indicators : null,
       rendered_error_marker: typeof domAndImages.rendered_error_marker === 'string' && domAndImages.rendered_error_marker ? domAndImages.rendered_error_marker : null,
       occluded_primary_controls: Array.isArray(domAndImages.occluded_primary_controls) ? domAndImages.occluded_primary_controls.slice(0, 12) : null,
+      dead_cta_links: Array.isArray(domAndImages.dead_cta_links) ? domAndImages.dead_cta_links.slice(0, 10) : null,
       scroll_locked: typeof domAndImages.scroll_locked === 'boolean' ? domAndImages.scroll_locked : null,
       ax_tree: axTreeSummary,
       performance: domAndImages.performance || null,

@@ -1077,6 +1077,9 @@ pub struct BrowserEvidence {
     /// Whether `html`/`body` forces `overflow: hidden` on a scrollable page with no open modal dialog.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scroll_locked: Option<bool>,
+    /// Visible navigation/CTA `<a>` links with dead `href` (`""`, `"#"`, `"#!"`, or `javascript:`) and no `role="button"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dead_cta_links: Option<Vec<String>>,
     /// Level 2 Accessibility Tree summary (`Accessibility.getFullAXTree`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ax_tree: Option<AccessibilityTreeSummary>,

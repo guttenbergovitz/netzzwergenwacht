@@ -776,3 +776,61 @@ async fn live_browser_detects_scroll_locked_body() {
         "expected browser.layout.scroll_locked, got: {rules:?}"
     );
 }
+
+#[ignore = "requires local Chromium/Chrome and Node.js with ws"]
+#[tokio::test]
+async fn live_browser_detects_dead_cta_links() {
+    use netzzwergenwacht::analysis;
+    use netzzwergenwacht::collection;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let body = r##"<!doctype html><html lang="en"><head><title>Dead CTA Test</title></head><body>
+            <main>
+              <h1>Store</h1>
+              <a href="#" style="display:inline-block;padding:8px;">Buy now</a>
+              <a href="#details" style="display:inline-block;padding:8px;">Details</a>
+            </main>
+        </body></html>"##;
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+
+    let target =
+        AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+    let mut snapshot = collection::collect_http(
+        &target,
+        &netzzwergenwacht::domain::ExecutionBudget::default(),
+        TargetPolicy::AllowPrivate,
+    )
+    .await;
+    snapshot.browser =
+        run_browser_with_policy(&target, Duration::from_secs(30), TargetPolicy::AllowPrivate).await;
+    server.abort();
+
+    let report = analysis::run_all(&snapshot);
+    let rules: Vec<&str> = report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+    assert!(
+        rules.contains(&"browser.interaction.dead_cta_links"),
+        "expected browser.interaction.dead_cta_links, got: {rules:?}"
+    );
+}

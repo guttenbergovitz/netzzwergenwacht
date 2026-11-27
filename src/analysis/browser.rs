@@ -31,6 +31,7 @@ const RULE_CLIENT_ERROR_FALLBACK: &str = "browser.runtime.client_error_fallback"
 const RULE_STUCK_LOADING_STATE: &str = "browser.runtime.stuck_loading_state";
 const RULE_OCCLUDED_PRIMARY_CONTROLS: &str = "browser.interaction.occluded_primary_controls";
 const RULE_SCROLL_LOCKED: &str = "browser.layout.scroll_locked";
+const RULE_DEAD_CTA_LINKS: &str = "browser.interaction.dead_cta_links";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -52,6 +53,7 @@ pub const ALL_RULES: &[&str] = &[
     RULE_STUCK_LOADING_STATE,
     RULE_OCCLUDED_PRIMARY_CONTROLS,
     RULE_SCROLL_LOCKED,
+    RULE_DEAD_CTA_LINKS,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -97,6 +99,7 @@ pub fn analyse_with_document(
     check_stuck_loading_state(browser, &mut findings, &mut checks);
     check_occluded_primary_controls(browser, &mut findings, &mut checks);
     check_scroll_locked(browser, &mut findings, &mut checks);
+    check_dead_cta_links(browser, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -1089,6 +1092,59 @@ fn check_scroll_locked(
     }
 }
 
+fn check_dead_cta_links(
+    browser: &crate::domain::BrowserEvidence,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(dead_links) = &browser.dead_cta_links else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_DEAD_CTA_LINKS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "dead CTA link probe was not collected".to_owned(),
+        });
+        return;
+    };
+
+    if dead_links.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_DEAD_CTA_LINKS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_DEAD_CTA_LINKS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_DEAD_CTA_LINKS.to_owned()),
+            category: FindingCategory::Accessibility,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!(
+                "Dead CTA / navigation links detected ({})",
+                dead_links.len()
+            ),
+            summary: format!(
+                "Observed {} visible link(s) in `<main>`/`<nav>`/`<header>` with dead `href` (`\"\"`, `\"#\"`, `\"#!\"`, or `javascript:`) and no `role=\"button\"` (for example `{}`).",
+                dead_links.len(),
+                dead_links[0]
+            ),
+            evidence_refs: dead_links
+                .iter()
+                .take(4)
+                .map(|entry| EvidenceRef::new(EvidenceSource::BrowserRuntime, entry.clone()))
+                .collect(),
+            remediation: Some(
+                "Replace placeholder `href=\"#\"` / `javascript:` links with real destination URLs or semantic `<button type=\"button\">` elements.".to_owned(),
+            ),
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1358,5 +1414,19 @@ mod tests {
         let res = analyse(&snap);
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_SCROLL_LOCKED));
+    }
+
+    #[test]
+    fn flags_dead_cta_links() {
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                dead_cta_links: Some(vec!["a [Buy now] href=#".to_owned()]),
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse(&snap);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_DEAD_CTA_LINKS));
     }
 }

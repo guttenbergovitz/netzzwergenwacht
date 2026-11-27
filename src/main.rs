@@ -918,7 +918,15 @@ async fn main() -> ExitCode {
                 };
                 return run_tui_cmd(options).await;
             }
-            run_investigate(&url, objective, allow_private, format, audience, events).await
+            Box::pin(run_investigate(
+                &url,
+                objective,
+                allow_private,
+                format,
+                audience,
+                events,
+            ))
+            .await
         }
         Command::Verify {
             baseline,
