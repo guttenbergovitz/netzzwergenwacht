@@ -1,10 +1,57 @@
 version: "3"
 
+# Primary developer entrypoint for NetzZwergenWacht.
+#
+# `task setup` prepares a fresh clone, `task doctor` reports which local
+# instruments are available, and `task check` runs the engineering quality gate.
+# Note the distinction: `task check` validates the codebase, while `nzw check URL`
+# runs a diagnostic audit against a target.
+
+vars:
+  BIN: nzw
+  INSTALL_DIR: '{{.HOME}}/.cargo/bin'
+
 tasks:
   default:
     desc: List available tasks
     cmds:
       - task --list
+
+  setup:
+    desc: Prepare a fresh clone (dependency check, toolchain hints, local configuration)
+    cmds:
+      - cmd: rustc --version
+        ignore_error: true
+      - cmd: cargo --version
+        ignore_error: true
+      - cmd: node --version
+        ignore_error: true
+      - echo "Building the workspace so the first run is fast…"
+      - cargo fetch --locked
+      - cargo build --locked
+      - echo "Run 'task doctor' to verify Chromium, Node.js, axe, Lighthouse and configuration."
+
+  doctor:
+    desc: Report which local instruments and configuration are available
+    cmds:
+      - cargo run --quiet --locked -- doctor
+
+  dev:
+    desc: Build and run the workbench against a target URL (TARGET=https://example.org)
+    cmds:
+      - cargo run --quiet --locked -- tui {{.TARGET | default "https://example.org"}}
+
+  tui:
+    desc: Build and run the Zwergenleitstand workbench (TARGET default https://example.org)
+    cmds:
+      - cargo run --quiet --locked -- tui {{.TARGET | default "https://example.org"}}
+
+  run:
+    desc: Run a deterministic audit (URL required, e.g. task run URL=https://example.org)
+    requires:
+      vars: [URL]
+    cmds:
+      - cargo run --quiet --locked -- check {{.URL}}
 
   fmt:
     desc: Format all Rust source files
@@ -24,7 +71,19 @@ tasks:
   test:
     desc: Run the full Rust test suite
     cmds:
-      - cargo test --locked
+      - cargo test --all-targets --locked
+
+  test:integration:
+    desc: Run the integration suites only
+    cmds:
+      - cargo test --locked --tests
+
+  test:browser:
+    desc: Run the ignored Chromium suites (requires a local Chrome/Chromium and Node.js 22+)
+    env:
+      NZW_CHROMIUM_BIN: '{{.NZW_CHROMIUM_BIN | default "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}}'
+    cmds:
+      - cargo test --locked --test sensory_collectors_live --test browser_timeline -- --ignored --test-threads=1
 
   doc:
     desc: Build API documentation and fail on broken intra-doc links
@@ -41,10 +100,26 @@ tasks:
       - doc
       - test
 
+  check:all:
+    desc: Run the engineering gate plus the release build
+    cmds:
+      - task: check
+      - task: build
+
   build:
     desc: Build an optimised release binary
     cmds:
       - cargo build --release --locked
+
+  install:
+    desc: Install the nzw binary into ~/.cargo/bin
+    cmds:
+      - cargo install --path . --locked --force
+
+  uninstall:
+    desc: Remove the installed nzw binary
+    cmds:
+      - rm -f {{.INSTALL_DIR}}/{{.BIN}}
 
   audit:
     desc: Run cargo-audit security advisory check

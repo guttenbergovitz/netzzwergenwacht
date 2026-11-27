@@ -48,8 +48,8 @@ jobs:
         id: setup-chrome
         with:
           chrome-version: stable
-      - name: Install CDP client
-        run: npm install --no-save ws
+      - name: Verify Node.js runtime
+        run: node --version
       - name: Run live Chromium collector tests
         env:
           NZW_CHROMIUM_BIN: ${{ steps.setup-chrome.outputs.chrome-path }}
