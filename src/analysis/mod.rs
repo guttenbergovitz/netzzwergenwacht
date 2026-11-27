@@ -11,6 +11,7 @@ pub mod content;
 pub mod content_fingerprint;
 pub mod document;
 pub mod element_identity;
+pub mod excerpt;
 pub mod graph;
 pub mod journeys;
 pub mod network;
@@ -234,6 +235,7 @@ pub fn run_all_with_events(
     }
 
     populate_fingerprints(snapshot.target.as_str(), &mut analysers);
+    excerpt::enrich_evidence_excerpts(snapshot, &mut analysers);
 
     let summary = summarise(&analysers);
     let level2_collectors = [

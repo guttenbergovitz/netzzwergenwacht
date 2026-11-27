@@ -490,10 +490,7 @@ mod tests {
             confidence: crate::domain::Confidence::High,
             title: "Test finding".to_owned(),
             summary: "Summary".to_owned(),
-            evidence_refs: vec![EvidenceRef {
-                source: EvidenceSource::HttpHeaders,
-                detail: "observed".to_owned(),
-            }],
+            evidence_refs: vec![EvidenceRef::new(EvidenceSource::HttpHeaders, "observed")],
             remediation: Some("Fix it".to_owned()),
         }
     }

@@ -1650,7 +1650,7 @@ impl AppState {
             }
         }
 
-        let mut rows = build_systemic_finding_rows(&crawl.systemic_issues);
+        let mut rows = build_systemic_finding_rows(&crawl.systemic_issues, &crawl.page_diagnostics);
         let systemic_rules: std::collections::HashSet<&str> = crawl
             .systemic_issues
             .iter()
@@ -1692,6 +1692,7 @@ impl AppState {
                         .map(|reference| EvidenceRef {
                             source: reference.source,
                             detail: sanitize_line(&reference.detail, 140),
+                            excerpt: reference.excerpt.as_ref().map(sanitize_excerpt),
                         })
                         .collect(),
                     primary_evidence_category: category,
@@ -1971,7 +1972,23 @@ fn outcome_summary<T>(outcome: &CollectorOutcome<T>) -> String {
     }
 }
 
-fn build_systemic_finding_rows(issues: &[crate::discovery::SystemicIssue]) -> Vec<FindingRow> {
+fn sanitize_excerpt(excerpt: &crate::domain::EvidenceExcerpt) -> crate::domain::EvidenceExcerpt {
+    crate::domain::EvidenceExcerpt {
+        location: sanitize_url_for_display(&excerpt.location, 120),
+        line: excerpt.line,
+        column: excerpt.column,
+        snippet: sanitize_line(&excerpt.snippet, 140),
+        highlight_start: excerpt.highlight_start,
+        highlight_len: excerpt.highlight_len,
+        label: excerpt.label.as_deref().map(|l| sanitize_line(l, 80)),
+        help: excerpt.help.as_deref().map(|h| sanitize_line(h, 120)),
+    }
+}
+
+fn build_systemic_finding_rows(
+    issues: &[crate::discovery::SystemicIssue],
+    page_diagnostics: &[crate::discovery::PageDiagnostics],
+) -> Vec<FindingRow> {
     issues
         .iter()
         .enumerate()
@@ -1993,6 +2010,14 @@ fn build_systemic_finding_rows(issues: &[crate::discovery::SystemicIssue]) -> Ve
             } else {
                 EvidenceSource::HttpBody
             };
+            let representative_excerpt = page_diagnostics
+                .iter()
+                .filter(|page| issue.affected_urls.iter().any(|u| u == &page.url))
+                .flat_map(|page| page.findings.iter())
+                .filter(|f| f.rule_id == issue.rule_id)
+                .flat_map(|f| f.evidence_refs.iter())
+                .find_map(|ev| ev.excerpt.as_ref())
+                .map(sanitize_excerpt);
             let mut evidence_refs = vec![EvidenceRef {
                 source,
                 detail: sanitize_line(
@@ -2002,11 +2027,13 @@ fn build_systemic_finding_rows(issues: &[crate::discovery::SystemicIssue]) -> Ve
                     ),
                     160,
                 ),
+                excerpt: representative_excerpt,
             }];
             for url in issue.affected_urls.iter().take(6) {
                 evidence_refs.push(EvidenceRef {
                     source,
                     detail: format!("affected_url={}", sanitize_url_for_display(url, 120)),
+                    excerpt: None,
                 });
             }
             let primary_evidence_category =
@@ -2123,6 +2150,7 @@ fn finding_to_row(
         .map(|ev| EvidenceRef {
             source: ev.source,
             detail: sanitize_line(&ev.detail, 140),
+            excerpt: ev.excerpt.as_ref().map(sanitize_excerpt),
         })
         .collect();
 
@@ -2244,10 +2272,10 @@ mod tests {
                         title: String::from("HTTP 404"),
                         summary: String::from("The page returned 404 Not Found."),
                         remediation: Some(String::from("Publish the page or remove the link.")),
-                        evidence_refs: vec![EvidenceRef {
-                            source: EvidenceSource::HttpStatus,
-                            detail: String::from("status=404"),
-                        }],
+                        evidence_refs: vec![EvidenceRef::new(
+                            EvidenceSource::HttpStatus,
+                            "status=404",
+                        )],
                     }],
                 }],
             }),

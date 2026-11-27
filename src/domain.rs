@@ -498,6 +498,33 @@ pub enum EvidenceSource {
     VisualLayout,
 }
 
+/// Bounded `cargo`-style source excerpt pinpointing observed evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct EvidenceExcerpt {
+    /// Location label (for example the audited URL or header source).
+    pub location: String,
+    /// 1-based line number within the captured source, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    /// 1-based column number within the captured source, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+    /// Compact single-line source excerpt to display.
+    pub snippet: String,
+    /// 0-based character start offset within `snippet` for caret underlining.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_start: Option<usize>,
+    /// Character length of the caret underline within `snippet`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub highlight_len: Option<usize>,
+    /// Concise annotation placed beside the caret underline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// Optional concise remediation hint (`= help: ...`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub help: Option<String>,
+}
+
 /// Reference linking a finding back to an artefact inside an [`EvidenceSnapshot`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceRef {
@@ -505,16 +532,27 @@ pub struct EvidenceRef {
     pub source: EvidenceSource,
     /// Specific observed detail or excerpt.
     pub detail: String,
+    /// Optional bounded `cargo`-style source excerpt for diagnostic display.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<EvidenceExcerpt>,
 }
 
 impl EvidenceRef {
-    /// Constructs a new [`EvidenceRef`].
+    /// Constructs a new [`EvidenceRef`] without an attached source excerpt.
     #[must_use]
     pub fn new(source: EvidenceSource, detail: impl Into<String>) -> Self {
         Self {
             source,
             detail: detail.into(),
+            excerpt: None,
         }
+    }
+
+    /// Attaches a bounded [`EvidenceExcerpt`] to this reference.
+    #[must_use]
+    pub fn with_excerpt(mut self, excerpt: EvidenceExcerpt) -> Self {
+        self.excerpt = Some(excerpt);
+        self
     }
 }
 

@@ -1123,10 +1123,7 @@ impl EvidenceStore {
             // A label this build cannot interpret is skipped rather than mapped onto a
             // plausible source, which would attach the evidence to the wrong observation.
             if let Some(source) = evidence_source_from_label(&label) {
-                refs.push(EvidenceRef {
-                    source,
-                    detail: row.get::<String>(1)?,
-                });
+                refs.push(EvidenceRef::new(source, row.get::<String>(1)?));
             }
         }
         Ok(refs)

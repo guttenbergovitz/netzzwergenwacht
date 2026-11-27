@@ -960,10 +960,10 @@ mod tests {
             title: "Hostile <script>alert(1)</script> title".to_owned(),
             summary: "Observed unescaped <img onerror=alert(1)>".to_owned(),
             remediation: Some("Escape HTML before rendering.".to_owned()),
-            evidence_refs: vec![EvidenceRef {
-                source: EvidenceSource::HttpBody,
-                detail: "<script>alert(1)</script>".to_owned(),
-            }],
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                "<script>alert(1)</script>",
+            )],
             fingerprint: FindingFingerprint("fp-1".to_owned()),
         });
         report.summary.critical_findings += 1;

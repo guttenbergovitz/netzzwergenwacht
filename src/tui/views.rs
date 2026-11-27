@@ -998,6 +998,9 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 ev.source,
                 sanitize_line(&ev.detail, 90)
             )));
+            if let Some(ref excerpt) = ev.excerpt {
+                push_cargo_diagnostic_lines(&mut lines, excerpt, state.theme, "     ");
+            }
         }
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -2209,6 +2212,74 @@ fn build_axe_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<L
     }
 }
 
+fn push_cargo_diagnostic_lines(
+    lines: &mut Vec<Line<'static>>,
+    excerpt: &crate::domain::EvidenceExcerpt,
+    theme: Theme,
+    indent: &str,
+) {
+    let loc_suffix = match (excerpt.line, excerpt.column) {
+        (Some(line), Some(col)) => format!(":{line}:{col}"),
+        (Some(line), None) => format!(":{line}"),
+        (None, _) => String::new(),
+    };
+    let line_label = excerpt.line.map_or_else(String::new, |l| l.to_string());
+    let gutter_width = line_label.len().max(2);
+    let empty_gutter = " ".repeat(gutter_width);
+
+    lines.push(Line::from(vec![
+        Span::styled(format!("{indent}--> "), theme.title_style()),
+        Span::styled(
+            format!("{}{loc_suffix}", sanitize_line(&excerpt.location, 96)),
+            theme.muted_style(),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        format!("{indent}{empty_gutter} |"),
+        theme.title_style(),
+    )));
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("{indent}{line_label:>gutter_width$} | "),
+            theme.title_style(),
+        ),
+        Span::styled(sanitize_line(&excerpt.snippet, 120), theme.primary_style()),
+    ]));
+
+    if let (Some(start), Some(len)) = (excerpt.highlight_start, excerpt.highlight_len) {
+        let snippet_chars = excerpt.snippet.chars().count();
+        let clamped_start = start.min(snippet_chars);
+        let clamped_len = len.min(snippet_chars.saturating_sub(clamped_start)).max(1);
+        let spaces = " ".repeat(clamped_start);
+        let carets = "^".repeat(clamped_len);
+        let label_text = excerpt
+            .label
+            .as_deref()
+            .map_or_else(String::new, |l| format!(" {}", sanitize_line(l, 64)));
+        lines.push(Line::from(vec![
+            Span::styled(format!("{indent}{empty_gutter} | "), theme.title_style()),
+            Span::styled(
+                format!("{spaces}{carets}{label_text}"),
+                theme.severity_style(crate::domain::Severity::High),
+            ),
+        ]));
+    }
+
+    if let Some(ref help) = excerpt.help {
+        lines.push(Line::from(Span::styled(
+            format!("{indent}{empty_gutter} |"),
+            theme.title_style(),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!("{indent}{empty_gutter} = help: "),
+                theme.title_style(),
+            ),
+            Span::styled(sanitize_line(help, 110), theme.muted_style()),
+        ]));
+    }
+}
+
 fn push_matching_category_findings(
     lines: &mut Vec<Line<'static>>,
     state: &AppState,
@@ -2241,6 +2312,9 @@ fn push_matching_category_findings(
                 ev.source,
                 sanitize_line(&ev.detail, 86)
             )));
+            if let Some(ref excerpt) = ev.excerpt {
+                push_cargo_diagnostic_lines(lines, excerpt, state.theme, "       ");
+            }
         }
     }
 }
@@ -2276,6 +2350,9 @@ fn render_offline_report_evidence_fallback(state: &AppState) -> Vec<Line<'static
                 ev.source,
                 sanitize_line(&ev.detail, 96)
             )));
+            if let Some(ref excerpt) = ev.excerpt {
+                push_cargo_diagnostic_lines(&mut lines, excerpt, state.theme, "     ");
+            }
         }
         lines.push(Line::from(""));
     }
