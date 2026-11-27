@@ -5,15 +5,20 @@
 //! tracks explicit [`PageCrawlStatus`] for every discovered URL, and clusters
 //! recurring findings across pages into [`SystemicIssue`]s.
 
-use std::collections::{BTreeMap, HashSet, VecDeque};
-use std::time::{Duration, Instant};
+use std::collections::{BTreeMap, HashSet};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+mod crawl;
+pub mod frontier;
+
+pub use frontier::DiscoverySource;
+
 use crate::analysis::document::DocumentObservations;
-use crate::analysis::graph::{ApplicationGraph, GraphPageInput};
-use crate::analysis::{self, AuditReport, header_value};
+use crate::analysis::graph::GraphPageInput;
+use crate::analysis::{AuditReport, header_value};
 use crate::collection;
 use crate::domain::{
     AnalyserResult, AuditTarget, CollectorOutcome, Confidence, ExecutionBudget, Origin, RuleId,
@@ -127,6 +132,38 @@ pub struct SystemicIssue {
     pub shared_cause_confidence: Confidence,
 }
 
+/// Explicit acquisition accounting for one crawl.
+///
+/// Counts are observations about the crawl itself, never estimates. A URL is counted once, in the
+/// state it reached: `discovered_urls` is the population, and the remaining counts partition it
+/// into fetched, analysed, failed, skipped and cancelled. A crawl that did not acquire every
+/// eligible URL reports `complete = false`; a partial crawl must not be presented as a full one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CrawlCoverage {
+    /// URLs observed during discovery, including those never acquired.
+    pub discovered_urls: usize,
+    /// URLs handed to an acquisition worker.
+    pub fetched_urls: usize,
+    /// URLs whose HTML was successfully analysed.
+    pub analysed_urls: usize,
+    /// URLs whose acquisition failed or was unreachable.
+    pub failed_urls: usize,
+    /// URLs left unacquired because a page, depth, time or queue bound was reached.
+    pub skipped_budget_urls: usize,
+    /// URLs whose acquisition was cancelled when the crawl deadline expired.
+    pub cancelled_urls: usize,
+    /// Link discoveries rejected because the bounded frontier was full.
+    pub queue_rejections: usize,
+    /// Repeat discoveries of a URL already queued or acquired.
+    pub duplicate_offers: usize,
+    /// Configured page bound.
+    pub max_pages: usize,
+    /// Configured depth bound.
+    pub max_depth: usize,
+    /// Whether the crawl acquired every URL it discovered.
+    pub complete: bool,
+}
+
 /// Output of a bounded multi-page crawl and systemic clustering run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CrawlSummary {
@@ -141,6 +178,9 @@ pub struct CrawlSummary {
     /// Cross-page Application Graph findings grouped by dwarf.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graph_results: Vec<AnalyserResult>,
+    /// Explicit acquisition accounting for this crawl.
+    #[serde(default)]
+    pub coverage: CrawlCoverage,
 }
 
 /// Extracts normalised, deduplicated, same-origin [`AuditTarget`] links from `obs`.
@@ -481,119 +521,17 @@ pub fn cluster_systemic_issues(
     clusters
 }
 
-/// Performs a bounded same-origin BFS crawl starting from `seed`.
+/// Performs a bounded, concurrent, same-origin crawl starting from `seed`.
+///
+/// Scheduling, deduplication and queue bounds live in the private crawl scheduler and in
+/// [`frontier`]; this entry point exists so callers do not depend on the implementation.
 pub async fn crawl_and_cluster(
     seed: AuditTarget,
     crawl_budget: CrawlBudget,
     exec_budget: ExecutionBudget,
     policy: TargetPolicy,
 ) -> CrawlSummary {
-    let started = Instant::now();
-    let mut queue: VecDeque<(AuditTarget, usize)> = VecDeque::new();
-    let mut queued_urls: HashSet<String> = HashSet::new();
-    queued_urls.insert(seed.as_str().to_owned());
-    queue.push_back((seed.clone(), 0));
-
-    let mut sitemap_urls = HashSet::new();
-    if crawl_budget.max_depth > 0 && crawl_budget.max_pages > 1 {
-        for u in seed_sitemap_urls(&seed, exec_budget, policy).await {
-            sitemap_urls.insert(u.as_str().to_owned());
-            if queued_urls.insert(u.as_str().to_owned()) {
-                queue.push_back((u, 1));
-            }
-        }
-    }
-
-    let mut pages = Vec::new();
-    let mut page_reports = Vec::new();
-    let mut graph_inputs = Vec::new();
-    let mut investigated_count = 0usize;
-    let mut budget_exhausted = false;
-
-    while let Some((target, depth)) = queue.pop_front() {
-        let remaining = crawl_budget.max_duration.saturating_sub(started.elapsed());
-        if remaining.is_zero() || investigated_count >= crawl_budget.max_pages {
-            budget_exhausted = true;
-            pages.push(DiscoveredPage {
-                url: target,
-                page_type: PageType::Unknown,
-                depth,
-                status: PageCrawlStatus::SkippedBudget,
-            });
-            continue;
-        }
-
-        let per_page_budget = ExecutionBudget {
-            audit_timeout: exec_budget.audit_timeout.min(remaining),
-            http_timeout: exec_budget.http_timeout.min(remaining),
-            ..exec_budget
-        };
-        let snap = collection::collect_http(&target, &per_page_budget, policy).await;
-        investigated_count += 1;
-        let in_sitemap = sitemap_urls.contains(target.as_str());
-
-        let (status, page_type, discovered) = match &snap.http {
-            CollectorOutcome::Captured { data } => {
-                let obs = DocumentObservations::from_html(&data.body_text);
-                let pt = classify_page(&target, &obs);
-                graph_inputs.push(build_captured_graph_input(
-                    &target, data, &obs, depth, in_sitemap, policy,
-                ));
-                let links = if depth < crawl_budget.max_depth {
-                    prioritise_representative_urls(discover_same_origin_links(
-                        &target, &obs, policy,
-                    ))
-                } else {
-                    Vec::new()
-                };
-                (PageCrawlStatus::Investigated, pt, links)
-            }
-            CollectorOutcome::Partial { data, .. } => {
-                let obs = DocumentObservations::from_html(&data.body_text);
-                (
-                    PageCrawlStatus::PartiallyInvestigated,
-                    classify_page(&target, &obs),
-                    Vec::new(),
-                )
-            }
-            CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => {
-                graph_inputs.push(unreachable_graph_input(&target, depth, in_sitemap));
-                (PageCrawlStatus::Unreachable, PageType::Unknown, Vec::new())
-            }
-        };
-
-        for next in discovered {
-            if queued_urls.insert(next.as_str().to_owned()) {
-                queue.push_back((next, depth + 1));
-            }
-        }
-
-        let report = analysis::run_all(&snap);
-        if matches!(
-            status,
-            PageCrawlStatus::Investigated | PageCrawlStatus::PartiallyInvestigated
-        ) {
-            page_reports.push((target.clone(), page_type, report));
-        }
-
-        pages.push(DiscoveredPage {
-            url: target,
-            page_type,
-            depth,
-            status,
-        });
-    }
-
-    let systemic_issues = cluster_systemic_issues(&page_reports);
-    let graph = ApplicationGraph::from_pages(&graph_inputs, !budget_exhausted);
-    let graph_results = analysis::graph::analyse(&graph);
-    CrawlSummary {
-        seed,
-        pages,
-        systemic_issues,
-        budget_exhausted,
-        graph_results,
-    }
+    crawl::crawl_concurrently(seed, crawl_budget, exec_budget, policy).await
 }
 
 pub(crate) fn build_captured_graph_input(
@@ -841,7 +779,7 @@ mod tests {
                 lighthouse: CollectorOutcome::default(),
                 axe: CollectorOutcome::default(),
             };
-            (target, PageType::Unknown, analysis::run_all(&snap))
+            (target, PageType::Unknown, crate::analysis::run_all(&snap))
         };
 
         let reports = vec![

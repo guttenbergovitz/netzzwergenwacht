@@ -2182,6 +2182,7 @@ mod tests {
             let seed = target.clone();
             Box::pin(async move {
                 CrawlSummary {
+                    coverage: crate::discovery::CrawlCoverage::default(),
                     seed: seed.clone(),
                     pages: vec![DiscoveredPage {
                         url: seed,
@@ -2640,6 +2641,7 @@ mod tests {
             let seed = target.clone();
             Box::pin(async move {
                 CrawlSummary {
+                    coverage: crate::discovery::CrawlCoverage::default(),
                     seed,
                     pages: Vec::new(),
                     systemic_issues: Vec::new(),

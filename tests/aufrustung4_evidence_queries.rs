@@ -1069,6 +1069,7 @@ impl DiagnosticBackend for StaticBackend {
         let seed = target.clone();
         Box::pin(async move {
             CrawlSummary {
+                coverage: netzzwergenwacht::discovery::CrawlCoverage::default(),
                 seed,
                 pages: Vec::new(),
                 systemic_issues: Vec::new(),
