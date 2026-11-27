@@ -76,6 +76,27 @@ pub fn reduce(state: &mut AppState, action: AppAction) -> Vec<AppEffect> {
             }
             Vec::new()
         }
+        AppAction::ModelsDiscovered(models) => {
+            let count = models.len();
+            state.launcher.discovered_models = models;
+            if state.launcher.model_input.trim().is_empty()
+                && let Some(first) = state.launcher.discovered_models.first()
+            {
+                state.launcher.model_input.clone_from(first);
+            }
+            state.launcher.discovery_error = None;
+            state.launcher.connection = ConnectionOutcome::NotTested;
+            state.status_message = format!(
+                "Model discovery: {count} model(s) advertised. Left/Right cycles on Model."
+            );
+            Vec::new()
+        }
+        AppAction::ModelDiscoveryFailed(reason) => {
+            let clean = sanitize_line(&reason, 120);
+            state.launcher.discovery_error = Some(clean.clone());
+            state.status_message = format!("Model discovery failed: {clean}");
+            Vec::new()
+        }
         AppAction::ConnectionTested(outcome) => {
             let label = outcome.label();
             state.status_message = format!("Connection test: {label}");
@@ -303,12 +324,18 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
             LauncherField::Provider => {
                 state.launcher.provider = cycle_provider(state.launcher.provider, false);
             }
+            LauncherField::Model if !state.launcher.discovered_models.is_empty() => {
+                cycle_discovered_model(state, false);
+            }
             _ => toggle_launcher_bool(state),
         },
         UserAction::MoveRight => match state.launcher.focused_field {
             LauncherField::Mode => state.launcher.mode = cycle_mode_next(state.launcher.mode),
             LauncherField::Provider => {
                 state.launcher.provider = cycle_provider(state.launcher.provider, true);
+            }
+            LauncherField::Model if !state.launcher.discovered_models.is_empty() => {
+                cycle_discovered_model(state, true);
             }
             _ => toggle_launcher_bool(state),
         },
@@ -373,6 +400,9 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
             }
             LauncherField::TestConnection => {
                 return request_connection_test(state);
+            }
+            LauncherField::DiscoverModels => {
+                return request_model_discovery(state);
             }
             LauncherField::TargetUrl
             | LauncherField::Model
@@ -455,6 +485,51 @@ fn request_connection_test(state: &mut AppState) -> Vec<AppEffect> {
         spec,
         credential: resolved.map(|resolved| resolved.secret),
     }]
+}
+
+/// Requests bounded model discovery from the configured provider.
+fn request_model_discovery(state: &mut AppState) -> Vec<AppEffect> {
+    let spec = match launcher_model_spec(state) {
+        Ok(mut spec) => {
+            // Discovery only needs the provider and endpoint, not a model name.
+            spec.model.clear();
+            spec
+        }
+        Err(message) => {
+            state.launcher.error_message = Some(sanitize_line(&message, 120));
+            return Vec::new();
+        }
+    };
+    if let Err(message) = absorb_launcher_credential(state, &spec) {
+        state.launcher.error_message = Some(sanitize_line(&message, 120));
+        return Vec::new();
+    }
+    let resolved = state.credentials.resolve(&spec);
+    state.launcher.discovery_error = None;
+    state.status_message = format!("Discovering {} models ...", spec.provider.as_str());
+    vec![AppEffect::DiscoverModels {
+        spec,
+        credential: resolved.map(|resolved| resolved.secret),
+    }]
+}
+
+fn cycle_discovered_model(state: &mut AppState, forward: bool) {
+    let models = &state.launcher.discovered_models;
+    if models.is_empty() {
+        return;
+    }
+    let current = models
+        .iter()
+        .position(|model| model == &state.launcher.model_input);
+    let next = match (current, forward) {
+        (Some(index), true) => (index + 1) % models.len(),
+        (Some(0) | None, false) => models.len() - 1,
+        (Some(index), false) => index - 1,
+        (None, true) => 0,
+    };
+    let model = models[next].clone();
+    state.launcher.model_input = model;
+    state.launcher.connection = ConnectionOutcome::NotTested;
 }
 
 const fn cycle_mode_next(mode: DiagnosticRunMode) -> DiagnosticRunMode {
@@ -1193,5 +1268,32 @@ mod tests {
             message.contains("model"),
             "error should name the missing model, got: {message}"
         );
+    }
+    #[test]
+    fn discovered_models_prefill_and_cycle_the_model_field() {
+        let mut state = AppState::default();
+        state.launcher.open = true;
+        state.launcher.focused_field = LauncherField::Model;
+
+        let _ = reduce(
+            &mut state,
+            AppAction::ModelsDiscovered(vec!["alpha-model".to_owned(), "beta-model".to_owned()]),
+        );
+        assert_eq!(state.launcher.model_input, "alpha-model");
+        assert_eq!(state.launcher.discovered_models.len(), 2);
+
+        let _ = reduce(&mut state, AppAction::User(UserAction::MoveRight));
+        assert_eq!(state.launcher.model_input, "beta-model");
+
+        let _ = reduce(
+            &mut state,
+            AppAction::ModelDiscoveryFailed("provider rejected the request".to_owned()),
+        );
+        let error = state
+            .launcher
+            .discovery_error
+            .as_deref()
+            .expect("discovery failure recorded");
+        assert!(error.contains("rejected"), "unexpected message: {error}");
     }
 }

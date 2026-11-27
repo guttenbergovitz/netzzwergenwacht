@@ -326,6 +326,8 @@ pub enum LauncherField {
     Provider,
     /// Model identifier text input.
     Model,
+    /// Bounded model discovery for the configured provider.
+    DiscoverModels,
     /// Masked session credential input. The buffer never appears in debug output.
     Credential,
     /// Toggle Level 2 Chromium browser collector.
@@ -348,7 +350,8 @@ impl LauncherField {
             Self::TargetUrl => Self::Mode,
             Self::Mode => Self::Provider,
             Self::Provider => Self::Model,
-            Self::Model => Self::Credential,
+            Self::Model => Self::DiscoverModels,
+            Self::DiscoverModels => Self::Credential,
             Self::Credential => Self::BrowserToggle,
             Self::BrowserToggle => Self::AxeToggle,
             Self::AxeToggle => Self::LighthouseToggle,
@@ -366,7 +369,8 @@ impl LauncherField {
             Self::Mode => Self::TargetUrl,
             Self::Provider => Self::Mode,
             Self::Model => Self::Provider,
-            Self::Credential => Self::Model,
+            Self::Credential => Self::DiscoverModels,
+            Self::DiscoverModels => Self::Model,
             Self::BrowserToggle => Self::Credential,
             Self::AxeToggle => Self::BrowserToggle,
             Self::LighthouseToggle => Self::AxeToggle,
@@ -492,6 +496,10 @@ pub struct LauncherState {
     pub credential_input: String,
     /// Result of the most recent connection test.
     pub connection: ConnectionOutcome,
+    /// Models advertised by the provider during the last discovery request.
+    pub discovered_models: Vec<String>,
+    /// Failure message from the last discovery request, if it failed.
+    pub discovery_error: Option<String>,
     /// Enable Level 2 Chromium browser collection.
     pub enable_browser: bool,
     /// Enable Level 2 `axe-core` collection.
@@ -515,6 +523,8 @@ impl Default for LauncherState {
             model_input: String::new(),
             credential_input: String::new(),
             connection: ConnectionOutcome::NotTested,
+            discovered_models: Vec::new(),
+            discovery_error: None,
             enable_browser: false,
             enable_axe: false,
             enable_lighthouse: false,
@@ -533,6 +543,11 @@ impl std::fmt::Debug for LauncherState {
             .field("mode", &self.mode)
             .field("provider", &self.provider)
             .field("model_input", &self.model_input)
+            .field(
+                "discovered_models",
+                &format_args!("{} advertised", self.discovered_models.len()),
+            )
+            .field("discovery_error", &self.discovery_error)
             .field(
                 "credential_input",
                 &if self.credential_input.is_empty() {

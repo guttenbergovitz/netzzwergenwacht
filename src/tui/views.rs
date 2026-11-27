@@ -2514,6 +2514,13 @@ fn render_launcher_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     } else {
         "*".repeat(state.launcher.credential_input.chars().count().min(32))
     };
+    let discovery_display = if let Some(error) = &state.launcher.discovery_error {
+        format!("failed: {error}")
+    } else if state.launcher.discovered_models.is_empty() {
+        String::from("(not requested)")
+    } else {
+        format!("{} advertised", state.launcher.discovered_models.len())
+    };
     let model_display = if state.launcher.model_input.is_empty() {
         "(from configuration, if any)".to_owned()
     } else {
@@ -2573,6 +2580,14 @@ fn render_launcher_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 field_style(LauncherField::Model),
             ),
         ]),
+        Line::from(vec![Span::styled(
+            format!(
+                " {}[ Discover models ]  {}",
+                focus_marker(LauncherField::DiscoverModels),
+                discovery_display
+            ),
+            field_style(LauncherField::DiscoverModels),
+        )]),
         Line::from(vec![
             Span::styled(
                 format!(

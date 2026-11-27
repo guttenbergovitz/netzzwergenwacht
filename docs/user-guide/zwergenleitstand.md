@@ -25,6 +25,7 @@ everything a run needs:
 | Model | Model identifier; prefilled from the resolved configuration |
 | Credential (session only) | Provider key, displayed as asterisks and never persisted |
 | Browser / Axe / Lighthouse | Level 2 instruments for this run |
+| Discover models | Queries the provider's advertised model list and fills the Model row |
 | Test connection | Probes the provider with the entered route and reports the outcome |
 | Start | Begins the run |
 

@@ -181,8 +181,10 @@ provider = "openai"
 model = "your-security-model-id"
 ```
 
-Resolution order is per-dwarf table, then role table, then `models.default`. Inspect the result
-without starting a run:
+Resolution order is per-dwarf table, then role table, then `models.default`. In the workbench,
+`Discover models` queries the provider's advertised model list and `Test connection` proves the
+route before a mission starts; credentials entered there live only in the session store. Inspect the
+resolved routing without starting a run:
 
 ```bash
 nzw config show

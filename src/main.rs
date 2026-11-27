@@ -161,6 +161,9 @@ enum Command {
         /// Launch the interactive Zwergenleitstand TUI workbench for this investigation.
         #[arg(long)]
         tui: bool,
+        /// Path to a TOML configuration file (TUI mode only).
+        #[arg(long)]
+        config: Option<PathBuf>,
     },
     /// Re-audit a target and verify whether baseline findings are resolved or unverified.
     Verify {
@@ -537,9 +540,10 @@ async fn main() -> ExitCode {
             audience,
             events,
             tui: use_tui,
+            config,
         } => {
             if use_tui {
-                let Some(loaded) = load_tui_config(None) else {
+                let Some(loaded) = load_tui_config(config) else {
                     return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
                 };
                 let options = TuiStartupOptions {

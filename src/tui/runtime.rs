@@ -367,6 +367,7 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
 
     let mut active_task: Option<ActiveBackgroundTask> = None;
     let mut pending_connection_test: Option<mpsc::Receiver<ConnectionOutcome>> = None;
+    let mut pending_model_discovery: Option<mpsc::Receiver<Result<Vec<String>, String>>> = None;
     let mut pending_effects = initial_effects;
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_millis(100);
@@ -424,6 +425,30 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                     });
                     pending_connection_test = Some(rx);
                 }
+                AppEffect::DiscoverModels { spec, credential } => {
+                    let (tx, rx) = mpsc::channel(1);
+                    tokio::spawn(async move {
+                        let resolved = match credential {
+                            Some(secret) => Some(crate::credentials::ResolvedCredential {
+                                secret,
+                                source: crate::credentials::CredentialSource::Session,
+                            }),
+                            None => {
+                                crate::credentials::SessionCredentialStore::new().resolve(&spec)
+                            }
+                        };
+                        let result = match resolved {
+                            Some(resolved) => {
+                                crate::intelligence::discover_models(&spec, &resolved).await
+                            }
+                            None => Err(String::from(
+                                "no credential is available for model discovery",
+                            )),
+                        };
+                        let _ = tx.send(result).await;
+                    });
+                    pending_model_discovery = Some(rx);
+                }
                 AppEffect::SaveReport(path) => {
                     let res = save_current_report(&state, &path);
                     let follow_up = reduce(&mut state, AppAction::ReportSaved(res));
@@ -445,6 +470,18 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
             let effs = reduce(&mut state, AppAction::ConnectionTested(outcome));
             pending_effects.extend(effs);
             pending_connection_test = None;
+        }
+
+        if let Some(rx) = &mut pending_model_discovery
+            && let Ok(result) = rx.try_recv()
+        {
+            let action = match result {
+                Ok(models) => AppAction::ModelsDiscovered(models),
+                Err(reason) => AppAction::ModelDiscoveryFailed(reason),
+            };
+            let effs = reduce(&mut state, action);
+            pending_effects.extend(effs);
+            pending_model_discovery = None;
         }
 
         if state.should_quit {

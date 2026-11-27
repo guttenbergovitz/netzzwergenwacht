@@ -105,6 +105,10 @@ pub enum AppAction {
     ReportSaved(Result<PathBuf, String>),
     /// A connection test finished with an explicit outcome.
     ConnectionTested(crate::intelligence::ConnectionOutcome),
+    /// Model discovery returned the identifiers the provider advertises.
+    ModelsDiscovered(Vec<String>),
+    /// Model discovery failed with the given reason.
+    ModelDiscoveryFailed(String),
     /// The background task observed a cancellation request and has fully stopped,
     /// or the escalation deadline expired and the task was force-terminated.
     CancellationSettled {
@@ -123,6 +127,13 @@ pub enum AppEffect {
     /// Probe the configured provider with the given credential.
     TestConnection {
         /// Provider and model to probe.
+        spec: crate::config::ModelSpec,
+        /// Credential to use, or `None` when the provider needs none.
+        credential: Option<crate::credentials::SessionSecret>,
+    },
+    /// Ask the configured provider which models it advertises.
+    DiscoverModels {
+        /// Provider and endpoint to query.
         spec: crate::config::ModelSpec,
         /// Credential to use, or `None` when the provider needs none.
         credential: Option<crate::credentials::SessionSecret>,
