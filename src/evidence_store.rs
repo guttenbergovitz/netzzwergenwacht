@@ -30,16 +30,18 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 use turso::{Builder, Database};
 
+use crate::brigade::DwarfId;
 use crate::discovery::{
     CrawlSummary, PageCrawlStatus, PageType, ResourceKind, ResourceObservation, ResourceStatus,
     RobotsOutcome, SystemicClassification,
 };
+use crate::domain::{Confidence, EvidenceRef, EvidenceSource, Severity};
 
 /// Schema version this build creates and understands.
 ///
 /// Migrations are forward-only: a store written by a newer build is refused
 /// rather than partially understood.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Maximum number of simultaneous write connections.
 ///
@@ -167,6 +169,57 @@ pub struct StoredDependent {
     pub page_url: String,
     /// Resource family the page referenced.
     pub kind: ResourceKind,
+}
+
+/// One finding retained for a crawled page, together with the evidence it cites.
+///
+/// The evidence references are read back as the same [`EvidenceRef`] values that
+/// produced them, so a stored finding can be navigated to its observation without
+/// a second acquisition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredFinding {
+    /// Page the finding was raised for.
+    pub page_url: String,
+    /// Position of the finding within its page, stable within the stored run.
+    pub finding_index: usize,
+    /// Stable rule identifier.
+    pub rule_id: String,
+    /// Specialist that raised the finding.
+    pub dwarf_id: DwarfId,
+    /// Impact severity reported by the rule.
+    pub severity: Severity,
+    /// Confidence reported by the rule.
+    pub confidence: Confidence,
+    /// Headline of the finding.
+    pub title: String,
+    /// Explanation grounded in the observed evidence.
+    pub summary: String,
+    /// Optional remediation guidance.
+    pub remediation: Option<String>,
+    /// Evidence references recorded with the finding.
+    pub evidence_refs: Vec<EvidenceRef>,
+}
+
+/// Verdict totals of one specialist for a run.
+///
+/// Each outcome is stored separately: a single total cannot distinguish a rule
+/// that passed from a rule that was never evaluated.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredDwarfTotal {
+    /// Specialist that produced the verdicts.
+    pub dwarf_id: DwarfId,
+    /// Checks that produced any verdict.
+    pub checks_evaluated: usize,
+    /// Checks that passed.
+    pub checks_passed: usize,
+    /// Checks that failed.
+    pub checks_failed: usize,
+    /// Checks deliberately not evaluated.
+    pub checks_skipped: usize,
+    /// Checks that could not be evaluated for lack of evidence.
+    pub checks_unavailable: usize,
+    /// Findings raised by this specialist.
+    pub findings_count: usize,
 }
 
 /// Summary row for one recorded run.
@@ -495,6 +548,102 @@ impl EvidenceStore {
                 .await
                 .map_err(classify)?;
         }
+
+        self.insert_page_findings(connection, record.run_id, &record.summary.page_diagnostics)
+            .await?;
+        self.insert_dwarf_totals(connection, record.run_id, &record.summary.analysis_totals)
+            .await?;
+        Ok(())
+    }
+
+    /// Writes per-page findings and the evidence references that raised them.
+    ///
+    /// Split from [`Self::insert_observations`] purely to keep each write routine
+    /// readable; both run inside the caller's transaction.
+    async fn insert_page_findings(
+        &self,
+        connection: &turso::Connection,
+        run_id: &str,
+        pages: &[crate::discovery::PageDiagnostics],
+    ) -> Result<(), WriteFailure> {
+        for page in pages {
+            for (finding_index, finding) in page.findings.iter().enumerate() {
+                connection
+                    .execute(
+                        "INSERT INTO page_findings (run_id, page_url, finding_index, rule_id,
+                            dwarf, severity, confidence, title, summary, remediation)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                         ON CONFLICT(run_id, page_url, finding_index) DO NOTHING",
+                        (
+                            run_id,
+                            page.url.as_str(),
+                            count(finding_index),
+                            finding.rule_id.0.clone(),
+                            finding.dwarf_id.config_key(),
+                            severity_label(finding.severity),
+                            confidence_label(finding.confidence),
+                            finding.title.clone(),
+                            finding.summary.clone(),
+                            finding.remediation.clone(),
+                        ),
+                    )
+                    .await
+                    .map_err(classify)?;
+
+                for (evidence_index, reference) in finding.evidence_refs.iter().enumerate() {
+                    connection
+                        .execute(
+                            "INSERT INTO finding_evidence (run_id, page_url, finding_index,
+                                evidence_index, source, detail)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                             ON CONFLICT(run_id, page_url, finding_index, evidence_index)
+                                 DO NOTHING",
+                            (
+                                run_id,
+                                page.url.as_str(),
+                                count(finding_index),
+                                count(evidence_index),
+                                evidence_source_label(reference.source),
+                                reference.detail.clone(),
+                            ),
+                        )
+                        .await
+                        .map_err(classify)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Writes the per-specialist verdict counts for one run.
+    async fn insert_dwarf_totals(
+        &self,
+        connection: &turso::Connection,
+        run_id: &str,
+        totals: &[crate::discovery::DwarfAnalysisTotal],
+    ) -> Result<(), WriteFailure> {
+        for total in totals {
+            connection
+                .execute(
+                    "INSERT INTO dwarf_totals (run_id, dwarf, checks_evaluated, checks_passed,
+                        checks_failed, checks_skipped, checks_unavailable, findings_count)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     ON CONFLICT(run_id, dwarf) DO NOTHING",
+                    (
+                        run_id,
+                        total.dwarf_id.config_key(),
+                        count(total.checks_evaluated),
+                        count(total.checks_passed),
+                        count(total.checks_failed),
+                        count(total.checks_skipped),
+                        count(total.checks_unavailable),
+                        count(total.findings_count),
+                    ),
+                )
+                .await
+                .map_err(classify)?;
+        }
         Ok(())
     }
 
@@ -732,6 +881,133 @@ impl EvidenceStore {
         Ok(dependents)
     }
 
+    /// Lists retained findings of one run, optionally narrowed to a page and a severity.
+    ///
+    /// Both filters are optional; `None` means "no restriction", not "unavailable". The limit is
+    /// never widened, and evidence references are read for each returned finding.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when a query fails or a stored label is not recognised.
+    pub async fn findings(
+        &self,
+        run_id: &str,
+        page_url: Option<&str>,
+        severity: Option<Severity>,
+        limit: usize,
+    ) -> Result<Vec<StoredFinding>, StoreError> {
+        let connection = self.database.connect()?;
+        let severity_label_value = severity.map(severity_label);
+        let mut rows = connection
+            .query(
+                "SELECT page_url, finding_index, rule_id, dwarf, severity, confidence, title,
+                        summary, remediation
+                 FROM page_findings
+                 WHERE run_id = ?1
+                   AND (?2 IS NULL OR page_url = ?2)
+                   AND (?3 IS NULL OR severity = ?3)
+                 ORDER BY page_url ASC, finding_index ASC
+                 LIMIT ?4",
+                (run_id, page_url, severity_label_value, bounded_limit(limit)),
+            )
+            .await?;
+
+        let mut findings = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let dwarf_label = row.get::<String>(3)?;
+            let dwarf_id = DwarfId::from_config_key(&dwarf_label)
+                .ok_or_else(|| unknown_value("dwarf", &dwarf_label))?;
+            let severity_value = row.get::<String>(4)?;
+            let severity = severity_from_label(&severity_value)
+                .ok_or_else(|| unknown_value("severity", &severity_value))?;
+            let confidence_value = row.get::<String>(5)?;
+            let confidence = confidence_from_label(&confidence_value)
+                .ok_or_else(|| unknown_value("confidence", &confidence_value))?;
+            let page = row.get::<String>(0)?;
+            let index = positive(&row, 1)?;
+
+            findings.push(StoredFinding {
+                page_url: page.clone(),
+                finding_index: index,
+                rule_id: row.get::<String>(2)?,
+                dwarf_id,
+                severity,
+                confidence,
+                title: row.get::<String>(6)?,
+                summary: row.get::<String>(7)?,
+                remediation: row.get::<String>(8).ok(),
+                evidence_refs: self
+                    .finding_evidence(&connection, run_id, &page, index)
+                    .await?,
+            });
+        }
+        Ok(findings)
+    }
+
+    async fn finding_evidence(
+        &self,
+        connection: &turso::Connection,
+        run_id: &str,
+        page_url: &str,
+        finding_index: usize,
+    ) -> Result<Vec<EvidenceRef>, StoreError> {
+        let mut rows = connection
+            .query(
+                "SELECT source, detail FROM finding_evidence
+                 WHERE run_id = ?1 AND page_url = ?2 AND finding_index = ?3
+                 ORDER BY evidence_index ASC",
+                (run_id, page_url, count(finding_index)),
+            )
+            .await?;
+        let mut refs = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let label = row.get::<String>(0)?;
+            // A label this build cannot interpret is skipped rather than mapped onto a
+            // plausible source, which would attach the evidence to the wrong observation.
+            if let Some(source) = evidence_source_from_label(&label) {
+                refs.push(EvidenceRef {
+                    source,
+                    detail: row.get::<String>(1)?,
+                });
+            }
+        }
+        Ok(refs)
+    }
+
+    /// Lists each specialist's verdict totals for one run.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the query fails or a stored dwarf key is not recognised.
+    pub async fn dwarf_totals(&self, run_id: &str) -> Result<Vec<StoredDwarfTotal>, StoreError> {
+        let connection = self.database.connect()?;
+        let mut rows = connection
+            .query(
+                "SELECT dwarf, checks_evaluated, checks_passed, checks_failed, checks_skipped,
+                        checks_unavailable, findings_count
+                 FROM dwarf_totals WHERE run_id = ?1 ORDER BY dwarf ASC",
+                (run_id,),
+            )
+            .await?;
+
+        let mut totals = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let label = row.get::<String>(0)?;
+            let dwarf_id =
+                DwarfId::from_config_key(&label).ok_or_else(|| unknown_value("dwarf", &label))?;
+            totals.push(StoredDwarfTotal {
+                dwarf_id,
+                checks_evaluated: positive(&row, 1)?,
+                checks_passed: positive(&row, 2)?,
+                checks_failed: positive(&row, 3)?,
+                checks_skipped: positive(&row, 4)?,
+                checks_unavailable: positive(&row, 5)?,
+                findings_count: positive(&row, 6)?,
+            });
+        }
+        Ok(totals)
+    }
+
     /// Lists systemic clusters of one run, ordered by affected breadth.
     ///
     /// # Errors
@@ -845,6 +1121,13 @@ async fn initialise(database: &Database) -> Result<(), StoreError> {
             .map_err(StoreError::from)?;
         version = 3;
     }
+    if version < 4 {
+        connection
+            .execute_batch(MIGRATION_V4)
+            .await
+            .map_err(StoreError::from)?;
+        version = 4;
+    }
     connection
         .execute(format!("PRAGMA user_version = {version}"), ())
         .await
@@ -955,6 +1238,57 @@ CREATE INDEX IF NOT EXISTS page_resources_by_resource
     ON page_resources(run_id, resource_url);
 ";
 
+/// Schema v4 retains what a crawl concluded about each page.
+///
+/// A run that stored which pages exist but not what was wrong with them forced the next
+/// inspection to repeat the acquisition. Findings, the evidence references they were raised
+/// from, and each specialist's verdict counts are recorded in the same transaction as the run,
+/// so a finding can never reference evidence that was not committed.
+const MIGRATION_V4: &str = "
+CREATE TABLE IF NOT EXISTS page_findings (
+    run_id TEXT NOT NULL,
+    page_url TEXT NOT NULL,
+    finding_index INTEGER NOT NULL,
+    rule_id TEXT NOT NULL,
+    dwarf TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    title TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    remediation TEXT,
+    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
+    PRIMARY KEY (run_id, page_url, finding_index)
+);
+CREATE INDEX IF NOT EXISTS page_findings_by_rule
+    ON page_findings(run_id, rule_id);
+CREATE INDEX IF NOT EXISTS page_findings_by_dwarf
+    ON page_findings(run_id, dwarf);
+
+CREATE TABLE IF NOT EXISTS finding_evidence (
+    run_id TEXT NOT NULL,
+    page_url TEXT NOT NULL,
+    finding_index INTEGER NOT NULL,
+    evidence_index INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    detail TEXT NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
+    PRIMARY KEY (run_id, page_url, finding_index, evidence_index)
+);
+
+CREATE TABLE IF NOT EXISTS dwarf_totals (
+    run_id TEXT NOT NULL,
+    dwarf TEXT NOT NULL,
+    checks_evaluated INTEGER NOT NULL,
+    checks_passed INTEGER NOT NULL,
+    checks_failed INTEGER NOT NULL,
+    checks_skipped INTEGER NOT NULL,
+    checks_unavailable INTEGER NOT NULL,
+    findings_count INTEGER NOT NULL,
+    FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE,
+    PRIMARY KEY (run_id, dwarf)
+);
+";
+
 fn count(value: usize) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
@@ -1038,6 +1372,81 @@ const fn systemic_label(classification: SystemicClassification) -> &'static str 
         SystemicClassification::SuspectedSharedTemplate => "suspected_shared_template",
         SystemicClassification::SuspectedCommonConfiguration => "suspected_common_configuration",
         SystemicClassification::VerifiedCommonCause => "verified_common_cause",
+    }
+}
+
+const fn severity_label(severity: Severity) -> &'static str {
+    match severity {
+        Severity::Info => "info",
+        Severity::Low => "low",
+        Severity::Medium => "medium",
+        Severity::High => "high",
+        Severity::Critical => "critical",
+    }
+}
+
+fn severity_from_label(label: &str) -> Option<Severity> {
+    match label {
+        "info" => Some(Severity::Info),
+        "low" => Some(Severity::Low),
+        "medium" => Some(Severity::Medium),
+        "high" => Some(Severity::High),
+        "critical" => Some(Severity::Critical),
+        _ => None,
+    }
+}
+
+const fn confidence_label(confidence: Confidence) -> &'static str {
+    match confidence {
+        Confidence::Low => "low",
+        Confidence::Medium => "medium",
+        Confidence::High => "high",
+    }
+}
+
+fn confidence_from_label(label: &str) -> Option<Confidence> {
+    match label {
+        "low" => Some(Confidence::Low),
+        "medium" => Some(Confidence::Medium),
+        "high" => Some(Confidence::High),
+        _ => None,
+    }
+}
+
+/// Records the collector that produced a finding's evidence.
+///
+/// The labels are the `serde` names of [`EvidenceSource`], so a stored reference and a reference
+/// produced in memory agree on their spelling rather than on a second private vocabulary.
+const fn evidence_source_label(source: EvidenceSource) -> &'static str {
+    match source {
+        EvidenceSource::HttpStatus => "http_status",
+        EvidenceSource::HttpFinalUrl => "http_final_url",
+        EvidenceSource::HttpRedirectChain => "http_redirect_chain",
+        EvidenceSource::HttpHeaders => "http_headers",
+        EvidenceSource::HttpTiming => "http_timing",
+        EvidenceSource::HttpBody => "http_body",
+        EvidenceSource::TlsCertificate => "tls_certificate",
+        EvidenceSource::BrowserRuntime => "browser_runtime",
+        EvidenceSource::LighthouseReport => "lighthouse_report",
+        EvidenceSource::AxeReport => "axe_report",
+        EvidenceSource::VisualLayout => "visual_layout",
+    }
+}
+
+fn evidence_source_from_label(label: &str) -> Option<EvidenceSource> {
+    match label {
+        "http_status" => Some(EvidenceSource::HttpStatus),
+        "http_final_url" => Some(EvidenceSource::HttpFinalUrl),
+        "http_redirect_chain" => Some(EvidenceSource::HttpRedirectChain),
+        "http_headers" => Some(EvidenceSource::HttpHeaders),
+        "http_timing" => Some(EvidenceSource::HttpTiming),
+        "http_body" => Some(EvidenceSource::HttpBody),
+        "tls_certificate" => Some(EvidenceSource::TlsCertificate),
+        "browser_runtime" => Some(EvidenceSource::BrowserRuntime),
+        "lighthouse_report" => Some(EvidenceSource::LighthouseReport),
+        "axe_report" => Some(EvidenceSource::AxeReport),
+        "visual_layout" => Some(EvidenceSource::VisualLayout),
+        _ => None,
     }
 }
 
@@ -1125,15 +1534,21 @@ fn resource_status_from_label(label: &str) -> Option<ResourceStatus> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CrawlRecord, EvidenceStore, SCHEMA_VERSION, StoreError};
+    use super::{
+        CrawlRecord, EvidenceStore, MIGRATION_V2, MIGRATION_V3, SCHEMA_V1, SCHEMA_VERSION,
+        StoreError,
+    };
     use crate::brigade::DwarfId;
     use crate::discovery::{
-        CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageResourceEdge, PageType,
-        ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus, RobotsOutcome,
-        SystemicClassification, SystemicIssue,
+        CrawlCoverage, CrawlSummary, DiscoveredPage, DwarfAnalysisTotal, PageCrawlStatus,
+        PageDiagnostics, PageFinding, PageResourceEdge, PageType, ResourceCoverage, ResourceKind,
+        ResourceObservation, ResourceStatus, RobotsOutcome, SystemicClassification, SystemicIssue,
     };
-    use crate::domain::{AuditTarget, Confidence, RuleId, Severity, TargetPolicy};
+    use crate::domain::{
+        AuditTarget, Confidence, EvidenceRef, EvidenceSource, RuleId, Severity, TargetPolicy,
+    };
     use std::path::PathBuf;
+    use turso::Builder;
 
     fn store_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("nzw-evidence-{}-{name}", std::process::id()));
@@ -1162,6 +1577,7 @@ mod tests {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     fn summary() -> CrawlSummary {
         let coverage = CrawlCoverage {
             discovered_urls: 6,
@@ -1246,8 +1662,43 @@ mod tests {
                     Some(21),
                 ),
             ],
-            analysis_totals: Vec::new(),
-            page_diagnostics: Vec::new(),
+            analysis_totals: vec![DwarfAnalysisTotal {
+                dwarf_id: DwarfId::Sicherheits,
+                checks_evaluated: 10,
+                checks_passed: 7,
+                checks_failed: 1,
+                checks_skipped: 2,
+                checks_unavailable: 0,
+                findings_count: 1,
+            }],
+            page_diagnostics: vec![PageDiagnostics {
+                url: "https://example.org/".to_owned(),
+                http_status: Some(200),
+                page_type: PageType::Homepage,
+                status: PageCrawlStatus::Investigated,
+                checks_passed: 7,
+                checks_failed: 1,
+                checks_skipped: 2,
+                checks_unavailable: 0,
+                findings: vec![PageFinding {
+                    rule_id: RuleId("sec.header.hsts_missing".to_owned()),
+                    dwarf_id: DwarfId::Sicherheits,
+                    severity: Severity::High,
+                    confidence: Confidence::High,
+                    title: "HSTS header is missing".to_owned(),
+                    summary: "The response carried no Strict-Transport-Security header.".to_owned(),
+                    remediation: Some(
+                        "Send Strict-Transport-Security on https responses.".to_owned(),
+                    ),
+                    evidence_refs: vec![
+                        EvidenceRef::new(
+                            EvidenceSource::HttpHeaders,
+                            "header=strict-transport-security",
+                        ),
+                        EvidenceRef::new(EvidenceSource::HttpStatus, "status=200"),
+                    ],
+                }],
+            }],
         }
     }
 
@@ -1659,5 +2110,207 @@ mod tests {
             0,
             "a pre-edge store has no observed dependents, which is not an error"
         );
+    }
+
+    #[tokio::test]
+    async fn findings_and_their_evidence_survive_the_round_trip() {
+        let store = EvidenceStore::open(&store_path("findings"))
+            .await
+            .expect("open");
+        store
+            .record_crawl(CrawlRecord {
+                run_id: "run-findings",
+                application: "https://example.org",
+                summary: &summary(),
+                recorded_at_unix_secs: 1_700_000_000,
+            })
+            .await
+            .expect("record");
+
+        let findings = store
+            .findings("run-findings", None, None, 16)
+            .await
+            .expect("findings");
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.page_url, "https://example.org/");
+        assert_eq!(finding.finding_index, 0);
+        assert_eq!(finding.rule_id, "sec.header.hsts_missing");
+        assert_eq!(finding.dwarf_id, DwarfId::Sicherheits);
+        assert_eq!(finding.severity, Severity::High);
+        assert_eq!(finding.confidence, Confidence::High);
+        assert_eq!(finding.title, "HSTS header is missing");
+        assert_eq!(
+            finding.remediation.as_deref(),
+            Some("Send Strict-Transport-Security on https responses.")
+        );
+        assert_eq!(
+            finding.evidence_refs.len(),
+            2,
+            "a stored finding must carry the evidence it was raised from"
+        );
+        assert_eq!(finding.evidence_refs[0].source, EvidenceSource::HttpHeaders);
+        assert_eq!(
+            finding.evidence_refs[0].detail,
+            "header=strict-transport-security"
+        );
+        assert_eq!(finding.evidence_refs[1].source, EvidenceSource::HttpStatus);
+    }
+
+    #[tokio::test]
+    async fn findings_can_be_narrowed_by_page_and_severity_without_widening_the_limit() {
+        let store = EvidenceStore::open(&store_path("finding-filters"))
+            .await
+            .expect("open");
+        store
+            .record_crawl(CrawlRecord {
+                run_id: "run-filters",
+                application: "https://example.org",
+                summary: &summary(),
+                recorded_at_unix_secs: 1_700_000_000,
+            })
+            .await
+            .expect("record");
+
+        assert_eq!(
+            store
+                .findings("run-filters", Some("https://example.org/"), None, 8)
+                .await
+                .expect("by page")
+                .len(),
+            1
+        );
+        assert_eq!(
+            store
+                .findings(
+                    "run-filters",
+                    Some("https://example.org/elsewhere"),
+                    None,
+                    8
+                )
+                .await
+                .expect("other page")
+                .len(),
+            0
+        );
+        assert_eq!(
+            store
+                .findings("run-filters", None, Some(Severity::Critical), 8)
+                .await
+                .expect("by severity")
+                .len(),
+            0,
+            "a severity filter must not fall back to broader matches"
+        );
+        assert_eq!(
+            store
+                .findings("run-filters", None, None, 0)
+                .await
+                .expect("bounded")
+                .len(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn each_dwarf_verdict_outcome_is_stored_separately() {
+        let store = EvidenceStore::open(&store_path("dwarf-totals"))
+            .await
+            .expect("open");
+        store
+            .record_crawl(CrawlRecord {
+                run_id: "run-totals",
+                application: "https://example.org",
+                summary: &summary(),
+                recorded_at_unix_secs: 1_700_000_000,
+            })
+            .await
+            .expect("record");
+
+        let totals = store.dwarf_totals("run-totals").await.expect("totals");
+        assert_eq!(totals.len(), 1);
+        let total = totals[0];
+        assert_eq!(total.dwarf_id, DwarfId::Sicherheits);
+        assert_eq!(total.checks_evaluated, 10);
+        assert_eq!(total.checks_passed, 7);
+        assert_eq!(total.checks_failed, 1);
+        assert_eq!(total.checks_skipped, 2);
+        assert_eq!(total.checks_unavailable, 0);
+        assert_eq!(total.findings_count, 1);
+    }
+
+    #[tokio::test]
+    async fn a_version_three_store_gains_finding_tables_without_losing_rows() {
+        let path = store_path("migrate-v3");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("dir");
+        }
+        let database = Builder::new_local(&path.to_string_lossy())
+            .build()
+            .await
+            .expect("raw store");
+        let connection = database.connect().expect("connect");
+        connection
+            .execute_batch(SCHEMA_V1)
+            .await
+            .expect("schema v1");
+        connection
+            .execute_batch(MIGRATION_V2)
+            .await
+            .expect("migration v2");
+        connection
+            .execute_batch(MIGRATION_V3)
+            .await
+            .expect("migration v3");
+        connection
+            .execute(
+                "INSERT INTO runs (run_id, application, seed_url, recorded_at_unix_secs,
+                    complete, budget_exhausted, robots, discovered_urls, fetched_urls,
+                    analysed_urls, failed_urls, skipped_budget_urls, cancelled_urls,
+                    robots_blocked_urls, queue_rejections, duplicate_offers, max_pages,
+                    max_depth, resources_discovered, resources_fetched, resources_failed,
+                    resources_skipped, resources_cancelled, resources_truncated,
+                    resources_external_refused, resources_max)
+                 VALUES ('legacy', 'https://example.org', 'https://example.org/', 1,
+                    1, 0, 'observed', 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0)",
+                (),
+            )
+            .await
+            .expect("legacy run");
+        connection
+            .execute(
+                "INSERT INTO pages (run_id, url, depth, page_type, status)
+                 VALUES ('legacy', 'https://example.org/', 0, 'homepage', 'investigated')",
+                (),
+            )
+            .await
+            .expect("legacy page");
+        connection
+            .execute("PRAGMA user_version = 3", ())
+            .await
+            .expect("version");
+        drop(connection);
+        drop(database);
+
+        let store = EvidenceStore::open(&path).await.expect("reopen");
+        assert_eq!(
+            store.schema_version().await.expect("version"),
+            SCHEMA_VERSION
+        );
+        assert_eq!(
+            store.pages("legacy", None, 8).await.expect("pages").len(),
+            1,
+            "the migration must not discard the pages it did not touch"
+        );
+        assert_eq!(
+            store
+                .findings("legacy", None, None, 8)
+                .await
+                .expect("findings")
+                .len(),
+            0,
+            "a legacy run has no stored findings, which is not an error"
+        );
+        assert_eq!(store.dwarf_totals("legacy").await.expect("totals").len(), 0);
     }
 }

@@ -244,5 +244,55 @@ async fn crawl_persists_coverage_findings_and_shared_resource_dependents() {
     let stored_issues = store.systemic_issues("recon-test-run", 64).await.unwrap();
     assert_eq!(stored_issues.len(), summary.systemic_issues.len());
 
+    // The path that matters: pages that were analysed produce findings, and those
+    // findings are readable from the store with the evidence that raised them.
+    let analysed_findings: usize = summary
+        .page_diagnostics
+        .iter()
+        .map(|page| page.findings.len())
+        .sum();
+    assert!(
+        analysed_findings > 0,
+        "the fixture pages share defects, so the crawl must have raised findings"
+    );
+
+    let stored_findings = store
+        .findings("recon-test-run", None, None, 128)
+        .await
+        .unwrap();
+    assert_eq!(stored_findings.len(), analysed_findings);
+    assert!(
+        stored_findings
+            .iter()
+            .all(|finding| !finding.evidence_refs.is_empty()),
+        "every persisted finding must carry the evidence it was raised from"
+    );
+    let defective_page = summary
+        .page_diagnostics
+        .iter()
+        .find(|page| !page.findings.is_empty())
+        .expect("the fixture pages share defects, so one page must carry findings");
+    let for_page = store
+        .findings("recon-test-run", Some(&defective_page.url), None, 128)
+        .await
+        .unwrap();
+    assert_eq!(for_page.len(), defective_page.findings.len());
+    assert!(
+        for_page
+            .iter()
+            .all(|finding| finding.page_url == defective_page.url),
+        "a page filter must not return findings raised on another page"
+    );
+
+    let totals = store.dwarf_totals("recon-test-run").await.unwrap();
+    assert_eq!(totals.len(), summary.analysis_totals.len());
+    let evaluated: usize = totals.iter().map(|total| total.checks_evaluated).sum();
+    let expected: usize = summary
+        .analysis_totals
+        .iter()
+        .map(|total| total.checks_evaluated)
+        .sum();
+    assert_eq!(evaluated, expected);
+
     let _ = std::fs::remove_dir_all(&dir);
 }

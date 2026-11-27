@@ -9,14 +9,18 @@ survive the process that produced them.
 Implementation: `src/evidence_store.rs`. Engine decision: ADR 0032, amended by
 ADR 0033 (Turso Database, MVCC).
 
-## What is stored in schema version 3
+## What is stored in schema version 4
 
 | Table | Contents |
 | --- | --- |
 | `runs` | One row per recorded crawl: identity, seed, recording time, completeness, the full page and resource coverage counters, and the robots outcome |
 | `pages` | One row per discovered URL with depth, inferred page type and explicit crawl status |
 | `resources` | One row per acquired subresource with kind, status, HTTP status, declared content type and encoding, observed byte length, `Cache-Control`, `ETag`/`Last-Modified` presence, truncation and failure reason |
+| `page_resources` | One row per observed page-to-resource reference, recorded whether or not the resource was acquired |
 | `systemic_issues` | One row per cross-page cluster with rule identity, affected breadth, classification and summary |
+| `page_findings` | One row per finding raised on a page: rule, owning specialist, severity, confidence, title, summary and optional remediation |
+| `finding_evidence` | One row per evidence reference supporting a finding, ordered so the reference list reads back exactly as it was produced |
+| `dwarf_totals` | Per-specialist verdict counts: evaluated, passed, failed, skipped and unevaluable, plus the finding count |
 
 `PRAGMA user_version` carries the schema version. Migrations are forward-only: a
 store written by a newer build is refused with an explicit version pair rather than
@@ -73,14 +77,25 @@ read, and returns an empty list for a resource with no observed dependents rathe
 Limits are never widened. A caller that asks for zero rows receives zero rows; the store will not
 quietly answer one.
 
+Version 4 stores the conclusions, not only the observations. A store that records
+that a page was inspected but not what was wrong with it forces the next question to
+be answered by crawling again. Findings, their evidence references and the per-dwarf
+verdict counts are written in the same transaction as the run they belong to, so a
+finding can never reference evidence that was not committed alongside it.
+
+Verdict counts are stored per outcome rather than as one total, because a specialist
+with forty evaluated checks and a specialist with forty unevaluable ones must not
+look the same.
+
 ## What is not stored yet
 
-Schema version 2 deliberately stops at the observations the crawler already
-produces. Not yet persisted:
+Not yet persisted:
 
-- per-page findings and their evidence references;
-- page-to-resource edges, which shared-resource blast-radius analysis needs;
-- typed observation bodies beyond the coverage counters;
+- typed observation bodies beyond the coverage counters, findings and resource
+  metadata (for example the full HTTP header set per page);
+- resource-level findings, which need rules whose scope is a resource rather than a
+  page;
+- acquisition and persistence outcome records as first-class rows;
 - historical comparisons and cache entries.
 
 Each of these is an explicit migration rather than a silent widening of an existing
