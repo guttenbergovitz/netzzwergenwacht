@@ -78,6 +78,8 @@ async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_repor
         enable_browser: false,
         enable_axe: false,
         enable_lighthouse: false,
+        provider: netzzwergenwacht::config::ProviderKind::OpenAi,
+        model: String::new(),
     };
 
     let artefacts = execute_diagnostic_run(
@@ -520,6 +522,8 @@ async fn cancelled_run_stops_before_acquisition() {
         enable_browser: true,
         enable_axe: true,
         enable_lighthouse: true,
+        provider: netzzwergenwacht::config::ProviderKind::OpenAi,
+        model: String::new(),
     };
     let outcome = execute_diagnostic_run_cancellable(
         spec,
@@ -529,6 +533,7 @@ async fn cancelled_run_stops_before_acquisition() {
         sink,
         cancel_rx,
         std::path::Path::new(".nzw/memory"),
+        std::sync::Arc::new(netzzwergenwacht::intelligence::EmptyProviderRouter),
     )
     .await;
 
@@ -546,5 +551,80 @@ fn workbench_patrol_memory_defaults_to_the_shared_directory() {
         options.memory_dir,
         std::path::PathBuf::from(netzzwergenwacht::patrol::memory::DEFAULT_MEMORY_DIR),
         "the workbench must continue the same patrol memory as the CLI"
+    );
+}
+
+fn render_state(state: &AppState) -> String {
+    let mut terminal = Terminal::new(TestBackend::new(100, 32)).expect("test terminal");
+    terminal
+        .draw(|frame| render(frame, state))
+        .expect("render workbench");
+    buffer_text(&terminal)
+}
+
+#[test]
+fn launcher_exposes_provider_model_and_session_credential() {
+    let state = AppState::default();
+    let text = render_state(&state);
+    for expected in [
+        "Provider",
+        "Model",
+        "Credential (session only)",
+        "Test connection",
+    ] {
+        assert!(
+            text.contains(expected),
+            "launcher must expose `{expected}`: {text}"
+        );
+    }
+}
+
+#[test]
+fn mission_review_summarises_the_route_without_secrets() {
+    let mut state = AppState::default();
+    state.launcher.open = false;
+    state.review_open = true;
+    state.config_source = Some("built-in defaults".to_owned());
+
+    let text = render_state(&state);
+    assert!(text.contains("MISSION REVIEW"), "review overlay missing");
+    assert!(
+        text.contains("session only"),
+        "review must state that credentials are session-only"
+    );
+}
+
+#[tokio::test]
+async fn agentic_investigation_without_a_kommandant_model_fails_explicitly() {
+    let target =
+        AuditTarget::parse("https://example.org/", TargetPolicy::PublicOnly).expect("target");
+    let (sink, _events) = diagnostic_event_channel(RunId::new("run-no-model"));
+    let (_cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+    let spec = RunLaunchSpec {
+        target,
+        mode: DiagnosticRunMode::AgenticInvestigation,
+        enable_browser: false,
+        enable_axe: false,
+        enable_lighthouse: false,
+        provider: netzzwergenwacht::config::ProviderKind::OpenAi,
+        model: String::new(),
+    };
+
+    let outcome = execute_diagnostic_run_cancellable(
+        spec,
+        TargetPolicy::PublicOnly,
+        ExecutionBudget::default(),
+        String::from("agentic probe"),
+        sink,
+        cancel_rx,
+        std::path::Path::new(".nzw/memory"),
+        std::sync::Arc::new(netzzwergenwacht::intelligence::EmptyProviderRouter),
+    )
+    .await;
+
+    let error = outcome.expect_err("an unconfigured agentic run must not start");
+    assert!(
+        error.contains("needs a model configured for KommandantZwerg"),
+        "unexpected error: {error}"
     );
 }

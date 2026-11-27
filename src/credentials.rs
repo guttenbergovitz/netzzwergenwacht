@@ -51,7 +51,7 @@ impl CredentialSource {
 ///
 /// The value is zeroized on drop and never rendered by [`fmt::Debug`]. It deliberately
 /// does not implement `Serialize`: nothing serialises a credential by accident.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SessionSecret(Zeroizing<String>);
 
 impl SessionSecret {
@@ -169,7 +169,7 @@ pub struct ResolvedCredential {
 ///
 /// The store is intentionally not serialisable and its [`fmt::Debug`] output lists
 /// scopes only, so neither a log line nor a report can capture a key.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct SessionCredentialStore {
     entries: BTreeMap<CredentialScope, SessionSecret>,
 }

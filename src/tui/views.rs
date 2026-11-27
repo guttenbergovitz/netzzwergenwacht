@@ -82,6 +82,9 @@ pub fn render(frame: &mut Frame<'_>, state: &AppState) {
     if state.help_open {
         render_help_modal(frame, area, state);
     }
+    if state.review_open {
+        render_review_modal(frame, area, state);
+    }
 }
 
 fn render_minimum_size_fallback(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
@@ -2488,7 +2491,7 @@ fn render_system(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
 
 #[allow(clippy::too_many_lines)]
 fn render_launcher_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
-    let modal_area = centered_rect(72, 20, area);
+    let modal_area = centered_rect(78, 24, area);
     frame.render_widget(Clear, modal_area);
 
     let focus_marker = |field: LauncherField| -> &'static str {
@@ -2506,9 +2509,19 @@ fn render_launcher_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         }
     };
 
+    let credential_display = if state.launcher.credential_input.is_empty() {
+        "(not set)".to_owned()
+    } else {
+        "*".repeat(state.launcher.credential_input.chars().count().min(32))
+    };
+    let model_display = if state.launcher.model_input.is_empty() {
+        "(from configuration, if any)".to_owned()
+    } else {
+        state.launcher.model_input.clone()
+    };
     let mut lines = vec![
         Line::from(Span::styled(
-            " Configure target URL, execution mode, and Level 2 instruments:",
+            " Mission Control: target, mode, model route and Level 2 instruments:",
             state.theme.muted_style(),
         )),
         Line::from(""),
@@ -2536,6 +2549,48 @@ fn render_launcher_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 field_style(LauncherField::Mode),
             ),
         ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(
+                format!(
+                    " {}Provider (Space/Left/Right): ",
+                    focus_marker(LauncherField::Provider)
+                ),
+                field_style(LauncherField::Provider),
+            ),
+            Span::styled(
+                state.launcher.provider.as_str().to_owned(),
+                field_style(LauncherField::Provider),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!(" {}Model: ", focus_marker(LauncherField::Model)),
+                field_style(LauncherField::Model),
+            ),
+            Span::styled(
+                format!("[ {model_display} ]"),
+                field_style(LauncherField::Model),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                format!(
+                    " {}Credential (session only): ",
+                    focus_marker(LauncherField::Credential)
+                ),
+                field_style(LauncherField::Credential),
+            ),
+            Span::styled(credential_display, field_style(LauncherField::Credential)),
+        ]),
+        Line::from(vec![Span::styled(
+            format!(
+                " {}[ Test connection ]  status: {}",
+                focus_marker(LauncherField::TestConnection),
+                state.launcher.connection.label()
+            ),
+            field_style(LauncherField::TestConnection),
+        )]),
         Line::from(""),
         Line::from(vec![Span::styled(
             format!(
@@ -2603,13 +2658,94 @@ fn render_launcher_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
     } else {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            " Tab/Up/Down:Move field   Enter:Start   Esc:Close   q:Quit",
+            " Tab/Up/Down:Move   Enter:Activate   r:Review   Esc:Close   q:Quit",
             state.theme.muted_style(),
         )));
     }
 
     let block = Block::default()
         .title(" ZWERGENLEITSTAND LAUNCHER ")
+        .borders(Borders::ALL)
+        .border_style(state.theme.border_style(true));
+    frame.render_widget(Paragraph::new(lines).block(block), modal_area);
+}
+
+fn render_review_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
+    let modal_area = centered_rect(84, 24, area);
+    frame.render_widget(Clear, modal_area);
+
+    let mut lines = vec![
+        Line::from(Span::styled(
+            " Mission Review: the exact configuration this run will use.",
+            state.theme.title_style(),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            format!(
+                " Target        : {}",
+                sanitize_url_for_display(&state.launcher.target_input, 96)
+            ),
+            state.theme.primary_style(),
+        )),
+        Line::from(Span::styled(
+            format!(
+                " Mode          : {}   instruments: browser={} axe={} lighthouse={}",
+                state.launcher.mode.label(),
+                state.launcher.enable_browser,
+                state.launcher.enable_axe,
+                state.launcher.enable_lighthouse
+            ),
+            state.theme.primary_style(),
+        )),
+        Line::from(Span::styled(
+            format!(
+                " Provider/model: {} / {}   connection: {}",
+                state.launcher.provider.as_str(),
+                if state.launcher.model_input.is_empty() {
+                    "(from configuration)"
+                } else {
+                    state.launcher.model_input.as_str()
+                },
+                state.launcher.connection.label()
+            ),
+            state.theme.primary_style(),
+        )),
+        Line::from(Span::styled(
+            " Credentials   : session only; never written to reports, history or logs.",
+            state.theme.muted_style(),
+        )),
+        Line::from(""),
+    ];
+
+    if let Some(config) = state.config.as_ref() {
+        let source = state
+            .config_source
+            .clone()
+            .unwrap_or_else(|| "loaded configuration".to_owned());
+        let effective = config.effective(&crate::config::ConfigSource::BuiltInDefaults);
+        let mut effective = effective;
+        effective.source = source;
+        for line in effective.render_lines() {
+            lines.push(Line::from(Span::styled(
+                format!(" {line}"),
+                state.theme.primary_style(),
+            )));
+        }
+    } else {
+        lines.push(Line::from(Span::styled(
+            " No configuration file was loaded; built-in defaults and launcher values apply.",
+            state.theme.warning_style(),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " r/Esc:Close review   Enter:Start mission   q:Quit",
+        state.theme.muted_style(),
+    )));
+
+    let block = Block::default()
+        .title(" MISSION REVIEW ")
         .borders(Borders::ALL)
         .border_style(state.theme.border_style(true));
     frame.render_widget(Paragraph::new(lines).block(block), modal_area);

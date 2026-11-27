@@ -12,6 +12,7 @@ use netzzwergenwacht::analysis::{self, AuditReport};
 use netzzwergenwacht::brigade::{self, DwarfId, MOTTO};
 use netzzwergenwacht::collection;
 use netzzwergenwacht::config::{self, AppConfig, PolicyConfig, PolicyEvaluation};
+use netzzwergenwacht::doctor;
 use netzzwergenwacht::domain::{
     AnalyserResult, AuditTarget, CheckStatus, CollectorOutcome, Measurement, Severity, TargetPolicy,
 };
@@ -115,6 +116,15 @@ enum Command {
         /// Allow loopback and private network targets.
         #[arg(long)]
         allow_private: bool,
+    },
+    /// Report which local instruments and configuration are available.
+    Doctor {
+        /// Optional path to a TOML configuration file (`nzw.toml`).
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Output format.
+        #[arg(short, long, value_enum, default_value_t = OutputFormat::Text)]
+        format: OutputFormat,
     },
     /// Compare a baseline and current audit report (JSON or JSONL) for regressions.
     Diff {
@@ -396,6 +406,29 @@ async fn main() -> ExitCode {
                 }
             }
         },
+        Command::Doctor { config, format } => {
+            let (resolved, source) = doctor::resolve_config(config);
+            let report = doctor::diagnose(&resolved, source.as_deref());
+            match format {
+                OutputFormat::Json => match serde_json::to_string_pretty(&report) {
+                    Ok(json) => println!("{json}"),
+                    Err(err) => {
+                        eprintln!("doctor error: {err}");
+                        return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                    }
+                },
+                OutputFormat::Text | OutputFormat::Markdown => {
+                    for line in report.render_lines() {
+                        println!("{line}");
+                    }
+                }
+            }
+            if report.is_ready() {
+                ExitCode::from(EXIT_OK)
+            } else {
+                ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+            }
+        }
         Command::Validate { url, allow_private } => {
             let policy = target_policy(allow_private);
             match AuditTarget::parse(&url, policy) {
@@ -430,14 +463,24 @@ async fn main() -> ExitCode {
             tui: use_tui,
         } => {
             if use_tui {
+                let Some(loaded) = load_tui_config(config_path.clone()) else {
+                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                };
                 let options = TuiStartupOptions {
                     target: Some(url),
+                    config: Some(loaded.config.clone()),
+                    config_source: Some(loaded.source.label()),
+                    budget: loaded.config.execution_budget(),
+                    policy: if allow_private {
+                        TargetPolicy::AllowPrivate
+                    } else {
+                        loaded.config.target_policy()
+                    },
                     mode: DiagnosticRunMode::DeterministicCheck,
                     enable_browser: browser,
                     enable_axe: axe,
                     enable_lighthouse: lighthouse,
                     history_path: history,
-                    policy: target_policy(allow_private),
                     ..TuiStartupOptions::default()
                 };
                 return run_tui_cmd(options).await;
@@ -496,11 +539,21 @@ async fn main() -> ExitCode {
             tui: use_tui,
         } => {
             if use_tui {
+                let Some(loaded) = load_tui_config(None) else {
+                    return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                };
                 let options = TuiStartupOptions {
                     target: Some(url),
+                    config: Some(loaded.config.clone()),
+                    config_source: Some(loaded.source.label()),
+                    budget: loaded.config.execution_budget(),
+                    policy: if allow_private {
+                        TargetPolicy::AllowPrivate
+                    } else {
+                        loaded.config.target_policy()
+                    },
                     mode: DiagnosticRunMode::AgenticInvestigation,
                     objective,
-                    policy: target_policy(allow_private),
                     ..TuiStartupOptions::default()
                 };
                 return run_tui_cmd(options).await;
@@ -582,6 +635,8 @@ async fn main() -> ExitCode {
             };
             let configured_policy = loaded.config.target_policy();
             let budget = loaded.config.execution_budget();
+            let config = loaded.config;
+            let loaded_source = loaded.source.label();
             let theme_mode = if monochrome {
                 Some(ThemeMode::Monochrome)
             } else if high_contrast {
@@ -605,11 +660,29 @@ async fn main() -> ExitCode {
                 },
                 budget,
                 memory_dir,
+                config: Some(config),
+                config_source: Some(loaded_source),
                 theme_mode,
                 ascii_only: ascii,
                 ..TuiStartupOptions::default()
             };
             run_tui_cmd(options).await
+        }
+    }
+}
+
+/// Resolves the configuration for a workbench launch, reporting a hard error
+/// instead of silently falling back to defaults.
+fn load_tui_config(explicit: Option<PathBuf>) -> Option<config::LoadedConfig> {
+    let discovery = config::ConfigDiscovery {
+        explicit,
+        ..config::ConfigDiscovery::from_process()
+    };
+    match discovery.resolve() {
+        Ok(loaded) => Some(loaded),
+        Err(err) => {
+            eprintln!("configuration error: {err}");
+            None
         }
     }
 }

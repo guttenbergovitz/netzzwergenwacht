@@ -53,6 +53,8 @@ pub enum UserAction {
     ToggleAscii,
     /// Toggle the context-sensitive Help overlay.
     ToggleHelp,
+    /// Toggle the Mission Review overlay.
+    ToggleReview,
     /// Request cancellation of the active diagnostic run.
     CancelRun,
     /// Request application exit.
@@ -78,6 +80,10 @@ pub struct RunLaunchSpec {
     pub enable_axe: bool,
     /// Whether Level 2 Lighthouse collection is enabled.
     pub enable_lighthouse: bool,
+    /// Provider family selected for agentic modes.
+    pub provider: crate::config::ProviderKind,
+    /// Model identifier selected for agentic modes; empty means "use configuration".
+    pub model: String,
 }
 
 /// Top-level reducer inputs combining user actions, engine events, and task completions.
@@ -97,6 +103,8 @@ pub enum AppAction {
     RunFailed(String),
     /// Background report save completed.
     ReportSaved(Result<PathBuf, String>),
+    /// A connection test finished with an explicit outcome.
+    ConnectionTested(crate::intelligence::ConnectionOutcome),
     /// The background task observed a cancellation request and has fully stopped,
     /// or the escalation deadline expired and the task was force-terminated.
     CancellationSettled {
@@ -112,6 +120,13 @@ pub enum AppEffect {
     StartRun(RunLaunchSpec),
     /// Signal the active cancellation token to stop the running diagnostic task.
     CancelActiveRun,
+    /// Probe the configured provider with the given credential.
+    TestConnection {
+        /// Provider and model to probe.
+        spec: crate::config::ModelSpec,
+        /// Credential to use, or `None` when the provider needs none.
+        credential: Option<crate::credentials::SessionSecret>,
+    },
     /// Persist the current [`crate::analysis::AuditReport`] to the specified path.
     SaveReport(PathBuf),
     /// Terminate the TUI event loop and restore the terminal.

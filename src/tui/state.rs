@@ -10,12 +10,15 @@ use std::path::PathBuf;
 
 use crate::analysis::AuditReport;
 use crate::brigade::{DwarfId, DwarfRole, ZWERGENBRIGADE};
+use crate::config::{AppConfig, ProviderKind};
+use crate::credentials::SessionCredentialStore;
 use crate::discovery::{DiscoveredPage, PageCrawlStatus};
 use crate::domain::{
     CollectorOutcome, Confidence, EvidenceLevel, EvidenceRef, EvidenceSnapshot, EvidenceSource,
     Finding, Severity, TargetPolicy,
 };
 use crate::events::{CollectorId, DiagnosticRunMode};
+use crate::intelligence::ConnectionOutcome;
 use crate::investigation::{DiagnosticHypothesis, HypothesisStatus, InvestigationReport};
 use crate::patrol::PatrolReport;
 use crate::persistence::{RegressionReport, RenderedTextDiff};
@@ -319,12 +322,20 @@ pub enum LauncherField {
     TargetUrl,
     /// Execution mode (`DeterministicCheck`, `AgenticInvestigation`, `AutonomousPatrol`).
     Mode,
+    /// Provider family (`openai`, `anthropic`, `ollama`).
+    Provider,
+    /// Model identifier text input.
+    Model,
+    /// Masked session credential input. The buffer never appears in debug output.
+    Credential,
     /// Toggle Level 2 Chromium browser collector.
     BrowserToggle,
     /// Toggle Level 2 `axe-core` collector.
     AxeToggle,
     /// Toggle Level 2 Lighthouse collector.
     LighthouseToggle,
+    /// Probe the configured provider without starting a run.
+    TestConnection,
     /// Start action button.
     StartButton,
 }
@@ -335,10 +346,14 @@ impl LauncherField {
     pub const fn next(self) -> Self {
         match self {
             Self::TargetUrl => Self::Mode,
-            Self::Mode => Self::BrowserToggle,
+            Self::Mode => Self::Provider,
+            Self::Provider => Self::Model,
+            Self::Model => Self::Credential,
+            Self::Credential => Self::BrowserToggle,
             Self::BrowserToggle => Self::AxeToggle,
             Self::AxeToggle => Self::LighthouseToggle,
-            Self::LighthouseToggle => Self::StartButton,
+            Self::LighthouseToggle => Self::TestConnection,
+            Self::TestConnection => Self::StartButton,
             Self::StartButton => Self::TargetUrl,
         }
     }
@@ -349,11 +364,21 @@ impl LauncherField {
         match self {
             Self::TargetUrl => Self::StartButton,
             Self::Mode => Self::TargetUrl,
-            Self::BrowserToggle => Self::Mode,
+            Self::Provider => Self::Mode,
+            Self::Model => Self::Provider,
+            Self::Credential => Self::Model,
+            Self::BrowserToggle => Self::Credential,
             Self::AxeToggle => Self::BrowserToggle,
             Self::LighthouseToggle => Self::AxeToggle,
-            Self::StartButton => Self::LighthouseToggle,
+            Self::TestConnection => Self::LighthouseToggle,
+            Self::StartButton => Self::TestConnection,
         }
+    }
+
+    /// Whether this field accepts typed text.
+    #[must_use]
+    pub const fn is_text_field(self) -> bool {
+        matches!(self, Self::TargetUrl | Self::Model | Self::Credential)
     }
 }
 
@@ -445,8 +470,11 @@ fn which_in_path(candidates: &[&str]) -> Option<String> {
 }
 
 /// Launcher dialog state.
+///
+/// `Debug` is hand-written because `credential_input` holds a secret until it is
+/// moved into the session credential store.
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct LauncherState {
     /// Whether the Launcher modal is currently visible.
     pub open: bool,
@@ -456,6 +484,14 @@ pub struct LauncherState {
     pub target_input: String,
     /// Selected diagnostic execution mode.
     pub mode: DiagnosticRunMode,
+    /// Selected provider family for agentic runs.
+    pub provider: ProviderKind,
+    /// Editable model identifier.
+    pub model_input: String,
+    /// Session credential buffer, wiped when the run starts or the field is cleared.
+    pub credential_input: String,
+    /// Result of the most recent connection test.
+    pub connection: ConnectionOutcome,
     /// Enable Level 2 Chromium browser collection.
     pub enable_browser: bool,
     /// Enable Level 2 `axe-core` collection.
@@ -475,12 +511,43 @@ impl Default for LauncherState {
             focused_field: LauncherField::TargetUrl,
             target_input: String::from("https://example.org"),
             mode: DiagnosticRunMode::DeterministicCheck,
+            provider: ProviderKind::OpenAi,
+            model_input: String::new(),
+            credential_input: String::new(),
+            connection: ConnectionOutcome::NotTested,
             enable_browser: false,
             enable_axe: false,
             enable_lighthouse: false,
             policy: TargetPolicy::PublicOnly,
             error_message: None,
         }
+    }
+}
+
+impl std::fmt::Debug for LauncherState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LauncherState")
+            .field("open", &self.open)
+            .field("focused_field", &self.focused_field)
+            .field("target_input", &self.target_input)
+            .field("mode", &self.mode)
+            .field("provider", &self.provider)
+            .field("model_input", &self.model_input)
+            .field(
+                "credential_input",
+                &if self.credential_input.is_empty() {
+                    "empty"
+                } else {
+                    "[REDACTED]"
+                },
+            )
+            .field("connection", &self.connection)
+            .field("enable_browser", &self.enable_browser)
+            .field("enable_axe", &self.enable_axe)
+            .field("enable_lighthouse", &self.enable_lighthouse)
+            .field("policy", &self.policy)
+            .field("error_message", &self.error_message)
+            .finish()
     }
 }
 
@@ -875,6 +942,7 @@ pub struct DiagnosticArtefacts {
 
 /// Complete application state owned by the Zwergenleitstand TUI loop.
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct AppState {
     /// Currently active workbench view (`1`–`9`).
     pub active_view: WorkbenchView,
@@ -888,6 +956,14 @@ pub struct AppState {
     pub run_mode: DiagnosticRunMode,
     /// Launcher modal state.
     pub launcher: LauncherState,
+    /// Session-scoped provider credentials. Never serialised and never rendered.
+    pub credentials: SessionCredentialStore,
+    /// Resolved configuration for the current session, when one could be loaded.
+    pub config: Option<AppConfig>,
+    /// Human-readable description of where the configuration came from.
+    pub config_source: Option<String>,
+    /// Whether the Mission Review overlay is open.
+    pub review_open: bool,
     /// Detected runtime instrument availability.
     pub instruments: InstrumentAvailability,
     /// Visual theme and glyph configuration.
@@ -988,6 +1064,10 @@ impl AppState {
             target_url: String::from("https://example.org"),
             run_mode: DiagnosticRunMode::DeterministicCheck,
             launcher: LauncherState::default(),
+            credentials: SessionCredentialStore::new(),
+            config: None,
+            config_source: None,
+            review_open: false,
             instruments: InstrumentAvailability::detect(),
             theme: Theme::new(theme_mode, glyphs),
             help_open: false,

@@ -20,7 +20,7 @@ use crate::events::{
     CollectorId, DiagnosticEventPayload, DiagnosticEventReceiver, DiagnosticEventSink,
     DiagnosticRunMode, EventContext, RunId, diagnostic_event_channel,
 };
-use crate::intelligence::OpenAiCompatibleProvider;
+use crate::intelligence::ConnectionOutcome;
 use crate::investigation::{self, InvestigationBudget, InvestigationReport, LiveDiagnosticBackend};
 use crate::patrol::{self, PatrolBudget, PatrolReport};
 use crate::persistence;
@@ -59,6 +59,10 @@ pub struct TuiStartupOptions {
     pub output_path: Option<PathBuf>,
     /// Target validation policy (e.g. `--allow-local`).
     pub policy: TargetPolicy,
+    /// Resolved configuration for this session, when one was loaded or discovered.
+    pub config: Option<crate::config::AppConfig>,
+    /// Human-readable description of where that configuration came from.
+    pub config_source: Option<String>,
     /// Directory for persistent patrol memory. Shared with `nzw patrol` so the
     /// workbench continues the same application history instead of starting fresh.
     pub memory_dir: PathBuf,
@@ -83,6 +87,8 @@ impl Default for TuiStartupOptions {
             report_path: None,
             history_path: None,
             output_path: None,
+            config: None,
+            config_source: None,
             policy: TargetPolicy::PublicOnly,
             memory_dir: PathBuf::from(crate::patrol::memory::DEFAULT_MEMORY_DIR),
             budget: ExecutionBudget::default(),
@@ -229,6 +235,15 @@ pub fn initialize_state(options: &TuiStartupOptions) -> Result<(AppState, Vec<Ap
     state.launcher.enable_axe = options.enable_axe;
     state.launcher.enable_lighthouse = options.enable_lighthouse;
     state.launcher.policy = options.policy;
+    if let Some(config) = &options.config {
+        let kommandant = config
+            .models
+            .resolve_for_dwarf(crate::brigade::DwarfId::Kommandant);
+        state.launcher.provider = kommandant.provider;
+        state.launcher.model_input.clone_from(&kommandant.model);
+        state.config = Some(config.clone());
+    }
+    state.config_source.clone_from(&options.config_source);
 
     if let Some(target) = &options.target {
         state.launcher.target_input.clone_from(target);
@@ -265,6 +280,8 @@ pub fn initialize_state(options: &TuiStartupOptions) -> Result<(AppState, Vec<Ap
         validated.as_str().clone_into(&mut state.target_url);
         state.run_mode = options.mode;
         let spec = RunLaunchSpec {
+            provider: crate::config::ProviderKind::OpenAi,
+            model: String::new(),
             target: validated,
             mode: options.mode,
             enable_browser: options.enable_browser,
@@ -309,6 +326,35 @@ impl ActiveBackgroundTask {
 ///
 /// Returns an `io::Error` if terminal setup, rendering, or startup report loading fails.
 #[allow(clippy::too_many_lines)]
+/// Renders one frame, converting a view-layer panic into an error instead of an
+/// abort so the operator sees which subsystem failed.
+fn render_guarded(session: &mut TerminalSession, state: &AppState) -> Result<(), String> {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        session
+            .terminal_mut()
+            .draw(|frame| render(frame, state))
+            .map(|_| ())
+    }));
+    match outcome {
+        Ok(result) => result.map_err(|err| format!("render failed: {err}")),
+        Err(payload) => {
+            let message = payload
+                .downcast_ref::<&str>()
+                .map(|text| (*text).to_owned())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_owned());
+            Err(format!("render panicked: {message}"))
+        }
+    }
+}
+
+/// Runs the Zwergenleitstand until the operator quits.
+///
+/// # Errors
+///
+/// Returns an I/O or state-initialisation error, including a view-layer panic converted
+/// into a diagnostic message.
+#[allow(clippy::too_many_lines)]
 pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
     let (mut state, initial_effects) = initialize_state(&options)
         .map_err(|msg| io::Error::new(io::ErrorKind::InvalidInput, msg))?;
@@ -320,6 +366,7 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
     }
 
     let mut active_task: Option<ActiveBackgroundTask> = None;
+    let mut pending_connection_test: Option<mpsc::Receiver<ConnectionOutcome>> = None;
     let mut pending_effects = initial_effects;
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_millis(100);
@@ -335,6 +382,7 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                     let seq = RUN_SEQUENCE.fetch_add(1, Ordering::Relaxed);
                     let run_id = RunId::new(format!("run-{seq:04}"));
                     state.active_run_id = Some(run_id.as_str().to_owned());
+                    let router = build_run_router(&spec, &state, options.config.as_ref());
                     active_task = Some(spawn_background_run(
                         run_id,
                         spec,
@@ -342,12 +390,39 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                         options.budget,
                         options.objective.clone(),
                         options.memory_dir.clone(),
+                        router,
                     ));
                 }
                 AppEffect::CancelActiveRun => {
                     if let Some(task) = &mut active_task {
                         task.request_cancellation();
                     }
+                }
+                AppEffect::TestConnection { spec, credential } => {
+                    let (tx, rx) = mpsc::channel(1);
+                    tokio::spawn(async move {
+                        let outcome = match credential {
+                            Some(secret) => {
+                                let resolved = crate::credentials::ResolvedCredential {
+                                    secret,
+                                    source: crate::credentials::CredentialSource::Session,
+                                };
+                                crate::intelligence::probe_connection(&spec, &resolved).await
+                            }
+                            None => match crate::credentials::SessionCredentialStore::new()
+                                .resolve(&spec)
+                            {
+                                Some(resolved) => {
+                                    crate::intelligence::probe_connection(&spec, &resolved).await
+                                }
+                                None => {
+                                    crate::intelligence::ConnectionOutcome::AuthenticationRejected
+                                }
+                            },
+                        };
+                        let _ = tx.send(outcome).await;
+                    });
+                    pending_connection_test = Some(rx);
                 }
                 AppEffect::SaveReport(path) => {
                     let res = save_current_report(&state, &path);
@@ -362,6 +437,14 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
                     return Ok(());
                 }
             }
+        }
+
+        if let Some(rx) = &mut pending_connection_test
+            && let Ok(outcome) = rx.try_recv()
+        {
+            let effs = reduce(&mut state, AppAction::ConnectionTested(outcome));
+            pending_effects.extend(effs);
+            pending_connection_test = None;
         }
 
         if state.should_quit {
@@ -441,7 +524,7 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
             }
         }
 
-        session.terminal_mut().draw(|frame| render(frame, &state))?;
+        render_guarded(&mut session, &state).map_err(io::Error::other)?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if event::poll(timeout)? {
@@ -475,6 +558,7 @@ fn spawn_background_run(
     budget: ExecutionBudget,
     objective: String,
     memory_dir: PathBuf,
+    router: Arc<dyn crate::intelligence::ProviderRouter>,
 ) -> ActiveBackgroundTask {
     let (sink, event_rx) = diagnostic_event_channel(run_id);
     let (result_tx, result_rx) = mpsc::channel(1);
@@ -489,6 +573,7 @@ fn spawn_background_run(
             sink,
             cancel_rx,
             &memory_dir,
+            router,
         ))
         .await;
         let _ = Box::pin(result_tx.send(outcome)).await;
@@ -516,6 +601,23 @@ pub async fn execute_diagnostic_run(
     sink: DiagnosticEventSink,
 ) -> Result<DiagnosticArtefacts, String> {
     let (_cancel, cancel_rx) = watch::channel(false);
+    let store = crate::credentials::SessionCredentialStore::new();
+    let router: Arc<dyn crate::intelligence::ProviderRouter> = Arc::new(
+        crate::intelligence::CachedProviderRouter::from_model_spec(
+            &crate::config::ModelSpec {
+                provider: spec.provider,
+                model: if spec.model.trim().is_empty() {
+                    "unspecified".to_owned()
+                } else {
+                    spec.model.clone()
+                },
+                base_url: None,
+                api_key_env: None,
+            },
+            &store,
+        )
+        .unwrap_or_default(),
+    );
     execute_diagnostic_run_cancellable(
         spec,
         policy,
@@ -524,8 +626,42 @@ pub async fn execute_diagnostic_run(
         sink,
         cancel_rx,
         Path::new(crate::patrol::memory::DEFAULT_MEMORY_DIR),
+        router,
     )
     .await
+}
+
+/// Builds the provider router for a run from the Launcher choice, falling back to
+/// the resolved configuration and the session credential store.
+fn build_run_router(
+    spec: &RunLaunchSpec,
+    state: &AppState,
+    config: Option<&crate::config::AppConfig>,
+) -> Arc<dyn crate::intelligence::ProviderRouter> {
+    let model = spec.model.trim();
+    if !model.is_empty() {
+        let spec_model = crate::config::ModelSpec {
+            provider: spec.provider,
+            model: model.to_owned(),
+            base_url: None,
+            api_key_env: None,
+        };
+        if let Some(router) = crate::intelligence::CachedProviderRouter::from_model_spec(
+            &spec_model,
+            &state.credentials,
+        ) {
+            return Arc::new(router);
+        }
+    }
+    if let Some(config) = config {
+        return Arc::new(
+            crate::intelligence::CachedProviderRouter::from_config_and_store(
+                &config.models,
+                &state.credentials,
+            ),
+        );
+    }
+    Arc::new(crate::intelligence::EmptyProviderRouter)
 }
 
 /// Executes a diagnostic run with a cooperative cancellation token.
@@ -541,6 +677,7 @@ pub async fn execute_diagnostic_run(
 /// Returns an error string if target resolution, mandatory execution steps fail, or
 /// the operator cancels the run.
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_diagnostic_run_cancellable(
     spec: RunLaunchSpec,
     policy: TargetPolicy,
@@ -549,6 +686,7 @@ pub async fn execute_diagnostic_run_cancellable(
     sink: DiagnosticEventSink,
     cancel: watch::Receiver<bool>,
     memory_dir: &Path,
+    router: Arc<dyn crate::intelligence::ProviderRouter>,
 ) -> Result<DiagnosticArtefacts, String> {
     let start = Instant::now();
     let target_str = spec.target.as_str().to_owned();
@@ -606,66 +744,40 @@ pub async fn execute_diagnostic_run_cancellable(
             if *cancel.borrow() {
                 return Err(String::from("cancelled by operator before investigation"));
             }
-            if let Ok(llm) = OpenAiCompatibleProvider::from_env() {
-                let backend = Arc::new(LiveDiagnosticBackend);
-                let inv_budget = InvestigationBudget::default();
-                let inv_report = investigation::run_investigation_with_events(
-                    target,
-                    objective,
-                    policy,
-                    inv_budget,
-                    backend,
-                    &llm,
-                    Vec::new(),
-                    &sink,
-                )
-                .await;
-
-                let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-                Ok(DiagnosticArtefacts {
-                    target: target_str,
-                    mode: DiagnosticRunMode::AgenticInvestigation,
-                    snapshot: None,
-                    audit_report: inv_report.initial_report.clone(),
-                    investigation_report: Some(inv_report),
-                    patrol_report: None,
-                    history_reports: Vec::new(),
-                    regression_report: None,
-                    elapsed_ms,
-                })
-            } else {
-                sink.emit(
-                    EventContext::new().with_target(&target_str),
-                    DiagnosticEventPayload::Warning {
-                        message: String::from(
-                            "No LLM provider configured; falling back to deterministic brigade audit.",
-                        ),
-                    },
-                );
-                let snapshot =
-                    collect_snapshot_with_events(&target, &spec, &budget, policy, &sink).await;
-                let report = analysis::run_all_with_events(&snapshot, &sink);
-                let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
-                sink.emit(
-                    EventContext::new().with_target(&target_str),
-                    DiagnosticEventPayload::RunPartiallyCompleted {
-                        reason: String::from(
-                            "Agent provider unavailable; deterministic diagnostics completed",
-                        ),
-                    },
-                );
-                Ok(DiagnosticArtefacts {
-                    target: target_str,
-                    mode: DiagnosticRunMode::AgenticInvestigation,
-                    snapshot: Some(snapshot),
-                    audit_report: Some(report),
-                    investigation_report: None,
-                    patrol_report: None,
-                    history_reports: Vec::new(),
-                    regression_report: None,
-                    elapsed_ms,
-                })
+            if router
+                .resolve_for_dwarf(crate::brigade::DwarfId::Kommandant)
+                .is_none()
+            {
+                return Err(String::from(
+                    "agentic investigation needs a model configured for KommandantZwerg; set a provider and model in the Launcher, or provide a configuration file. No model was substituted.",
+                ));
             }
+            let backend = Arc::new(LiveDiagnosticBackend);
+            let inv_budget = InvestigationBudget::default();
+            let inv_report = investigation::run_investigation_with_events_and_router(
+                target,
+                objective,
+                policy,
+                inv_budget,
+                backend,
+                router.as_ref(),
+                Vec::new(),
+                &sink,
+            )
+            .await;
+
+            let elapsed_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
+            Ok(DiagnosticArtefacts {
+                target: target_str,
+                mode: DiagnosticRunMode::AgenticInvestigation,
+                snapshot: inv_report.snapshot.clone(),
+                audit_report: inv_report.initial_report.clone(),
+                investigation_report: Some(inv_report),
+                patrol_report: None,
+                history_reports: Vec::new(),
+                regression_report: None,
+                elapsed_ms,
+            })
         }
         DiagnosticRunMode::AutonomousPatrol => {
             if *cancel.borrow() {

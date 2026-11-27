@@ -357,6 +357,197 @@ pub trait ProviderRouter: Send + Sync {
     fn resolve_for_dwarf(&self, dwarf_id: crate::brigade::DwarfId) -> Option<&dyn LlmProvider>;
 }
 
+/// Outcome of an explicit provider connection test.
+///
+/// Every state is reported as observed: a rejected key is never rendered as "not
+/// configured", and a timeout is never reported as a provider error.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ConnectionOutcome {
+    /// No test has been run for the current provider, endpoint and model.
+    #[default]
+    NotTested,
+    /// A request is in flight.
+    Testing,
+    /// The provider answered a minimal completion.
+    Reachable,
+    /// The provider rejected the credential.
+    AuthenticationRejected,
+    /// The endpoint answered but the model is not available there.
+    ModelUnavailable,
+    /// The provider asked us to slow down.
+    RateLimited,
+    /// Any other provider-side failure, with the reported message.
+    ProviderError(String),
+    /// The request exceeded the connection-test deadline.
+    TimedOut,
+    /// A real completion succeeded during an actual run.
+    InvocationSucceeded,
+    /// The operator cancelled the test.
+    Cancelled,
+}
+
+impl ConnectionOutcome {
+    /// Returns a short, secret-free label for display.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::NotTested => "not tested".to_owned(),
+            Self::Testing => "testing".to_owned(),
+            Self::Reachable => "reachable".to_owned(),
+            Self::AuthenticationRejected => "authentication rejected".to_owned(),
+            Self::ModelUnavailable => "model unavailable".to_owned(),
+            Self::RateLimited => "rate limited".to_owned(),
+            Self::ProviderError(message) => format!("provider error: {message}"),
+            Self::TimedOut => "timed out".to_owned(),
+            Self::InvocationSucceeded => "invocation succeeded".to_owned(),
+            Self::Cancelled => "cancelled".to_owned(),
+        }
+    }
+
+    /// Classifies a provider error string.
+    fn from_error(message: &str) -> Self {
+        let lowered = message.to_ascii_lowercase();
+        if lowered.contains("timed out") {
+            Self::TimedOut
+        } else if lowered.contains("401")
+            || lowered.contains("403")
+            || lowered.contains("unauthor")
+            || lowered.contains("api key")
+            || lowered.contains("authentication")
+        {
+            Self::AuthenticationRejected
+        } else if lowered.contains("429") || lowered.contains("rate limit") {
+            Self::RateLimited
+        } else if lowered.contains("404") || lowered.contains("model") {
+            Self::ModelUnavailable
+        } else {
+            Self::ProviderError(truncate_message(message))
+        }
+    }
+}
+
+fn truncate_message(message: &str) -> String {
+    let sanitised: String = message
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(160)
+        .collect();
+    sanitised.trim().to_owned()
+}
+
+/// Tests a provider connection with a minimal completion.
+///
+/// The probe sends one short prompt so the result reflects authenticated model access,
+/// not merely DNS reachability. It never substitutes a result from another provider.
+pub async fn probe_connection(
+    spec: &crate::config::ModelSpec,
+    resolved: &crate::credentials::ResolvedCredential,
+) -> ConnectionOutcome {
+    let provider = match RigCompletionProvider::from_resolved_spec(spec, resolved) {
+        Ok(provider) => provider,
+        Err(err) => return ConnectionOutcome::ProviderError(truncate_message(&err)),
+    };
+    let budget = LlmBudget {
+        max_tokens: 16,
+        max_requests: 1,
+        timeout: std::time::Duration::from_secs(8),
+    };
+    match provider
+        .complete(
+            "You are a connectivity check. Reply with the single word OK.",
+            "Reply with OK.",
+            budget,
+        )
+        .await
+    {
+        Ok(_) => ConnectionOutcome::Reachable,
+        Err(err) => ConnectionOutcome::from_error(&err),
+    }
+}
+
+/// Maximum identifiers retained from a model listing.
+const MAX_DISCOVERED_MODELS: usize = 200;
+
+/// Lists models advertised by an OpenAI-compatible or Ollama endpoint.
+///
+/// Discovery is best effort: a provider that does not implement listing returns an
+/// error and the operator types the identifier instead. Results are bounded so a
+/// hostile endpoint cannot exhaust memory.
+///
+/// # Errors
+///
+/// Returns an error when the endpoint cannot be reached, rejects the credential, or
+/// answers with an unexpected payload.
+pub async fn discover_models(
+    spec: &crate::config::ModelSpec,
+    resolved: &crate::credentials::ResolvedCredential,
+) -> Result<Vec<String>, String> {
+    let base = spec
+        .base_url
+        .clone()
+        .unwrap_or_else(|| match spec.provider {
+            crate::config::ProviderKind::OpenAi => "https://api.openai.com/v1".to_owned(),
+            crate::config::ProviderKind::Anthropic => "https://api.anthropic.com/v1".to_owned(),
+            crate::config::ProviderKind::Ollama => "http://127.0.0.1:11434".to_owned(),
+        });
+    let url = if spec.provider == crate::config::ProviderKind::Ollama {
+        format!("{}/api/tags", base.trim_end_matches('/'))
+    } else {
+        format!("{}/models", base.trim_end_matches('/'))
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(8))
+        .build()
+        .map_err(|err| format!("failed to build HTTP client: {err}"))?;
+    let mut request = client.get(&url);
+    if resolved.source != crate::credentials::CredentialSource::NotRequired {
+        request = request.bearer_auth(resolved.secret.expose());
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|err| format!("model discovery request failed: {err}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "model discovery returned HTTP {}",
+            response.status().as_u16()
+        ));
+    }
+    let body = response
+        .text()
+        .await
+        .map_err(|err| format!("failed to read model listing: {err}"))?;
+    if body.len() > 256 * 1024 {
+        return Err("model listing exceeded the 256 KiB cap".to_owned());
+    }
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|err| format!("model listing was not valid JSON: {err}"))?;
+
+    let mut models = Vec::new();
+    if let Some(items) = parsed.get("data").and_then(serde_json::Value::as_array) {
+        for item in items {
+            if let Some(id) = item.get("id").and_then(serde_json::Value::as_str) {
+                models.push(id.to_owned());
+            }
+        }
+    }
+    if let Some(items) = parsed.get("models").and_then(serde_json::Value::as_array) {
+        for item in items {
+            if let Some(name) = item.get("name").and_then(serde_json::Value::as_str) {
+                models.push(name.to_owned());
+            }
+        }
+    }
+    models.sort();
+    models.dedup();
+    models.truncate(MAX_DISCOVERED_MODELS);
+    if models.is_empty() {
+        return Err("the provider advertised no models".to_owned());
+    }
+    Ok(models)
+}
+
 /// [`ProviderRouter`] backed by pre-resolved per-dwarf providers and an optional fallback.
 #[derive(Default)]
 pub struct CachedProviderRouter {
@@ -385,6 +576,66 @@ impl CachedProviderRouter {
         }
     }
 
+    /// Builds a router from the resolved configuration and the session credential store.
+    ///
+    /// Every dwarf resolves through `routing` and then through `store`, so a pasted
+    /// session credential reaches the provider without re-reading the environment and
+    /// without a silent fallback to a different model. Dwarfs whose credential cannot
+    /// be resolved are left unresolved so the investigation reports the gap instead
+    /// of substituting a model.
+    #[must_use]
+    pub fn from_config_and_store(
+        routing: &crate::config::ModelRoutingConfig,
+        store: &crate::credentials::SessionCredentialStore,
+    ) -> Self {
+        let mut providers = std::collections::BTreeMap::new();
+        for profile in crate::brigade::ZWERGENBRIGADE {
+            let spec = routing.resolve_for_dwarf(profile.id);
+            if let Some(resolved) = store.resolve(spec)
+                && let Ok(provider) = RigCompletionProvider::from_resolved_spec(spec, &resolved)
+            {
+                providers.insert(
+                    profile.id,
+                    std::sync::Arc::new(provider) as std::sync::Arc<dyn LlmProvider>,
+                );
+            }
+        }
+        Self {
+            providers,
+            fallback: None,
+        }
+    }
+
+    /// Builds a single-provider router from an explicit provider and model choice.
+    ///
+    /// Returns `None` when the credential for that exact provider and endpoint cannot
+    /// be resolved, so the caller can report the reason rather than substitute another
+    /// model.
+    #[must_use]
+    pub fn from_model_spec(
+        spec: &crate::config::ModelSpec,
+        store: &crate::credentials::SessionCredentialStore,
+    ) -> Option<Self> {
+        let resolved = store.resolve(spec)?;
+        let provider = RigCompletionProvider::from_resolved_spec(spec, &resolved).ok()?;
+        let arc: std::sync::Arc<dyn LlmProvider> = std::sync::Arc::new(provider);
+        let mut providers = std::collections::BTreeMap::new();
+        for profile in crate::brigade::ZWERGENBRIGADE {
+            providers.insert(profile.id, std::sync::Arc::clone(&arc));
+        }
+        Some(Self {
+            providers,
+            fallback: None,
+        })
+    }
+
+    /// Whether a model is resolved for `KommandantZwerg`.
+    #[must_use]
+    pub fn resolves_kommandant(&self) -> bool {
+        self.providers
+            .contains_key(&crate::brigade::DwarfId::Kommandant)
+    }
+
     /// Inserts a specific provider for `dwarf_id` (useful in multi-model tests).
     pub fn insert(
         &mut self,
@@ -406,6 +657,19 @@ impl ProviderRouter for CachedProviderRouter {
             .get(&dwarf_id)
             .map(AsRef::as_ref)
             .or(self.fallback.as_deref())
+    }
+}
+
+/// A router with no providers.
+///
+/// Used when no model is configured: every resolution returns `None`, so callers
+/// report the missing model instead of substituting one.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct EmptyProviderRouter;
+
+impl ProviderRouter for EmptyProviderRouter {
+    fn resolve_for_dwarf(&self, _dwarf_id: crate::brigade::DwarfId) -> Option<&dyn LlmProvider> {
+        None
     }
 }
 

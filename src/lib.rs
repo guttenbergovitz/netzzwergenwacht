@@ -12,6 +12,7 @@ pub mod collection;
 pub mod config;
 pub mod credentials;
 pub mod discovery;
+pub mod doctor;
 pub mod domain;
 pub mod events;
 pub mod intelligence;

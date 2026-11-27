@@ -6,8 +6,11 @@
 use std::path::PathBuf;
 
 use crate::brigade::DwarfId;
+use crate::config::{ModelSpec, ProviderKind};
+use crate::credentials::{CredentialScope, SessionSecret};
 use crate::domain::AuditTarget;
 use crate::events::{CollectorId, DiagnosticEvent, DiagnosticEventPayload, DiagnosticRunMode};
+use crate::intelligence::ConnectionOutcome;
 use crate::investigation::HypothesisStatus;
 use crate::investigation::evidence_query::PAGE_SIZE;
 use crate::tui::action::{AppAction, AppEffect, RunLaunchSpec, UserAction};
@@ -71,6 +74,12 @@ pub fn reduce(state: &mut AppState, action: AppAction) -> Vec<AppEffect> {
                 state.push_activity("Run cancelled; background task and child processes stopped.");
                 state.status_message = String::from("Run cancelled.");
             }
+            Vec::new()
+        }
+        AppAction::ConnectionTested(outcome) => {
+            let label = outcome.label();
+            state.status_message = format!("Connection test: {label}");
+            state.launcher.connection = outcome;
             Vec::new()
         }
         AppAction::ReportSaved(result) => {
@@ -237,6 +246,9 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
         UserAction::ToggleHelp => {
             state.help_open = !state.help_open;
         }
+        UserAction::ToggleReview => {
+            state.review_open = !state.review_open;
+        }
         UserAction::CancelRun => {
             if state.lifecycle == RunLifecycleState::Running {
                 state.lifecycle = RunLifecycleState::Cancelling;
@@ -262,6 +274,7 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
     Vec::new()
 }
 
+#[allow(clippy::too_many_lines)]
 fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
     match action {
         UserAction::BackOrClose => {
@@ -285,55 +298,94 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
         UserAction::MoveUp | UserAction::PrevView => {
             state.launcher.focused_field = state.launcher.focused_field.prev();
         }
-        UserAction::MoveLeft => {
-            if state.launcher.focused_field == LauncherField::Mode {
-                state.launcher.mode = cycle_mode_prev(state.launcher.mode);
-            } else {
-                toggle_launcher_bool(state);
+        UserAction::MoveLeft => match state.launcher.focused_field {
+            LauncherField::Mode => state.launcher.mode = cycle_mode_prev(state.launcher.mode),
+            LauncherField::Provider => {
+                state.launcher.provider = cycle_provider(state.launcher.provider, false);
             }
-        }
-        UserAction::MoveRight => {
-            if state.launcher.focused_field == LauncherField::Mode {
-                state.launcher.mode = cycle_mode_next(state.launcher.mode);
-            } else {
-                toggle_launcher_bool(state);
+            _ => toggle_launcher_bool(state),
+        },
+        UserAction::MoveRight => match state.launcher.focused_field {
+            LauncherField::Mode => state.launcher.mode = cycle_mode_next(state.launcher.mode),
+            LauncherField::Provider => {
+                state.launcher.provider = cycle_provider(state.launcher.provider, true);
             }
-        }
-        UserAction::InputChar(ch) => {
-            if state.launcher.focused_field == LauncherField::TargetUrl
-                && state.launcher.target_input.len() < 256
-            {
+            _ => toggle_launcher_bool(state),
+        },
+        UserAction::InputChar(ch) => match state.launcher.focused_field {
+            LauncherField::TargetUrl if state.launcher.target_input.len() < 256 => {
                 state.launcher.target_input.push(ch);
                 state.launcher.error_message = None;
             }
-        }
-        UserAction::InputBackspace => {
-            if state.launcher.focused_field == LauncherField::TargetUrl {
+            LauncherField::Model if state.launcher.model_input.len() < 200 => {
+                state.launcher.model_input.push(ch);
+                state.launcher.error_message = None;
+                state.launcher.connection = ConnectionOutcome::NotTested;
+            }
+            LauncherField::Credential if state.launcher.credential_input.len() < 4096 => {
+                state.launcher.credential_input.push(ch);
+                state.launcher.error_message = None;
+                state.launcher.connection = ConnectionOutcome::NotTested;
+            }
+            _ => {}
+        },
+        UserAction::InputBackspace => match state.launcher.focused_field {
+            LauncherField::TargetUrl => {
                 state.launcher.target_input.pop();
                 state.launcher.error_message = None;
             }
-        }
-        UserAction::InputClear => {
-            if state.launcher.focused_field == LauncherField::TargetUrl {
+            LauncherField::Model => {
+                state.launcher.model_input.pop();
+                state.launcher.connection = ConnectionOutcome::NotTested;
+            }
+            LauncherField::Credential => {
+                state.launcher.credential_input.pop();
+                state.launcher.connection = ConnectionOutcome::NotTested;
+            }
+            _ => {}
+        },
+        UserAction::InputClear => match state.launcher.focused_field {
+            LauncherField::TargetUrl => {
                 state.launcher.target_input.clear();
                 state.launcher.error_message = None;
             }
-        }
+            LauncherField::Model => {
+                state.launcher.model_input.clear();
+                state.launcher.connection = ConnectionOutcome::NotTested;
+            }
+            LauncherField::Credential => {
+                state.launcher.credential_input.clear();
+                state.launcher.connection = ConnectionOutcome::NotTested;
+            }
+            _ => {}
+        },
         UserAction::Activate => match state.launcher.focused_field {
             LauncherField::Mode => {
                 state.launcher.mode = cycle_mode_next(state.launcher.mode);
+            }
+            LauncherField::Provider => {
+                state.launcher.provider = cycle_provider(state.launcher.provider, true);
             }
             LauncherField::BrowserToggle
             | LauncherField::AxeToggle
             | LauncherField::LighthouseToggle => {
                 toggle_launcher_bool(state);
             }
-            LauncherField::TargetUrl | LauncherField::StartButton => {
+            LauncherField::TestConnection => {
+                return request_connection_test(state);
+            }
+            LauncherField::TargetUrl
+            | LauncherField::Model
+            | LauncherField::Credential
+            | LauncherField::StartButton => {
                 return try_launch_from_launcher(state);
             }
         },
         UserAction::ToggleHelp => {
             state.help_open = !state.help_open;
+        }
+        UserAction::ToggleReview => {
+            state.review_open = !state.review_open;
         }
         UserAction::Quit => {
             state.should_quit = true;
@@ -342,6 +394,67 @@ fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEf
         _ => {}
     }
     Vec::new()
+}
+
+const fn cycle_provider(provider: ProviderKind, forward: bool) -> ProviderKind {
+    match (provider, forward) {
+        (ProviderKind::OpenAi, true) | (ProviderKind::Ollama, false) => ProviderKind::Anthropic,
+        (ProviderKind::Anthropic, true) | (ProviderKind::OpenAi, false) => ProviderKind::Ollama,
+        (ProviderKind::Ollama, true) | (ProviderKind::Anthropic, false) => ProviderKind::OpenAi,
+    }
+}
+
+/// Resolves the model specification the operator configured in the Launcher.
+fn launcher_model_spec(state: &AppState) -> Result<ModelSpec, String> {
+    let model = state.launcher.model_input.trim();
+    if !model.is_empty() {
+        return Ok(ModelSpec {
+            provider: state.launcher.provider,
+            model: model.to_owned(),
+            base_url: None,
+            api_key_env: None,
+        });
+    }
+    match &state.config {
+        Some(config) => Ok(config.models.resolve_for_dwarf(DwarfId::Kommandant).clone()),
+        None => Err(String::from(
+            "Enter a model identifier or provide a configuration file; no model is configured for KommandantZwerg.",
+        )),
+    }
+}
+
+/// Moves a pending credential into the session store, returning its scope.
+fn absorb_launcher_credential(state: &mut AppState, spec: &ModelSpec) -> Result<(), String> {
+    if state.launcher.credential_input.is_empty() {
+        return Ok(());
+    }
+    let secret = SessionSecret::new(state.launcher.credential_input.clone())?;
+    state
+        .credentials
+        .insert(CredentialScope::for_model_spec(spec), secret);
+    state.launcher.credential_input.clear();
+    Ok(())
+}
+
+fn request_connection_test(state: &mut AppState) -> Vec<AppEffect> {
+    let spec = match launcher_model_spec(state) {
+        Ok(spec) => spec,
+        Err(message) => {
+            state.launcher.error_message = Some(sanitize_line(&message, 120));
+            return Vec::new();
+        }
+    };
+    if let Err(message) = absorb_launcher_credential(state, &spec) {
+        state.launcher.error_message = Some(sanitize_line(&message, 120));
+        return Vec::new();
+    }
+    let resolved = state.credentials.resolve(&spec);
+    state.launcher.connection = ConnectionOutcome::Testing;
+    state.status_message = format!("Testing {} ...", spec.model);
+    vec![AppEffect::TestConnection {
+        spec,
+        credential: resolved.map(|resolved| resolved.secret),
+    }]
 }
 
 const fn cycle_mode_next(mode: DiagnosticRunMode) -> DiagnosticRunMode {
@@ -408,12 +521,34 @@ fn try_launch_from_launcher(state: &mut AppState) -> Vec<AppEffect> {
                 state.run_mode.label(),
                 state.target_url
             );
+            let model = state.launcher.model_input.trim().to_owned();
+            match launcher_model_spec(state) {
+                Ok(spec) => {
+                    if let Err(message) = absorb_launcher_credential(state, &spec) {
+                        state.launcher.open = true;
+                        state.launcher.error_message = Some(sanitize_line(&message, 120));
+                        return Vec::new();
+                    }
+                }
+                Err(message) => {
+                    if matches!(
+                        state.launcher.mode,
+                        crate::events::DiagnosticRunMode::AgenticInvestigation
+                    ) {
+                        state.launcher.open = true;
+                        state.launcher.error_message = Some(sanitize_line(&message, 120));
+                        return Vec::new();
+                    }
+                }
+            }
             vec![AppEffect::StartRun(RunLaunchSpec {
                 target,
                 mode: state.launcher.mode,
                 enable_browser: state.launcher.enable_browser,
                 enable_axe: state.launcher.enable_axe,
                 enable_lighthouse: state.launcher.enable_lighthouse,
+                provider: state.launcher.provider,
+                model,
             })]
         }
         Err(err) => {
@@ -986,6 +1121,77 @@ mod tests {
         assert_eq!(
             state.lifecycle.operational_status(),
             crate::tui::theme::OperationalStatus::Failed
+        );
+    }
+    #[test]
+    fn launcher_credential_input_is_never_rendered_by_debug() {
+        let mut state = AppState {
+            launcher: crate::tui::state::LauncherState {
+                open: true,
+                focused_field: crate::tui::state::LauncherField::Credential,
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+
+        for ch in "canary-9f3".chars() {
+            reduce(&mut state, AppAction::User(UserAction::InputChar(ch)));
+        }
+
+        let rendered = format!("{state:?}");
+        assert!(
+            !rendered.contains("canary-9f3"),
+            "session credential must never appear in debug output"
+        );
+        assert_eq!(state.launcher.credential_input, "canary-9f3");
+    }
+
+    #[test]
+    fn connection_test_is_requested_with_the_entered_model() {
+        let mut state = AppState {
+            launcher: crate::tui::state::LauncherState {
+                open: true,
+                focused_field: crate::tui::state::LauncherField::TestConnection,
+                model_input: "test-model".to_owned(),
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+
+        let effects = reduce(&mut state, AppAction::User(UserAction::Activate));
+
+        assert_eq!(state.launcher.connection, ConnectionOutcome::Testing);
+        assert!(
+            effects
+                .iter()
+                .any(|effect| matches!(effect, AppEffect::TestConnection { spec, .. } if spec.model == "test-model")),
+            "expected a connection test effect for the entered model"
+        );
+    }
+
+    #[test]
+    fn mission_without_a_model_reports_an_explicit_error() {
+        let mut state = AppState {
+            launcher: crate::tui::state::LauncherState {
+                open: true,
+                focused_field: crate::tui::state::LauncherField::StartButton,
+                mode: crate::events::DiagnosticRunMode::AgenticInvestigation,
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+
+        let effects = reduce(&mut state, AppAction::User(UserAction::Activate));
+
+        assert_eq!(effects.len(), 0);
+        let message = state
+            .launcher
+            .error_message
+            .as_deref()
+            .expect("missing model must be reported");
+        assert!(
+            message.contains("model"),
+            "error should name the missing model, got: {message}"
         );
     }
 }

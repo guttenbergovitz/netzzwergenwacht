@@ -353,6 +353,18 @@ pub struct InvestigationReport {
 /// Boxed future for diagnostic evidence collection.
 pub type CollectFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
+/// [`crate::intelligence::ProviderRouter`] that returns one provider for every agent.
+///
+/// Existing single-provider callers keep working unchanged, while routed callers can
+/// supply per-dwarf providers without a second investigation loop.
+pub struct SingleProviderRouter<'a>(pub &'a dyn LlmProvider);
+
+impl crate::intelligence::ProviderRouter for SingleProviderRouter<'_> {
+    fn resolve_for_dwarf(&self, _dwarf_id: DwarfId) -> Option<&dyn LlmProvider> {
+        Some(self.0)
+    }
+}
+
 /// Typed diagnostic evidence backend enabling deterministic offline tests.
 pub trait DiagnosticBackend: Send + Sync {
     /// Collects Level 1 HTTP/TLS snapshot.
@@ -590,6 +602,36 @@ pub async fn run_investigation_with_events(
     prior_specialists: Vec<SpecialistContribution>,
     sink: &crate::events::DiagnosticEventSink,
 ) -> InvestigationReport {
+    run_investigation_with_events_and_router(
+        target,
+        objective,
+        policy,
+        budget,
+        backend,
+        &SingleProviderRouter(llm),
+        prior_specialists,
+        sink,
+    )
+    .await
+}
+
+/// Executes the investigation loop with per-agent provider routing.
+///
+/// Every call that needs a model resolves it from `router` for the dwarf that will
+/// answer: `KommandantZwerg` proposes and evaluates hypotheses, specialist dwarfs answer
+/// their own consultations. When no provider is configured for the required dwarf the
+/// run stops with an explicit reason instead of silently substituting another model.
+#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+pub async fn run_investigation_with_events_and_router(
+    target: AuditTarget,
+    objective: String,
+    policy: TargetPolicy,
+    budget: InvestigationBudget,
+    backend: Arc<dyn DiagnosticBackend>,
+    router: &dyn crate::intelligence::ProviderRouter,
+    prior_specialists: Vec<SpecialistContribution>,
+    sink: &crate::events::DiagnosticEventSink,
+) -> InvestigationReport {
     let started = Instant::now();
     let id = InvestigationId::generate(target.host());
     let origin = Origin::from_target(&target);
@@ -699,6 +741,20 @@ pub async fn run_investigation_with_events(
     while ctx.ledger.llm_turns_used < budget.max_llm_turns
         && !ctx.ledger.remaining_duration(started).is_zero()
     {
+        let Some(kommandant) = router.resolve_for_dwarf(DwarfId::Kommandant) else {
+            ctx.state = InvestigationState::PartiallyCompleted;
+            let reason =
+                "no model is configured for KommandantZwerg; refusing to substitute another model";
+            ctx.events
+                .push(InvestigationEvent::InvestigationPartiallyCompleted {
+                    investigation_id: ctx.id.0.clone(),
+                    reason: reason.to_owned(),
+                });
+            return build_report(
+                ctx,
+                format!("Initial deterministic audit completed; {reason}."),
+            );
+        };
         let Ok(llm_rem) = ctx.ledger.try_consume_llm(started) else {
             return finish_budget_exhausted(ctx, "LLM turn budget exhausted".to_owned());
         };
@@ -706,7 +762,7 @@ pub async fn run_investigation_with_events(
             &ctx,
             &initial_report,
             &used_tools,
-            llm,
+            kommandant,
             budget,
             llm_rem,
         )
@@ -811,18 +867,32 @@ pub async fn run_investigation_with_events(
                     _ => None,
                 };
                 if let Some(dwarf_id) = dwarf_id {
-                    let (ok, results) = consult_specialist_during_investigation(
-                        dwarf_id,
-                        &hypothesis.proposed_explanation,
-                        &mut ctx,
-                        &initial_report,
-                        llm,
-                        tool_rem,
-                        Arc::clone(&backend),
-                        policy,
-                    )
-                    .await;
-                    (ok, results, true)
+                    if let Some(specialist) = router.resolve_for_dwarf(dwarf_id) {
+                        let (ok, results) = consult_specialist_during_investigation(
+                            dwarf_id,
+                            &hypothesis.proposed_explanation,
+                            &mut ctx,
+                            &initial_report,
+                            specialist,
+                            tool_rem,
+                            Arc::clone(&backend),
+                            policy,
+                        )
+                        .await;
+                        (ok, results, true)
+                    } else {
+                        ctx.tool_trace.push(ToolInvocationRecord {
+                            tool_id: decision.requested_tool.clone(),
+                            dwarf_id,
+                            authorised: false,
+                            succeeded: false,
+                            summary: format!(
+                                "no model is configured for {}; consultation not attempted",
+                                dwarf_id.display_name()
+                            ),
+                        });
+                        (false, Vec::new(), false)
+                    }
                 } else {
                     ctx.tool_trace.push(ToolInvocationRecord {
                         tool_id: decision.requested_tool.clone(),
@@ -871,7 +941,7 @@ pub async fn run_investigation_with_events(
             tool_succeeded,
             &snapshot,
             &mut hypothesis,
-            llm,
+            kommandant,
             budget,
             eval_rem,
         )

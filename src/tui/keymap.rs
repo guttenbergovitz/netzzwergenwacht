@@ -7,7 +7,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::tui::action::UserAction;
-use crate::tui::state::{AppState, LauncherField, WorkbenchView};
+use crate::tui::state::{AppState, WorkbenchView};
 
 /// Translates a terminal [`KeyEvent`] into a [`UserAction`] based on the active
 /// modal state in [`AppState`].
@@ -51,7 +51,7 @@ pub fn translate_key_event(key: KeyEvent, state: &AppState) -> Option<UserAction
 
     // 3. Launcher modal open.
     if state.launcher.open {
-        let editing_url = state.launcher.focused_field == LauncherField::TargetUrl;
+        let editing_url = state.launcher.focused_field.is_text_field();
         return match key.code {
             KeyCode::Esc => Some(UserAction::BackOrClose),
             KeyCode::Tab | KeyCode::Down => Some(UserAction::MoveDown),
@@ -104,6 +104,7 @@ pub fn translate_key_event(key: KeyEvent, state: &AppState) -> Option<UserAction
         KeyCode::Char('/') => Some(UserAction::OpenSearch),
         KeyCode::Char('s') => Some(UserAction::CycleSort),
         KeyCode::Char('v') => Some(UserAction::CycleSeverityFilter),
+        KeyCode::Char('r') => Some(UserAction::ToggleReview),
         KeyCode::Char('n') => Some(UserAction::OpenLauncher),
         KeyCode::Char('w') => Some(UserAction::SaveCurrentReport),
         KeyCode::Char('t') => Some(UserAction::CycleTheme),
