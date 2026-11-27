@@ -1984,13 +1984,44 @@ fn build_systemic_finding_rows(issues: &[crate::discovery::SystemicIssue]) -> Ve
                 .map(|u| sanitize_url_for_display(u, 60))
                 .collect::<Vec<_>>()
                 .join(", ");
+            let source = if issue.dwarf_id == DwarfId::Browser
+                || issue.rule_id.0.starts_with("browser.")
+            {
+                EvidenceSource::BrowserRuntime
+            } else if issue.dwarf_id == DwarfId::Sicherheits {
+                EvidenceSource::HttpHeaders
+            } else {
+                EvidenceSource::HttpBody
+            };
+            let mut evidence_refs = vec![EvidenceRef {
+                source,
+                detail: sanitize_line(
+                    &format!(
+                        "cluster={} classification={:?} affected_pages={affected}",
+                        issue.id, issue.classification
+                    ),
+                    160,
+                ),
+            }];
+            for url in issue.affected_urls.iter().take(6) {
+                evidence_refs.push(EvidenceRef {
+                    source,
+                    detail: format!("affected_url={}", sanitize_url_for_display(url, 120)),
+                });
+            }
+            let primary_evidence_category =
+                evidence_category_for(source, &issue.rule_id.0);
             FindingRow {
                 index,
                 dwarf_id: issue.dwarf_id,
                 rule_id: sanitize_line(&issue.rule_id.0, 80),
                 severity: issue.severity,
                 confidence: issue.recurrence_confidence,
-                evidence_level: EvidenceLevel::Source,
+                evidence_level: if source == EvidenceSource::BrowserRuntime {
+                    EvidenceLevel::Rendered
+                } else {
+                    EvidenceLevel::Source
+                },
                 target_url: sanitize_url_for_display(
                     issue.affected_urls.first().map_or("", String::as_str),
                     120,
@@ -2006,8 +2037,8 @@ fn build_systemic_finding_rows(issues: &[crate::discovery::SystemicIssue]) -> Ve
                 recommendation: String::from(
                     "Correct the shared template, configuration, or dependency rather than each affected page.",
                 ),
-                evidence_refs: Vec::new(),
-                primary_evidence_category: EvidenceCategory::Http,
+                evidence_refs,
+                primary_evidence_category,
             }
         })
         .collect()
