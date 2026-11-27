@@ -2209,10 +2209,57 @@ fn build_axe_evidence_lines(snapshot: &crate::domain::EvidenceSnapshot) -> Vec<L
     }
 }
 
-fn render_offline_report_evidence_fallback(state: &AppState) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
+fn push_matching_category_findings(
+    lines: &mut Vec<Line<'static>>,
+    state: &AppState,
+    categories: &[EvidenceCategory],
+    empty_hint: &str,
+) {
+    let matching: Vec<&crate::tui::state::FindingRow> = state
+        .findings
+        .iter()
+        .filter(|f| categories.contains(&f.primary_evidence_category))
+        .collect();
+    if matching.is_empty() {
+        lines.push(Line::from(format!(" {empty_hint}")));
+        return;
+    }
+    lines.push(Line::from(format!(
+        " Matching findings in this evidence family ({}):",
+        matching.len()
+    )));
+    for f in matching.iter().take(12) {
+        lines.push(Line::from(format!(
+            "   - [{:?}] {} — {}",
+            f.severity,
+            f.rule_id,
+            sanitize_line(&f.title, 64)
+        )));
+        for ev in f.evidence_refs.iter().take(2) {
+            lines.push(Line::from(format!(
+                "       [{:?}] {}",
+                ev.source,
+                sanitize_line(&ev.detail, 86)
+            )));
+        }
+    }
+}
 
-    if let Some(finding) = state.selected_finding() {
+#[allow(clippy::too_many_lines)]
+fn render_offline_report_evidence_fallback(state: &AppState) -> Vec<Line<'static>> {
+    if state.crawl_summary.is_none()
+        && state.audit_report.is_none()
+        && state.selected_finding().is_none()
+    {
+        return vec![Line::from(
+            " No EvidenceSnapshot, CrawlSummary, or AuditReport loaded. Start a run from Launcher (n).",
+        )];
+    }
+
+    let mut lines = Vec::new();
+    if let Some(finding) = state.selected_finding()
+        && finding.primary_evidence_category == state.evidence_category
+    {
         lines.push(Line::from(format!(
             " Selected Finding: [{}] {} ({:?})",
             finding.rule_id,
@@ -2223,89 +2270,192 @@ fn render_offline_report_evidence_fallback(state: &AppState) -> Vec<Line<'static
             " Target: {}",
             sanitize_url_for_display(&finding.target_url, 90)
         )));
-        if finding.evidence_refs.is_empty() {
-            lines.push(Line::from(" Supporting evidence refs: (none attached)"));
-        } else {
+        for ev in finding.evidence_refs.iter().take(6) {
             lines.push(Line::from(format!(
-                " Supporting evidence refs ({}):",
-                finding.evidence_refs.len()
+                "   - [{:?}] {}",
+                ev.source,
+                sanitize_line(&ev.detail, 96)
             )));
-            for ev in finding.evidence_refs.iter().take(12) {
-                lines.push(Line::from(format!(
-                    "   - [{:?}] {}",
-                    ev.source,
-                    sanitize_line(&ev.detail, 96)
-                )));
-            }
         }
         lines.push(Line::from(""));
     }
 
-    if let Some(ref crawl) = state.crawl_summary {
-        let cov = &crawl.coverage;
-        lines.push(Line::from(format!(
-            " Crawl Coverage: discovered={} fetched={} analysed={} failed={} systemic_issues={}",
-            cov.discovered_urls,
-            cov.fetched_urls,
-            cov.analysed_urls,
-            cov.failed_urls,
-            crawl.systemic_issues.len()
-        )));
-        if !crawl.resources.is_empty() {
-            lines.push(Line::from(format!(
-                " Shared Resources ({} observed, prioritised):",
-                crawl.resources.len()
-            )));
-            for res in crate::report_html::prioritise_resources(&crawl.resources)
-                .into_iter()
-                .take(15)
-            {
-                let size = res.byte_len.map_or_else(
-                    || res.error.as_deref().unwrap_or("—").to_owned(),
-                    crate::report_html::format_bytes,
-                );
+    match state.evidence_category {
+        EvidenceCategory::Http => {
+            if let Some(ref crawl) = state.crawl_summary {
+                let cov = &crawl.coverage;
                 lines.push(Line::from(format!(
-                    "   - [{:?}] {} ({})",
-                    res.status,
-                    sanitize_url_for_display(&res.url, 72),
-                    size
+                    " HTTP Crawl Coverage: discovered={} fetched={} analysed={} failed={} skipped_budget={}",
+                    cov.discovered_urls,
+                    cov.fetched_urls,
+                    cov.analysed_urls,
+                    cov.failed_urls,
+                    cov.skipped_budget_urls
                 )));
+                let err_targets: Vec<_> = state
+                    .target_rows
+                    .iter()
+                    .filter(|t| t.http_status.is_none_or(|s| s >= 400))
+                    .take(12)
+                    .collect();
+                if err_targets.is_empty() {
+                    lines.push(Line::from(
+                        " Sampled HTTP targets: no 4xx/5xx or failed target rows recorded.",
+                    ));
+                } else {
+                    lines.push(Line::from(format!(
+                        " Targets with HTTP errors / failures ({} shown):",
+                        err_targets.len()
+                    )));
+                    for t in err_targets {
+                        let st = t
+                            .http_status
+                            .map_or_else(|| "ERR".to_owned(), |c| c.to_string());
+                        lines.push(Line::from(format!(
+                            "   - [{st}] {} ({} findings)",
+                            sanitize_url_for_display(&t.display_url, 72),
+                            t.findings_count.unwrap_or(0)
+                        )));
+                    }
+                }
+            } else if let Some(ref report) = state.audit_report {
+                match &report.http {
+                    CollectorOutcome::Captured { data: value }
+                    | CollectorOutcome::Partial { data: value, .. } => {
+                        lines.push(Line::from(format!(
+                            " HTTP Summary: status={} final_url={} redirects={} elapsed={:?}",
+                            value.status_code,
+                            sanitize_url_for_display(&value.final_url, 80),
+                            value.redirect_chain.len(),
+                            value.elapsed_ms
+                        )));
+                    }
+                    other => {
+                        lines.push(Line::from(format!(" HTTP Summary: {other:?}")));
+                    }
+                }
             }
         }
-        return lines;
-    }
-
-    let Some(ref report) = state.audit_report else {
-        if lines.is_empty() {
-            lines.push(Line::from(
-                " No EvidenceSnapshot, CrawlSummary, or AuditReport loaded. Start a run from Launcher (n).",
-            ));
-        }
-        return lines;
-    };
-    lines.push(Line::from(
-        " Loaded from saved AuditReport (raw EvidenceSnapshot not retained in report JSON).",
-    ));
-    lines.push(Line::from(""));
-    match &report.http {
-        CollectorOutcome::Captured { data: value }
-        | CollectorOutcome::Partial { data: value, .. } => {
+        EvidenceCategory::Tls | EvidenceCategory::VisualSwAndTlsCaa => {
+            let https_count = state
+                .target_rows
+                .iter()
+                .filter(|t| t.display_url.starts_with("https://"))
+                .count();
+            let plaintext_count = state.target_rows.len().saturating_sub(https_count);
             lines.push(Line::from(format!(
-                " HTTP Summary: status={} final_url={} redirects={} elapsed={:?}",
-                value.status_code,
-                sanitize_url_for_display(&value.final_url, 80),
-                value.redirect_chain.len(),
-                value.elapsed_ms
+                " Transport Scheme Coverage: https={https_count} http={plaintext_count}"
             )));
+            push_matching_category_findings(
+                &mut lines,
+                state,
+                &[EvidenceCategory::Tls, EvidenceCategory::VisualSwAndTlsCaa],
+                "No TLS/Service-Worker findings recorded; run single-target `check` for full X.509 certificate details.",
+            );
+        }
+        EvidenceCategory::NetworkResources | EvidenceCategory::RequestChainsAndFailures => {
+            if let Some(ref crawl) = state.crawl_summary {
+                let payload = crate::report_html::summarise_resources(&crawl.resources);
+                lines.push(Line::from(format!(
+                    " Subresources: {} observed | Measured payload: {} (JS: {}, CSS: {}, Img: {})",
+                    crawl.resources.len(),
+                    crate::report_html::format_bytes(payload.total_bytes),
+                    crate::report_html::format_bytes(payload.script_bytes),
+                    crate::report_html::format_bytes(payload.stylesheet_bytes),
+                    crate::report_html::format_bytes(payload.image_bytes),
+                )));
+                for res in crate::report_html::prioritise_resources(&crawl.resources)
+                    .into_iter()
+                    .take(15)
+                {
+                    let size = res.byte_len.map_or_else(
+                        || res.error.as_deref().unwrap_or("—").to_owned(),
+                        crate::report_html::format_bytes,
+                    );
+                    let enc = res.content_encoding.as_deref().unwrap_or("none");
+                    lines.push(Line::from(format!(
+                        "   - [{:?}] {} ({}, enc={})",
+                        res.status,
+                        sanitize_url_for_display(&res.url, 66),
+                        size,
+                        enc
+                    )));
+                }
+            } else {
+                push_matching_category_findings(
+                    &mut lines,
+                    state,
+                    &[
+                        EvidenceCategory::NetworkResources,
+                        EvidenceCategory::RequestChainsAndFailures,
+                    ],
+                    "No subresource waterfall or request-chain failures recorded without a live browser snapshot.",
+                );
+            }
+        }
+        EvidenceCategory::RenderedContent | EvidenceCategory::SourceRenderedDiff => {
+            if let Some(ref report) = state.audit_report {
+                lines.push(Line::from(if report.rendered_history.is_some() {
+                    " Saved Rendered Content History: Present"
+                } else {
+                    " Saved Rendered Content History: Not present"
+                }));
+            }
+            push_matching_category_findings(
+                &mut lines,
+                state,
+                &[
+                    EvidenceCategory::RenderedContent,
+                    EvidenceCategory::SourceRenderedDiff,
+                ],
+                "No rendered-content or SSR/CSR divergence findings in this view (enable `--browser` / `--browser-sample` for live DOM blocks).",
+            );
+        }
+        EvidenceCategory::Performance | EvidenceCategory::PerformanceAndMedia => {
+            if let Some(ref crawl) = state.crawl_summary {
+                let payload = crate::report_html::summarise_resources(&crawl.resources);
+                lines.push(Line::from(format!(
+                    " Payload Budget: total={} | uncompressed >=20KB JS/CSS={}",
+                    crate::report_html::format_bytes(payload.total_bytes),
+                    payload.uncompressed_heavy_count
+                )));
+            }
+            push_matching_category_findings(
+                &mut lines,
+                state,
+                &[
+                    EvidenceCategory::Performance,
+                    EvidenceCategory::PerformanceAndMedia,
+                ],
+                "No performance or media findings recorded in this family.",
+            );
+        }
+        EvidenceCategory::SeoAndStructuredData | EvidenceCategory::ResponsiveAndLinks => {
+            if let Some(ref crawl) = state.crawl_summary {
+                lines.push(Line::from(format!(
+                    " Crawl Indexability: robots={:?} | systemic_clusters={}",
+                    crawl.coverage.robots,
+                    crawl.systemic_issues.len()
+                )));
+            }
+            push_matching_category_findings(
+                &mut lines,
+                state,
+                &[
+                    EvidenceCategory::SeoAndStructuredData,
+                    EvidenceCategory::ResponsiveAndLinks,
+                ],
+                "No SEO, structured-data, or link-graph findings recorded in this family.",
+            );
         }
         other => {
-            lines.push(Line::from(format!(" HTTP Summary: {other:?}")));
+            push_matching_category_findings(
+                &mut lines,
+                state,
+                &[other],
+                "No findings or Level 2 collector artefacts captured for this evidence family.",
+            );
         }
-    }
-    if report.rendered_history.is_some() {
-        lines.push(Line::from(" Saved Rendered Content History: Present"));
-    } else {
-        lines.push(Line::from(" Saved Rendered Content History: Not present"));
     }
     lines
 }
