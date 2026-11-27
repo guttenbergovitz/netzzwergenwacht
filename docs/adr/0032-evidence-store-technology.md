@@ -2,12 +2,16 @@
 
 ## Status
 
-Accepted — 2026-11-27.
+Amended by ADR 0033 — 2026-11-27.
 
-Amends the conditional decision recorded in ADR 0028 by resolving the spike it
-required. ADR 0028 remains the authoritative description of the conceptual data
-model, cache layers and retention rules; this record covers only the storage
-technology choice and the measurements behind it.
+The storage choice below (SQLite via `rusqlite`) was accepted, then superseded by
+ADR 0033, which adopts Turso Database for concurrent writes. The reasoning about
+durability, bounded memory and selective queries still applies to the replacement.
+
+Originally accepted 2026-11-27, resolving the conditional decision in ADR 0028.
+ADR 0028 remains the authoritative description of the conceptual data model, cache
+layers and retention rules; this record covered only the storage technology choice
+and the measurements behind it.
 
 ## Context
 

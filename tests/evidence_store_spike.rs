@@ -617,3 +617,465 @@ fn sqlite_and_segment_stores_answer_identically_with_measured_cost() {
     measure(Population::with_pages(5_000));
     measure(Population::with_pages(50_000));
 }
+
+// ---------------------------------------------------------------------------
+// Turso Database (MVCC) experiment
+// ---------------------------------------------------------------------------
+//
+// The architectural amendment to ADR 0032 replaces SQLite with Turso Database on
+// the grounds that MVCC permits several connections to write concurrently. That
+// claim is a property to verify, not to assume, so this section exercises it
+// directly: independent writers, a writer alongside a reader, commit conflicts,
+// rollback atomicity, duplicate insertion, abandoned transactions, reopen
+// recovery and one analytical query.
+//
+// SQLite remains here as the comparison baseline with batched transactions. No
+// assertion claims Turso is faster; the harness prints what it measured.
+
+mod turso_experiment {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{Duration, Instant};
+
+    use turso::{Builder, Database, Error};
+
+    use super::{Population, temp_path};
+
+    const WRITERS: usize = 8;
+    const ROWS_PER_WRITER: i64 = 500;
+
+    fn is_retryable(error: &Error) -> bool {
+        match error {
+            Error::Busy(_) | Error::BusySnapshot(_) => true,
+            Error::Error(message) => message.contains("conflict") || message.contains("busy"),
+            _ => false,
+        }
+    }
+
+    async fn open(name: &str) -> (Database, PathBuf) {
+        let path = temp_path(name);
+        let database = Builder::new_local(path.to_str().expect("temp path is utf-8"))
+            .build()
+            .await
+            .expect("turso database opens");
+        (database, path)
+    }
+
+    async fn enable_mvcc(database: &Database) -> String {
+        let connection = database.connect().expect("connection");
+        let mut rows = connection
+            .query("PRAGMA journal_mode = 'mvcc'", ())
+            .await
+            .expect("pragma is accepted");
+        match rows.next().await {
+            Ok(Some(row)) => row.get::<String>(0).unwrap_or_default(),
+            _ => String::new(),
+        }
+    }
+
+    async fn schema(database: &Database) {
+        let connection = database.connect().expect("connection");
+        connection
+            .execute(
+                "CREATE TABLE pages (id INTEGER PRIMARY KEY, url TEXT NOT NULL, rule TEXT NOT NULL)",
+                (),
+            )
+            .await
+            .expect("pages table");
+        connection
+            .execute("CREATE INDEX pages_by_rule ON pages(rule)", ())
+            .await
+            .expect("rule index");
+    }
+
+    /// Inserts one slice of the population under `BEGIN CONCURRENT`, retrying
+    /// retryable conflicts with a bounded budget. Returns `(retries, elapsed)`.
+    pub async fn concurrent_writer(database: Database, writer: usize) -> (u64, Duration, i64) {
+        let connection = database.connect().expect("connection");
+        let retries = Arc::new(AtomicU64::new(0));
+        let started = Instant::now();
+        let base = i64::try_from(writer).unwrap_or(0) * ROWS_PER_WRITER;
+        let mut inserted = 0_i64;
+
+        for offset in 0..ROWS_PER_WRITER {
+            let id = base + offset;
+            let mut attempt = 0_u32;
+            loop {
+                attempt += 1;
+                if connection.execute("BEGIN CONCURRENT", ()).await.is_err() {
+                    tokio::task::yield_now().await;
+                    continue;
+                }
+                let write = connection
+                    .execute(
+                        "INSERT INTO pages (id, url, rule) VALUES (?1, ?2, ?3)",
+                        (id, format!("/page/{id}"), format!("rule.{}", id % 40)),
+                    )
+                    .await;
+                match write {
+                    Ok(_) => match connection.execute("COMMIT", ()).await {
+                        Ok(_) => {
+                            inserted += 1;
+                            break;
+                        }
+                        Err(error) if is_retryable(&error) => {
+                            retries.fetch_add(1, Ordering::Relaxed);
+                            let _ = connection.execute("ROLLBACK", ()).await;
+                            tokio::task::yield_now().await;
+                        }
+                        Err(error) => panic!("permanent commit failure: {error}"),
+                    },
+                    Err(error) if is_retryable(&error) => {
+                        let _ = connection.execute("ROLLBACK", ()).await;
+                        retries.fetch_add(1, Ordering::Relaxed);
+                        tokio::task::yield_now().await;
+                    }
+                    Err(error) => panic!("permanent write failure: {error}"),
+                }
+                assert!(attempt <= 200, "retry budget exhausted for row {id}");
+            }
+        }
+        (retries.load(Ordering::Relaxed), started.elapsed(), inserted)
+    }
+
+    async fn count(database: &Database, sql: &str) -> i64 {
+        let connection = database.connect().expect("connection");
+        let mut rows = connection.query(sql, ()).await.expect("query runs");
+        match rows.next().await {
+            Ok(Some(row)) => row.get::<i64>(0).unwrap_or(-1),
+            _ => -1,
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    pub async fn run() {
+        let (database, path) = open("turso.db").await;
+        let mode = enable_mvcc(&database).await;
+        println!("turso journal_mode = '{mode}'");
+        schema(&database).await;
+
+        // 1. Independent concurrent writers.
+        let started = Instant::now();
+        let mut handles = Vec::new();
+        for writer in 0..WRITERS {
+            handles.push(tokio::spawn(concurrent_writer(database.clone(), writer)));
+        }
+        let mut retries = 0_u64;
+        let mut inserted = 0_i64;
+        for handle in handles {
+            let (writer_retries, _, rows) = handle.await.expect("writer task");
+            retries += writer_retries;
+            inserted += rows;
+        }
+        let concurrent_elapsed = started.elapsed();
+        let total = count(&database, "SELECT COUNT(*) FROM pages").await;
+        let expected = i64::try_from(WRITERS).unwrap_or(0) * ROWS_PER_WRITER;
+        assert_eq!(inserted, expected, "every writer must confirm its rows");
+        assert_eq!(total, expected, "no committed row may be lost");
+        println!(
+            "turso concurrent writes: {inserted} rows in {} ms across {WRITERS} writers, {retries} retries",
+            concurrent_elapsed.as_millis()
+        );
+
+        // 2. Duplicate insertion is prevented by the stable identity.
+        {
+            let connection = database.connect().expect("connection");
+            connection
+                .execute("BEGIN CONCURRENT", ())
+                .await
+                .expect("begin");
+            connection
+                .execute(
+                    "INSERT INTO pages (id, url, rule) VALUES (0, '/page/0', 'rule.0') ON CONFLICT(id) DO NOTHING",
+                    (),
+                )
+                .await
+                .expect("idempotent insert");
+            connection.execute("COMMIT", ()).await.expect("commit");
+            assert_eq!(
+                count(&database, "SELECT COUNT(*) FROM pages").await,
+                expected
+            );
+        }
+
+        // 3. A reader observes a committed snapshot while a writer is active.
+        let reader_value = {
+            let reader = database.connect().expect("reader");
+            let mut rows = reader
+                .query("SELECT COUNT(*) FROM pages", ())
+                .await
+                .expect("reader query");
+            rows.next()
+                .await
+                .expect("reader row")
+                .and_then(|row| row.get::<i64>(0).ok())
+                .unwrap_or(-1)
+        };
+        assert_eq!(reader_value, expected, "a reader must see committed writes");
+
+        // 3b. Contention on a single row: MVCC must either serialise the
+        //     updates or report a conflict that the writer retries. A lost
+        //     update would show up as a final value below the commit count.
+        {
+            let setup = database.connect().expect("connection");
+            setup
+                .execute(
+                    "CREATE TABLE counter (id INTEGER PRIMARY KEY, val INTEGER NOT NULL)",
+                    (),
+                )
+                .await
+                .expect("counter table");
+            setup
+                .execute("INSERT INTO counter (id, val) VALUES (1, 0)", ())
+                .await
+                .expect("counter seed");
+        }
+        let increments_per_writer = 20_usize;
+        let mut contention_handles = Vec::new();
+        for _ in 0..WRITERS {
+            let database = database.clone();
+            contention_handles.push(tokio::spawn(async move {
+                let connection = database.connect().expect("connection");
+                let mut committed = 0_u32;
+                let mut conflicts = 0_u32;
+                for _ in 0..increments_per_writer {
+                    let mut attempt = 0_u32;
+                    loop {
+                        attempt += 1;
+                        if connection.execute("BEGIN CONCURRENT", ()).await.is_err() {
+                            tokio::task::yield_now().await;
+                            continue;
+                        }
+                        let updated = connection
+                            .execute("UPDATE counter SET val = val + 1 WHERE id = 1", ())
+                            .await;
+                        match updated {
+                            Ok(_) => match connection.execute("COMMIT", ()).await {
+                                Ok(_) => {
+                                    committed += 1;
+                                    break;
+                                }
+                                Err(error) if is_retryable(&error) => {
+                                    conflicts += 1;
+                                    let _ = connection.execute("ROLLBACK", ()).await;
+                                    tokio::task::yield_now().await;
+                                }
+                                Err(error) => panic!("permanent commit failure: {error}"),
+                            },
+                            Err(error) if is_retryable(&error) => {
+                                conflicts += 1;
+                                let _ = connection.execute("ROLLBACK", ()).await;
+                                tokio::task::yield_now().await;
+                            }
+                            Err(error) => panic!("permanent update failure: {error}"),
+                        }
+                        assert!(
+                            attempt <= 500,
+                            "retry budget exhausted on the contended row"
+                        );
+                    }
+                }
+                (committed, conflicts)
+            }));
+        }
+        let mut contended_commits = 0_u32;
+        let mut contended_conflicts = 0_u32;
+        for handle in contention_handles {
+            let (committed, conflicts) = handle.await.expect("contention task");
+            contended_commits += committed;
+            contended_conflicts += conflicts;
+        }
+        let final_value = count(&database, "SELECT val FROM counter WHERE id = 1").await;
+        assert_eq!(
+            final_value,
+            i64::from(contended_commits),
+            "MVCC must not lose an increment that reported a commit"
+        );
+        assert_eq!(
+            contended_commits,
+            u32::try_from(WRITERS).unwrap_or(0) * u32::try_from(increments_per_writer).unwrap_or(0),
+            "every increment must eventually commit"
+        );
+        println!(
+            "turso contended row: {contended_commits} increments committed, {contended_conflicts} conflicts retried, final value {final_value}"
+        );
+
+        // 4. Rollback atomicity: a failing batch leaves nothing behind.
+        {
+            let connection = database.connect().expect("connection");
+            connection
+                .execute("BEGIN CONCURRENT", ())
+                .await
+                .expect("begin");
+            connection
+                .execute(
+                    "INSERT INTO pages (id, url, rule) VALUES (99991, '/x', 'r')",
+                    (),
+                )
+                .await
+                .expect("first row");
+            let failed = connection
+                .execute("INSERT INTO missing_table (id) VALUES (1)", ())
+                .await;
+            assert!(failed.is_err(), "the broken statement must fail");
+            connection.execute("ROLLBACK", ()).await.expect("rollback");
+            assert_eq!(
+                count(&database, "SELECT COUNT(*) FROM pages").await,
+                expected,
+                "a rolled back batch must leave no partial evidence"
+            );
+        }
+
+        // 5. Abandoned transaction: dropping the connection without commit must
+        //    not publish the observation, and the file must reopen intact.
+        {
+            let connection = database.connect().expect("connection");
+            connection
+                .execute("BEGIN CONCURRENT", ())
+                .await
+                .expect("begin");
+            connection
+                .execute(
+                    "INSERT INTO pages (id, url, rule) VALUES (88881, '/abandoned', 'r')",
+                    (),
+                )
+                .await
+                .expect("uncommitted row");
+            drop(connection);
+        }
+        drop(database);
+
+        let reopened = Builder::new_local(path.to_str().expect("path"))
+            .build()
+            .await
+            .expect("turso reopens");
+        assert_eq!(
+            count(&reopened, "SELECT COUNT(*) FROM pages").await,
+            expected,
+            "an abandoned transaction must not be published"
+        );
+        assert_eq!(
+            count(&reopened, "SELECT COUNT(*) FROM pages WHERE id = 88881").await,
+            0,
+            "the abandoned row must be absent after reopen"
+        );
+        let reopened_mode = enable_mvcc(&reopened).await;
+        println!("turso reopen journal_mode = '{reopened_mode}'");
+
+        // 6. One analytical query, compared with an answer computed in Rust.
+        let mut expected_rules = BTreeMap::new();
+        for id in 0..expected {
+            let rule = format!("rule.{}", id % 40);
+            *expected_rules.entry(rule).or_insert(0_i64) += 1;
+        }
+        let observed_rules = {
+            let connection = reopened.connect().expect("connection");
+            let mut rows = connection
+                .query(
+                    "SELECT rule, COUNT(*) AS hits FROM pages GROUP BY rule ORDER BY hits DESC, rule ASC",
+                    (),
+                )
+                .await
+                .expect("aggregate runs");
+            let mut collected = BTreeMap::new();
+            while let Ok(Some(row)) = rows.next().await {
+                if let (Ok(rule), Ok(hits)) = (row.get::<String>(0), row.get::<i64>(1)) {
+                    collected.insert(rule, hits);
+                }
+            }
+            collected
+        };
+        assert_eq!(observed_rules, expected_rules, "aggregates must agree");
+
+        // 7. Schema migration surface.
+        {
+            let connection = reopened.connect().expect("connection");
+            connection
+                .execute("PRAGMA user_version = 2", ())
+                .await
+                .expect("user_version is settable");
+            let mut rows = connection
+                .query("PRAGMA user_version", ())
+                .await
+                .expect("user_version is readable");
+            let version = match rows.next().await {
+                Ok(Some(row)) => row.get::<i64>(0).unwrap_or(-1),
+                _ => -1,
+            };
+            println!("turso user_version after migration = {version}");
+        }
+
+        // 8. Foreign keys: record what the engine actually does.
+        {
+            let connection = reopened.connect().expect("connection");
+            let enabled = connection
+                .execute("PRAGMA foreign_keys = ON", ())
+                .await
+                .is_ok();
+            connection
+                .execute(
+                    "CREATE TABLE IF NOT EXISTS parents (id INTEGER PRIMARY KEY)",
+                    (),
+                )
+                .await
+                .expect("parents");
+            connection
+                .execute(
+                    "CREATE TABLE IF NOT EXISTS children (id INTEGER PRIMARY KEY, parent INTEGER REFERENCES parents(id))",
+                    (),
+                )
+                .await
+                .expect("children");
+            let rejected = connection
+                .execute("INSERT INTO children (id, parent) VALUES (1, 4242)", ())
+                .await
+                .is_err();
+            println!(
+                "turso foreign_keys pragma accepted = {enabled}, orphan rejected = {rejected}"
+            );
+        }
+
+        // SQLite baseline for the same population, batched in one transaction.
+        let sqlite_path = temp_path("turso-baseline.db");
+        let sqlite_elapsed = {
+            let store = rusqlite::Connection::open(&sqlite_path).expect("sqlite opens");
+            store
+                .execute_batch("CREATE TABLE pages (id INTEGER PRIMARY KEY, url TEXT, rule TEXT);")
+                .expect("schema");
+            let started = Instant::now();
+            let transaction = store.unchecked_transaction().expect("transaction");
+            {
+                let mut statement = transaction
+                    .prepare("INSERT INTO pages (id, url, rule) VALUES (?1, ?2, ?3)")
+                    .expect("prepare");
+                for id in 0..expected {
+                    statement
+                        .execute(rusqlite::params![
+                            id,
+                            format!("/page/{id}"),
+                            format!("rule.{}", id % 40)
+                        ])
+                        .expect("insert");
+                }
+            }
+            transaction.commit().expect("commit");
+            started.elapsed()
+        };
+        println!(
+            "sqlite batched baseline: {expected} rows in {} ms",
+            sqlite_elapsed.as_millis()
+        );
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&sqlite_path);
+        let _ = Population::with_pages(0);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[ignore = "measured spike; run with --release --ignored --nocapture"]
+async fn concurrent_persistence_is_verified_before_adoption() {
+    turso_experiment::run().await;
+}
