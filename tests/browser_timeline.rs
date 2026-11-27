@@ -544,3 +544,62 @@ async fn live_crawl_with_browser_sample_detects_runtime_errors_and_shared_depend
     assert_eq!(assessment.overall_verdict, DomainVerdict::Fail);
     server.abort();
 }
+
+#[ignore = "requires local Chromium/Chrome and Node.js with ws"]
+#[tokio::test]
+async fn live_browser_detects_ineffective_reject_consent_button() {
+    use netzzwergenwacht::analysis;
+    use netzzwergenwacht::collection;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let body = r#"<!doctype html><html lang="en"><head><title>Consent Test</title></head><body>
+            <main><h1>Shop</h1><p>Welcome to our test shop.</p></main>
+            <div id="cookie-banner" style="width:400px;height:120px;display:block;">
+              <p>We use cookies.</p>
+              <button type="button" id="accept-btn">Accept all</button>
+              <button type="button" id="reject-btn" onclick="localStorage.setItem('tracker_id','123');">Reject all</button>
+            </div>
+        </body></html>"#;
+        loop {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+
+    let target =
+        AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+    let mut snapshot = collection::collect_http(
+        &target,
+        &netzzwergenwacht::domain::ExecutionBudget::default(),
+        TargetPolicy::AllowPrivate,
+    )
+    .await;
+    snapshot.browser =
+        run_browser_with_policy(&target, Duration::from_secs(30), TargetPolicy::AllowPrivate).await;
+    server.abort();
+
+    let report = analysis::run_all(&snapshot);
+    let rules: Vec<&str> = report
+        .analysers
+        .iter()
+        .flat_map(|a| a.findings.iter().map(|f| f.rule_id.0.as_str()))
+        .collect();
+    assert!(
+        rules.contains(&"sec.privacy.reject_consent_ineffective"),
+        "expected sec.privacy.reject_consent_ineffective, got: {rules:?}"
+    );
+}

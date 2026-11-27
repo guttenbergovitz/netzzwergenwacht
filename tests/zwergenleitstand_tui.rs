@@ -85,13 +85,13 @@ async fn vertical_slice_live_deterministic_audit_to_tui_evidence_and_saved_repor
         max_depth: 1,
     };
 
-    let artefacts = execute_diagnostic_run(
+    let artefacts = Box::pin(execute_diagnostic_run(
         spec,
         policy,
         budget,
         String::from("Verify vertical slice"),
         sink,
-    )
+    ))
     .await
     .expect("execute live deterministic run");
 

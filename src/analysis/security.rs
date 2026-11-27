@@ -46,6 +46,7 @@ const RULE_CSP_WILDCARD: &str = "sec.csp.wildcard_source";
 const RULE_STACK_TRACE_LEAK: &str = "sec.headers.server_error_stack_trace";
 const RULE_CONSENT_ASYMMETRY: &str = "sec.privacy.consent_banner_asymmetry";
 const RULE_TRACKING_NO_BANNER: &str = "sec.privacy.tracking_without_consent_banner";
+const RULE_REJECT_INEFFECTIVE: &str = "sec.privacy.reject_consent_ineffective";
 const RULE_SESSION_COOKIE_HTTPONLY: &str = "sec.cookies.session_missing_httponly";
 const RULE_COOKIE_INVALID_DOMAIN: &str = "sec.cookies.invalid_domain_scope";
 const RULE_COOKIE_INSECURE_SAMESITE: &str = "sec.cookies.insecure_samesite_none";
@@ -88,6 +89,7 @@ const ALL_RULES: &[&str] = &[
     RULE_STACK_TRACE_LEAK,
     RULE_CONSENT_ASYMMETRY,
     RULE_TRACKING_NO_BANNER,
+    RULE_REJECT_INEFFECTIVE,
     RULE_SESSION_COOKIE_HTTPONLY,
     RULE_COOKIE_INVALID_DOMAIN,
     RULE_COOKIE_INSECURE_SAMESITE,
@@ -2307,6 +2309,7 @@ fn check_privacy_browser_signals(
                 RULE_PRIVACY_THIRD_PARTY_FLOW,
                 RULE_CONSENT_ASYMMETRY,
                 RULE_TRACKING_NO_BANNER,
+                RULE_REJECT_INEFFECTIVE,
             ] {
                 checks.push(CheckStatus::Skipped {
                     rule_id: RuleId((*rule).to_owned()),
@@ -2322,6 +2325,7 @@ fn check_privacy_browser_signals(
                 RULE_PRIVACY_THIRD_PARTY_FLOW,
                 RULE_CONSENT_ASYMMETRY,
                 RULE_TRACKING_NO_BANNER,
+                RULE_REJECT_INEFFECTIVE,
             ] {
                 checks.push(CheckStatus::Skipped {
                     rule_id: RuleId((*rule).to_owned()),
@@ -2535,7 +2539,11 @@ fn check_consent_banner_signals(
     checks: &mut Vec<CheckStatus>,
 ) {
     let Some(banner) = data.consent_banner.as_ref() else {
-        for rule in [RULE_CONSENT_ASYMMETRY, RULE_TRACKING_NO_BANNER] {
+        for rule in [
+            RULE_CONSENT_ASYMMETRY,
+            RULE_TRACKING_NO_BANNER,
+            RULE_REJECT_INEFFECTIVE,
+        ] {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId((*rule).to_owned()),
                 evidence_level: EvidenceLevel::Rendered,
@@ -2614,6 +2622,75 @@ fn check_consent_banner_signals(
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_TRACKING_NO_BANNER.to_owned()),
             evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+
+    check_reject_consent_probe(banner, data.storage_summary.as_ref(), findings, checks);
+}
+
+fn check_reject_consent_probe(
+    banner: &crate::domain::ConsentBannerObs,
+    pre_storage: Option<&crate::domain::PrivacyStorageSummary>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if banner.banner_dismissed_after_reject.is_none() {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_REJECT_INEFFECTIVE.to_owned()),
+            evidence_level: EvidenceLevel::Behavioural,
+            reason: "no clickable reject consent action observed".to_owned(),
+        });
+        return;
+    }
+
+    let pre_cookies = pre_storage.map_or(0, |s| s.document_cookie_count);
+    let pre_ls = pre_storage.map_or(0, |s| s.local_storage_keys);
+    let cookies_grew = banner
+        .cookies_after_reject
+        .is_some_and(|after| after > pre_cookies);
+    let ls_grew = banner
+        .local_storage_after_reject
+        .is_some_and(|after| after > pre_ls);
+    let not_dismissed = banner.banner_dismissed_after_reject == Some(false);
+
+    if not_dismissed || cookies_grew || ls_grew {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_REJECT_INEFFECTIVE.to_owned()),
+            category: FindingCategory::Security,
+            evidence_level: EvidenceLevel::Behavioural,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Reject consent action failed to suppress storage or dismiss banner".to_owned(),
+            summary: format!(
+                "Clicking Reject produced dismissed={:?}, cookies_before={pre_cookies} -> after={:?}, local_storage_before={pre_ls} -> after={:?}.",
+                banner.banner_dismissed_after_reject,
+                banner.cookies_after_reject,
+                banner.local_storage_after_reject,
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!(
+                    "reject_probe=attempted;dismissed={:?};cookies_after={:?};ls_after={:?}",
+                    banner.banner_dismissed_after_reject,
+                    banner.cookies_after_reject,
+                    banner.local_storage_after_reject,
+                ),
+            )],
+            remediation: Some(
+                "Ensure the Reject action immediately dismisses the banner without writing tracking cookies or localStorage."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_REJECT_INEFFECTIVE.to_owned()),
+            evidence_level: EvidenceLevel::Behavioural,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_REJECT_INEFFECTIVE.to_owned()),
+            evidence_level: EvidenceLevel::Behavioural,
         });
     }
 }
@@ -2960,6 +3037,7 @@ mod tests {
                     banner_detected: true,
                     has_accept_action: true,
                     has_reject_action: false,
+                    ..crate::domain::ConsentBannerObs::default()
                 }),
                 ..crate::domain::BrowserEvidence::default()
             },
@@ -2976,6 +3054,7 @@ mod tests {
                 banner_detected: false,
                 has_accept_action: false,
                 has_reject_action: false,
+                ..crate::domain::ConsentBannerObs::default()
             });
             data.storage_summary = Some(crate::domain::PrivacyStorageSummary {
                 local_storage_keys: 1,
@@ -3002,6 +3081,31 @@ mod tests {
             res.findings
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_SESSION_COOKIE_HTTPONLY)
+        );
+    }
+
+    #[test]
+    fn flags_ineffective_reject_consent_button() {
+        let mut snap = snapshot_with_headers("https://example.com/", Vec::new());
+        snap.browser = CollectorOutcome::Captured {
+            data: crate::domain::BrowserEvidence {
+                final_url: "https://example.com/".to_owned(),
+                consent_banner: Some(crate::domain::ConsentBannerObs {
+                    banner_detected: true,
+                    has_accept_action: true,
+                    has_reject_action: true,
+                    banner_dismissed_after_reject: Some(false),
+                    cookies_after_reject: Some(1),
+                    local_storage_after_reject: Some(1),
+                }),
+                ..crate::domain::BrowserEvidence::default()
+            },
+        };
+        let res = analyse(&snap);
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_REJECT_INEFFECTIVE)
         );
     }
 }

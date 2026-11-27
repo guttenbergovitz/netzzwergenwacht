@@ -522,7 +522,7 @@ function findBrowser() {
     }
 
     const domAndImagesRes = await call('Runtime.evaluate', {
-      expression: `(() => {
+      expression: `(async () => {
         const vh = window.innerHeight || 720;
         const vw = window.innerWidth || 1280;
         const imgs = Array.from(document.images).slice(0, 100).map((img) => {
@@ -577,15 +577,33 @@ function findBrowser() {
           session_storage_keys: safeCount(() => window.sessionStorage.length),
           document_cookie_count: safeCount(() => document.cookie ? document.cookie.split(';').filter((c) => c.trim().length > 0).length : 0),
         };
-        const consentBanner = (() => {
+        const consentBanner = await (async () => {
           const vis = (el) => { const r = el.getBoundingClientRect(); const st = getComputedStyle(el); return r.width > 120 && r.height > 30 && st.visibility !== 'hidden' && st.display !== 'none'; };
           const banner = Array.from(document.querySelectorAll('[id*=cookie],[class*=cookie],[id*=consent],[class*=consent],[aria-label*=cookie i],[aria-label*=consent i]')).find(vis);
           if (!banner) return { banner_detected: false, has_accept_action: false, has_reject_action: false };
           const btns = Array.from(banner.querySelectorAll('button, a[role=button], input[type=button], input[type=submit]'));
           const textOf = (el) => ((el.textContent || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.value || '')).trim();
           const hasAccept = btns.some((b) => /accept|allow|agree|akzeptieren|zustimmen|alle annehmen|zgadzam|akceptuj/i.test(textOf(b)));
-          const hasReject = btns.some((b) => /reject|decline|deny|refuse|necessary only|essential|ablehnen|nur notwendige|odrzuc/i.test(textOf(b)));
-          return { banner_detected: true, has_accept_action: hasAccept, has_reject_action: hasReject };
+          const rejectBtn = btns.find((b) => /reject|decline|deny|refuse|necessary only|essential|ablehnen|nur notwendige|odrzuc|odrzuć/i.test(textOf(b)));
+          const hasReject = Boolean(rejectBtn);
+          let bannerDismissedAfterReject = null;
+          let cookiesAfterReject = null;
+          let localStorageAfterReject = null;
+          if (rejectBtn && typeof rejectBtn.click === 'function') {
+            try { rejectBtn.click(); } catch (_) {}
+            await new Promise((r) => setTimeout(r, 350));
+            bannerDismissedAfterReject = !document.contains(banner) || !vis(banner);
+            cookiesAfterReject = safeCount(() => document.cookie ? document.cookie.split(';').filter((c) => c.trim().length > 0).length : 0);
+            localStorageAfterReject = safeCount(() => window.localStorage.length);
+          }
+          return {
+            banner_detected: true,
+            has_accept_action: hasAccept,
+            has_reject_action: hasReject,
+            banner_dismissed_after_reject: bannerDismissedAfterReject,
+            cookies_after_reject: cookiesAfterReject,
+            local_storage_after_reject: localStorageAfterReject,
+          };
         })();
         return {
           rendered_dom_elements: document.querySelectorAll('*').length,
@@ -599,6 +617,7 @@ function findBrowser() {
         };
       })()`,
       returnByValue: true,
+      awaitPromise: true,
     });
     const domAndImages = domAndImagesRes?.result?.value || {};
     let renderedContent = null;

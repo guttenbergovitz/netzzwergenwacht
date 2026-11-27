@@ -1180,6 +1180,15 @@ pub struct ConsentBannerObs {
     pub has_accept_action: bool,
     /// Whether a reject/decline/essential-only action button was observed inside the banner.
     pub has_reject_action: bool,
+    /// Whether the consent banner ceased to be visible after clicking reject (`None` if not probed).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub banner_dismissed_after_reject: Option<bool>,
+    /// Number of `document.cookie` entries observed after clicking reject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cookies_after_reject: Option<usize>,
+    /// Number of `localStorage` keys observed after clicking reject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_storage_after_reject: Option<usize>,
 }
 
 /// Level 3 behavioural keyboard navigation, focus visibility, and dialog observations.
