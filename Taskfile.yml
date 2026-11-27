@@ -61,6 +61,11 @@ tasks:
     cmds:
       - cargo run --quiet --locked -- tui {{.URL | default .TARGET | default .DEFAULT_URL}} --mode scan --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}}
 
+  tui:scan:browser:
+    desc: Crawl an application in the workbench with live headless browser sampling (URL default https://example.org)
+    cmds:
+      - cargo run --quiet --locked -- tui {{.URL | default .TARGET | default .DEFAULT_URL}} --mode scan --browser --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}}
+
   run:
     desc: Run a deterministic single-page audit (URL required, e.g. task run URL=https://example.org)
     requires:
@@ -69,18 +74,18 @@ tasks:
       - cargo run --quiet --locked -- check {{.URL}}
 
   scan:
-    desc: Crawl an application, retain its evidence and report coverage (URL required)
+    desc: Crawl an application, retain its evidence and report coverage (URL required; optional BROWSER_SAMPLE=3)
     requires:
       vars: [URL]
     cmds:
-      - cargo run --release --locked -- scan {{.URL}} --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}}
+      - cargo run --release --locked -- scan {{.URL}} --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}} --browser-sample {{.BROWSER_SAMPLE | default 0}}
 
   scan:private:
     desc: Crawl a loopback or private target, bypassing the public-only policy (URL required)
     requires:
       vars: [URL]
     cmds:
-      - cargo run --release --locked -- scan {{.URL}} --allow-private --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}}
+      - cargo run --release --locked -- scan {{.URL}} --allow-private --max-pages {{.MAX_PAGES | default 50}} --max-depth {{.MAX_DEPTH | default 2}} --browser-sample {{.BROWSER_SAMPLE | default 0}}
 
   fmt:
     desc: Format all Rust source files

@@ -47,7 +47,7 @@ value; the panel states that credentials are session-only.
 
 | Key | View | Contents |
 | --- | --- | --- |
-| `1` | Overview | Run lifecycle, target surface, headline counts |
+| `1` | Overview | Run lifecycle, quality verdict & domain matrix, target surface, headline counts |
 | `2` | Brigade | Per-dwarf activity: checks, findings, status |
 | `3` | Targets | Discovered pages and their inspection state |
 | `4` | Findings | Filterable findings with severity and evidence citations |
@@ -85,6 +85,8 @@ Values that were not observed are shown as `unobserved`, `unavailable`, `partial
 | `/` | Search |
 | `s` | Cycle finding sort order |
 | `v` | Cycle severity filter |
+| `d` | Cycle specialist (dwarf) filter |
+| `[` / `]` | Scroll Finding Details pane up / down |
 | `w` | Save the current report |
 | `t` | Cycle theme (standard, high contrast, monochrome) |
 | `a` | Toggle ASCII-only rendering |
