@@ -801,7 +801,7 @@ pub fn classify_page(url: &AuditTarget, obs: &DocumentObservations) -> PageType 
 pub fn cluster_systemic_issues(
     page_reports: &[(AuditTarget, PageType, AuditReport)],
 ) -> Vec<SystemicIssue> {
-    type ClusterOccurrences<'a> = Vec<(&'a str, PageType, Severity, DwarfId)>;
+    type ClusterOccurrences<'a> = Vec<(&'a str, PageType, Severity, DwarfId, &'a str)>;
     let mut by_rule: BTreeMap<(String, Severity), ClusterOccurrences<'_>> = BTreeMap::new();
     for (target, page_type, report) in page_reports {
         let mut seen_rules_on_page = std::collections::BTreeSet::new();
@@ -816,6 +816,7 @@ pub fn cluster_systemic_issues(
                             *page_type,
                             finding.severity,
                             analyser.dwarf_id,
+                            finding.title.as_str(),
                         ));
                 }
             }
@@ -827,22 +828,23 @@ pub fn cluster_systemic_issues(
         if occurrences.len() < 2 {
             continue;
         }
+        let first_title = occurrences.first().map_or(rule_id.as_str(), |o| o.4);
         let affected_urls: Vec<String> = occurrences
             .iter()
-            .map(|(url, _, _, _)| (*url).to_owned())
+            .map(|(url, _, _, _, _)| (*url).to_owned())
             .collect();
         let mut affected_page_types: Vec<PageType> =
-            occurrences.iter().map(|(_, pt, _, _)| *pt).collect();
+            occurrences.iter().map(|(_, pt, _, _, _)| *pt).collect();
         // The cluster is attributed to the highest severity it contains, and to the specialist
         // responsible for the most occurrences (ties resolved by identifier order) so the
         // attribution does not depend on completion order.
         let severity = occurrences
             .iter()
-            .map(|(_, _, severity, _)| *severity)
+            .map(|(_, _, severity, _, _)| *severity)
             .max()
             .unwrap_or(Severity::Info);
         let mut dwarf_counts: BTreeMap<DwarfId, usize> = BTreeMap::new();
-        for (_, _, _, dwarf) in &occurrences {
+        for (_, _, _, dwarf, _) in &occurrences {
             *dwarf_counts.entry(*dwarf).or_insert(0) += 1;
         }
         let dwarf_id = dwarf_counts
@@ -868,7 +870,7 @@ pub fn cluster_systemic_issues(
             affected_page_types,
             classification,
             summary: format!(
-                "Rule `{rule_id}` recurred across {count} distinct pages ({classification:?})."
+                "{first_title} — recurred across {count} distinct pages ({classification:?})."
             ),
             recurrence_confidence: if count >= 3 {
                 Confidence::High

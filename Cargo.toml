@@ -20,7 +20,7 @@ crossterm = "0.29"
 encoding_rs = "0.8"
 flate2 = "1"
 ratatui = "0.30"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli", "zstd", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "http2"] }
 rig-core = { version = "0.42.0", features = ["reqwest"] }
 schemars = "0.8"
 scraper = "0.22"

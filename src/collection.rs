@@ -907,6 +907,12 @@ fn decode_body_encoding(
             }
             (out, truncated)
         }
+        Err(_) if !out.is_empty() => {
+            if out.len() > max_bytes {
+                out.truncate(max_bytes);
+            }
+            (out, true)
+        }
         Err(_) => (raw_body.to_vec(), false),
     }
 }

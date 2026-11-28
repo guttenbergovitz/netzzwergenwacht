@@ -321,7 +321,7 @@ pub async fn fetch_robots(
                         RobotsRules::parse(&data.body_text).with_sitemaps(sitemaps),
                     )
                 }
-                404 | 410 => (RobotsOutcome::Absent, RobotsRules::default()),
+                401 | 403 | 404 | 410 => (RobotsOutcome::Absent, RobotsRules::default()),
                 500..=599 => (RobotsOutcome::Unavailable, RobotsRules::disallow_all()),
                 _ => (RobotsOutcome::Unavailable, RobotsRules::default()),
             }
