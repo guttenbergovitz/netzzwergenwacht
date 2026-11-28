@@ -35,6 +35,7 @@ const MAX_PER_ORIGIN: usize = 4;
 /// Everything one acquisition contributes to the crawl result.
 struct PageOutcome {
     target: AuditTarget,
+    final_target: Option<AuditTarget>,
     depth: usize,
     status: PageCrawlStatus,
     page_type: PageType,
@@ -120,6 +121,17 @@ async fn acquire_page(
         ..exec_budget
     };
     let snapshot = collection::collect_http_cached(&target, &per_page_budget, policy, &cache).await;
+    outcome_from_snapshot(target, depth, max_depth, in_sitemap, policy, &snapshot)
+}
+
+fn outcome_from_snapshot(
+    target: AuditTarget,
+    depth: usize,
+    max_depth: usize,
+    in_sitemap: bool,
+    policy: TargetPolicy,
+    snapshot: &crate::domain::EvidenceSnapshot,
+) -> PageOutcome {
     let http_status = match &snapshot.http {
         CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
             Some(data.status_code)
@@ -127,75 +139,87 @@ async fn acquire_page(
         CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => None,
     };
 
-    let (status, page_type, links, graph_input, report, resources, external_resources) =
-        match &snapshot.http {
-            CollectorOutcome::Captured { data } => {
-                let observations = DocumentObservations::from_html(&data.body_text);
-                let page_type = classify_page(&target, &observations);
-                let graph_input = build_captured_graph_input(
+    let (
+        status,
+        final_target,
+        page_type,
+        links,
+        graph_input,
+        report,
+        resources,
+        external_resources,
+    ) = match &snapshot.http {
+        CollectorOutcome::Captured { data } => {
+            let effective_target =
+                AuditTarget::parse(&data.final_url, policy).unwrap_or_else(|_| target.clone());
+            let same_origin_as_requested = super::Origin::from_target(&effective_target)
+                == super::Origin::from_target(&target);
+            let observations = DocumentObservations::from_html(&data.body_text);
+            let page_type = classify_page(&effective_target, &observations);
+            let graph_input =
+                build_captured_graph_input(&target, data, &observations, depth, in_sitemap, policy);
+            let links = if depth < max_depth && same_origin_as_requested {
+                prioritise_representative_urls(discover_same_origin_links(
+                    &effective_target,
+                    &observations,
+                    policy,
+                ))
+            } else {
+                Vec::new()
+            };
+            // Resources are only inventoried from a complete body: a truncated document would
+            // produce a partial resource list that must not be presented as the page's full set.
+            let (page_resources, external_resources) =
+                resources::discover_page_resources(&effective_target, &observations, policy);
+            (
+                PageCrawlStatus::Investigated,
+                Some(effective_target),
+                page_type,
+                links,
+                Some(graph_input),
+                Some(crate::analysis::run_all(snapshot)),
+                page_resources,
+                external_resources,
+            )
+        }
+        CollectorOutcome::Partial { data, .. } => {
+            let effective_target =
+                AuditTarget::parse(&data.final_url, policy).unwrap_or_else(|_| target.clone());
+            let observations = DocumentObservations::from_html(&data.body_text);
+            let page_type = classify_page(&effective_target, &observations);
+            (
+                PageCrawlStatus::PartiallyInvestigated,
+                Some(effective_target),
+                page_type,
+                Vec::new(),
+                Some(build_captured_graph_input(
                     &target,
                     data,
                     &observations,
                     depth,
                     in_sitemap,
                     policy,
-                );
-                let links = if depth < max_depth {
-                    prioritise_representative_urls(discover_same_origin_links(
-                        &target,
-                        &observations,
-                        policy,
-                    ))
-                } else {
-                    Vec::new()
-                };
-                // Resources are only inventoried from a complete body: a truncated document would
-                // produce a partial resource list that must not be presented as the page's full set.
-                let (page_resources, external_resources) =
-                    resources::discover_page_resources(&target, &observations, policy);
-                (
-                    PageCrawlStatus::Investigated,
-                    page_type,
-                    links,
-                    Some(graph_input),
-                    Some(crate::analysis::run_all(&snapshot)),
-                    page_resources,
-                    external_resources,
-                )
-            }
-            CollectorOutcome::Partial { data, .. } => {
-                let observations = DocumentObservations::from_html(&data.body_text);
-                let page_type = classify_page(&target, &observations);
-                (
-                    PageCrawlStatus::PartiallyInvestigated,
-                    page_type,
-                    Vec::new(),
-                    Some(build_captured_graph_input(
-                        &target,
-                        data,
-                        &observations,
-                        depth,
-                        in_sitemap,
-                        policy,
-                    )),
-                    Some(crate::analysis::run_all(&snapshot)),
-                    Vec::new(),
-                    0,
-                )
-            }
-            CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => (
-                PageCrawlStatus::Unreachable,
-                PageType::Unknown,
-                Vec::new(),
-                Some(unreachable_graph_input(&target, depth, in_sitemap)),
-                None,
+                )),
+                Some(crate::analysis::run_all(snapshot)),
                 Vec::new(),
                 0,
-            ),
-        };
+            )
+        }
+        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => (
+            PageCrawlStatus::Unreachable,
+            None,
+            PageType::Unknown,
+            Vec::new(),
+            Some(unreachable_graph_input(&target, depth, in_sitemap)),
+            None,
+            Vec::new(),
+            0,
+        ),
+    };
 
     PageOutcome {
         target,
+        final_target,
         depth,
         status,
         page_type,
@@ -355,6 +379,7 @@ pub(super) async fn crawl_concurrently(
     let mut resource_refs: HashMap<String, ResourceRef> = HashMap::new();
     let mut page_resources: Vec<resources::PageResourceEdge> = Vec::new();
     let mut external_resources = 0usize;
+    let mut seen_final_urls: HashSet<String> = HashSet::new();
     let mut budget_exhausted = false;
     let mut deadline_reached = false;
 
@@ -450,43 +475,69 @@ pub(super) async fn crawl_concurrently(
             *count = count.saturating_sub(1);
         }
 
-        for link in outcome.links {
-            match frontier.enqueue(link.clone(), outcome.depth + 1, DiscoverySource::Link) {
-                EnqueueOutcome::QueueFull => budget_exhausted = true,
-                EnqueueOutcome::Enqueued => {
-                    observer(super::CrawlProgressEvent::Discovered {
-                        url: link.as_str().to_owned(),
-                        depth: outcome.depth + 1,
-                        source: DiscoverySource::Link,
-                    });
-                }
-                EnqueueOutcome::Duplicate => {}
-            }
-        }
+        let is_duplicate_final = outcome.final_target.as_ref().is_some_and(|final_target| {
+            frontier.mark_seen(final_target);
+            !seen_final_urls.insert(final_target.as_str().to_owned())
+        });
 
-        for reference in outcome.resources {
-            page_resources.push(resources::PageResourceEdge {
-                page_url: outcome.target.as_str().to_owned(),
-                resource_url: reference.url.as_str().to_owned(),
-                kind: reference.kind,
-            });
-            resource_refs
-                .entry(reference.url.as_str().to_owned())
-                .or_insert(reference);
-        }
-        external_resources = external_resources.saturating_add(outcome.external_resources);
-        if let Some(input) = outcome.graph_input {
-            graph_inputs.push(input);
-        }
-        page_diagnostics.push(super::PageDiagnostics::from_report(
-            outcome.target.as_str(),
-            outcome.http_status,
-            outcome.page_type,
-            outcome.status,
-            outcome.report.as_ref(),
-        ));
-        if let Some(report) = outcome.report {
-            page_reports.push((outcome.target.clone(), outcome.page_type, report));
+        if is_duplicate_final {
+            page_diagnostics.push(super::PageDiagnostics::from_report(
+                outcome.target.as_str(),
+                outcome.http_status,
+                outcome.page_type,
+                outcome.status,
+                None,
+            ));
+        } else {
+            for link in outcome.links {
+                match frontier.enqueue(link.clone(), outcome.depth + 1, DiscoverySource::Link) {
+                    EnqueueOutcome::QueueFull => budget_exhausted = true,
+                    EnqueueOutcome::Enqueued => {
+                        observer(super::CrawlProgressEvent::Discovered {
+                            url: link.as_str().to_owned(),
+                            depth: outcome.depth + 1,
+                            source: DiscoverySource::Link,
+                        });
+                    }
+                    EnqueueOutcome::Duplicate => {}
+                }
+            }
+
+            for reference in outcome.resources {
+                page_resources.push(resources::PageResourceEdge {
+                    page_url: outcome.target.as_str().to_owned(),
+                    resource_url: reference.url.as_str().to_owned(),
+                    kind: reference.kind,
+                });
+                resource_refs
+                    .entry(reference.url.as_str().to_owned())
+                    .or_insert(reference);
+            }
+            external_resources = external_resources.saturating_add(outcome.external_resources);
+            if let Some(input) = outcome.graph_input {
+                graph_inputs.push(input);
+            }
+            if let Some(report) = outcome.report {
+                page_diagnostics.push(super::PageDiagnostics::from_report(
+                    outcome.target.as_str(),
+                    outcome.http_status,
+                    outcome.page_type,
+                    outcome.status,
+                    Some(&report),
+                ));
+                let report_target = outcome
+                    .final_target
+                    .unwrap_or_else(|| outcome.target.clone());
+                page_reports.push((report_target, outcome.page_type, report));
+            } else {
+                page_diagnostics.push(super::PageDiagnostics::from_report(
+                    outcome.target.as_str(),
+                    outcome.http_status,
+                    outcome.page_type,
+                    outcome.status,
+                    None,
+                ));
+            }
         }
         let completed_url = outcome.target.as_str().to_owned();
         let completed_status = outcome.status;
@@ -1196,6 +1247,90 @@ mod tests {
         assert!(
             !requested.iter().any(|path| path == "/b"),
             "robots-disallowed path was fetched: {requested:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn redirected_page_resolves_relative_links_against_final_url_and_deduplicates() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let requested_paths = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let paths_clone = Arc::clone(&requested_paths);
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                let paths = Arc::clone(&paths_clone);
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 4096];
+                    let Ok(n) = sock.read(&mut buf).await else {
+                        return;
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("/")
+                        .to_owned();
+                    paths.lock().unwrap().push(path.clone());
+
+                    let response = match path.as_str() {
+                        "/" => "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><a href=\"/old\">old</a><a href=\"/old-two\">old2</a></body></html>".to_owned(),
+                        "/old" | "/old-two" => "HTTP/1.1 301 Moved Permanently\r\nLocation: /new/dir/\r\nConnection: close\r\n\r\n".to_owned(),
+                        "/new/dir/" => "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><a href=\"rel-child\">child</a></body></html>".to_owned(),
+                        "/new/dir/rel-child" => "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body>child page</body></html>".to_owned(),
+                        _ => "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nnot found".to_owned(),
+                    };
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let seed =
+            AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+        let summary = crawl_concurrently(
+            seed,
+            CrawlBudget {
+                max_pages: 10,
+                max_depth: 3,
+                max_duration: Duration::from_secs(10),
+            },
+            ExecutionBudget {
+                max_concurrency: 2,
+                ..ExecutionBudget::default()
+            },
+            TargetPolicy::AllowPrivate,
+            &|_event| {},
+        )
+        .await;
+
+        let paths = requested_paths.lock().unwrap().clone();
+        assert!(
+            paths.iter().any(|p| p == "/new/dir/rel-child"),
+            "expected relative link to resolve against final_url /new/dir/, got paths: {paths:?}"
+        );
+        assert!(
+            !paths.iter().any(|p| p == "/rel-child"),
+            "relative link resolved against pre-redirect URL /old instead of /new/dir/: {paths:?}"
+        );
+        let analysed_redirects = summary
+            .page_diagnostics
+            .iter()
+            .filter(|d| {
+                (d.url.ends_with("/old") || d.url.ends_with("/old-two"))
+                    && (d.checks_failed > 0 || d.checks_passed > 0)
+            })
+            .count();
+        assert_eq!(
+            analysed_redirects, 1,
+            "expected /new/dir/ to be analysed only once across /old and /old-two redirects"
         );
     }
 }

@@ -919,7 +919,9 @@ pub(crate) fn build_captured_graph_input(
     in_sitemap: bool,
     policy: TargetPolicy,
 ) -> GraphPageInput {
-    let internal_links = discover_same_origin_links(target, obs, policy)
+    let effective_target =
+        AuditTarget::parse(&data.final_url, policy).unwrap_or_else(|_| target.clone());
+    let internal_links = discover_same_origin_links(&effective_target, obs, policy)
         .into_iter()
         .map(|t| t.as_str().to_owned())
         .collect();
