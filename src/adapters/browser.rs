@@ -840,6 +840,12 @@ function findBrowser() {
           performance: perfObs,
           storage_summary: storageSummary,
           consent_banner: consentBanner,
+          rendered_signals: {
+            title: (document.title || '').trim() || null,
+            h1: (document.querySelector('h1')?.textContent || '').trim() || null,
+            canonical_url: (document.querySelector('link[rel~=canonical]')?.getAttribute('href') || '').trim() || null,
+            meta_robots: (document.querySelector('meta[name=robots i]')?.getAttribute('content') || '').trim() || null,
+          },
         };
       })()`,
       returnByValue: true,
@@ -1350,6 +1356,7 @@ function findBrowser() {
       behavioural_a11y: hasBeh ? behObs : behaviouralA11y,
       cpu_profile: cpuProfileSummary,
       consent_banner: domAndImages.consent_banner || null,
+      rendered_signals: domAndImages.rendered_signals || null,
       interactive_inventory: sensory.interactive_inventory,
       application_state: sensory.application_state,
       user_journey_trace: sensory.user_journey_trace,

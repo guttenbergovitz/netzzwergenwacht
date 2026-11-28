@@ -5,6 +5,7 @@
 //! never perform network or browser I/O.
 
 pub mod accessibility;
+pub mod adblock;
 pub mod aria;
 pub mod assessment;
 pub mod browser;

@@ -889,6 +889,23 @@ pub enum CaaLookupOutcome {
     PolicyBlocked,
 }
 
+/// Rendered SEO/indexability signals captured from the live browser DOM.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RenderedSeoSignals {
+    /// Trimmed `document.title`, if non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Trimmed text of the first `<h1>`, if non-empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub h1: Option<String>,
+    /// Resolved `<link rel="canonical">` `href`, if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canonical_url: Option<String>,
+    /// Trimmed `<meta name="robots">` `content`, if present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta_robots: Option<String>,
+}
+
 /// TLS peer certificate evidence extracted from the `rustls` handshake.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TlsEvidence {
@@ -1303,6 +1320,10 @@ pub struct BrowserEvidence {
     /// Level 2 observed cookie/consent banner presence and accept/reject symmetry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub consent_banner: Option<ConsentBannerObs>,
+    /// Rendered `<title>`, primary `<h1>`, `<link rel="canonical">`, and `<meta name="robots">`
+    /// captured from the live browser DOM for source-vs-rendered parity checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rendered_signals: Option<Box<RenderedSeoSignals>>,
     /// Measurement provenance (viewport, throttling profile, lab/field origin, timestamp).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<MeasurementProvenance>,

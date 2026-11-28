@@ -344,6 +344,8 @@ enum Command {
         #[arg(long, default_value_t = 2)]
         max_depth: usize,
     },
+    /// Start an MCP (Model Context Protocol) JSON-RPC 2.0 stdio server.
+    Mcp,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -408,6 +410,7 @@ enum OutputFormat {
     Markdown,
     Html,
     Sarif,
+    Llm,
 }
 
 #[derive(Debug, Subcommand)]
@@ -634,7 +637,7 @@ async fn main() -> ExitCode {
                                     return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
                                 }
                             },
-                            OutputFormat::Text | OutputFormat::Markdown => {
+                            OutputFormat::Text | OutputFormat::Markdown | OutputFormat::Llm => {
                                 for line in effective.render_lines() {
                                     println!("{line}");
                                 }
@@ -672,7 +675,7 @@ async fn main() -> ExitCode {
                         return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
                     }
                 },
-                OutputFormat::Text | OutputFormat::Markdown => {
+                OutputFormat::Text | OutputFormat::Markdown | OutputFormat::Llm => {
                     for line in report.render_lines() {
                         println!("{line}");
                     }
@@ -881,6 +884,16 @@ async fn main() -> ExitCode {
                         return code;
                     }
                 }
+                OutputFormat::Llm => {
+                    let llm = netzzwergenwacht::report_llm::render_scan_llm(
+                        &report.seed_url,
+                        &summary,
+                        &report.quality_assessment,
+                    );
+                    if let Err(code) = write_output_or_stdout(output.as_deref(), &llm) {
+                        return code;
+                    }
+                }
             }
             if report.store_error.is_some() {
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
@@ -888,6 +901,13 @@ async fn main() -> ExitCode {
                 ExitCode::from(EXIT_OK)
             }
         }
+        Command::Mcp => match netzzwergenwacht::mcp::run_stdio_server().await {
+            Ok(()) => ExitCode::from(EXIT_OK),
+            Err(err) => {
+                eprintln!("mcp server error: {err}");
+                ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+            }
+        },
         Command::Validate { url, allow_private } => {
             let policy = target_policy(allow_private);
             match AuditTarget::parse(&url, policy) {
@@ -1186,7 +1206,7 @@ fn render_stored_patrol(
 ) {
     match format {
         OutputFormat::Json => println!("{raw}"),
-        OutputFormat::Markdown => {
+        OutputFormat::Markdown | OutputFormat::Llm => {
             println!(
                 "{}",
                 netzzwergenwacht::patrol::render_patrol_markdown(patrol, role)
@@ -1242,7 +1262,7 @@ fn run_report_cmd(
     {
         match format {
             OutputFormat::Json => println!("{raw}"),
-            OutputFormat::Markdown => {
+            OutputFormat::Markdown | OutputFormat::Llm => {
                 println!(
                     "{}",
                     netzzwergenwacht::investigation::reporting::render_markdown_report(&inv)
@@ -1275,7 +1295,7 @@ fn run_report_cmd(
                         println!("{json}");
                     }
                 }
-                OutputFormat::Text | OutputFormat::Markdown => {
+                OutputFormat::Text | OutputFormat::Markdown | OutputFormat::Llm => {
                     let assessment =
                         netzzwergenwacht::analysis::assessment::assess_audit_report(&audit);
                     print_text_report(&audit, &eval, &assessment);
@@ -1390,7 +1410,7 @@ async fn run_patrol_cmd(
                 return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
             }
         },
-        OutputFormat::Markdown => {
+        OutputFormat::Markdown | OutputFormat::Llm => {
             let role = audience.into();
             println!(
                 "{}",
@@ -1448,7 +1468,7 @@ fn render_portfolio_patrol(
                 return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
             }
         },
-        OutputFormat::Text | OutputFormat::Markdown => {
+        OutputFormat::Text | OutputFormat::Markdown | OutputFormat::Llm => {
             println!(
                 "NETZZWERGENWACHT — Portfolio Patrol ({MOTTO}) | Apps: {} | Succeeded: {} | Quiet: {} | Escalated: {}",
                 portfolio.total_applications,
@@ -1540,7 +1560,7 @@ async fn run_verify(
                 diff.summary.new_count
             );
         }
-        OutputFormat::Markdown => {
+        OutputFormat::Markdown | OutputFormat::Llm => {
             println!("# NetzZwergenWacht Verification Report\n");
             println!("- **Target**: {}", diff.current_target);
             println!("- **Resolved**: {}", diff.summary.resolved_count);
@@ -1617,8 +1637,8 @@ async fn run_investigate(
                 return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
             }
         },
-        OutputFormat::Text | OutputFormat::Markdown => {
-            if matches!(format, OutputFormat::Markdown) {
+        OutputFormat::Text | OutputFormat::Markdown | OutputFormat::Llm => {
+            if matches!(format, OutputFormat::Markdown | OutputFormat::Llm) {
                 println!(
                     "{}",
                     netzzwergenwacht::investigation::render_role_perspective_markdown(
@@ -1905,6 +1925,13 @@ fn emit_audit_output(
             }
             code
         }
+        OutputFormat::Llm => {
+            let llm = netzzwergenwacht::report_llm::render_audit_llm(report, assessment);
+            match write_output_or_stdout(output, &llm) {
+                Ok(()) => code,
+                Err(err_code) => err_code,
+            }
+        }
         OutputFormat::Html => {
             let html = netzzwergenwacht::report_html::render_audit_html(report, assessment);
             match write_output_or_stdout(output, &html) {
@@ -2149,7 +2176,7 @@ fn render_batch_report(
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
             }
         },
-        OutputFormat::Text | OutputFormat::Markdown => {
+        OutputFormat::Text | OutputFormat::Markdown | OutputFormat::Llm => {
             println!("NETZZWERGENWACHT BATCH AUDIT");
             println!(
                 "Targets: {} total, {} completed, {} invalid\n",
@@ -2251,7 +2278,7 @@ fn run_diff(
                 ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
             }
         },
-        OutputFormat::Text | OutputFormat::Markdown => {
+        OutputFormat::Text | OutputFormat::Markdown | OutputFormat::Llm => {
             print_diff_report(&diff);
             code
         }

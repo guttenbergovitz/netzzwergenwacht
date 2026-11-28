@@ -32,6 +32,8 @@ const RULE_STUCK_LOADING_STATE: &str = "browser.runtime.stuck_loading_state";
 const RULE_OCCLUDED_PRIMARY_CONTROLS: &str = "browser.interaction.occluded_primary_controls";
 const RULE_SCROLL_LOCKED: &str = "browser.layout.scroll_locked";
 const RULE_DEAD_CTA_LINKS: &str = "browser.interaction.dead_cta_links";
+const RULE_AX_CONTENT_WITHOUT_JS: &str = "such.ax.content_without_js";
+const RULE_RENDERED_SIGNAL_MISMATCH: &str = "such.crawl.rendered_signal_mismatch";
 
 /// All Level 2 rules owned by `BrowserZwerg`.
 pub const ALL_RULES: &[&str] = &[
@@ -54,6 +56,8 @@ pub const ALL_RULES: &[&str] = &[
     RULE_OCCLUDED_PRIMARY_CONTROLS,
     RULE_SCROLL_LOCKED,
     RULE_DEAD_CTA_LINKS,
+    RULE_AX_CONTENT_WITHOUT_JS,
+    RULE_RENDERED_SIGNAL_MISMATCH,
 ];
 
 /// Evaluates browser runtime console and network subresource observations.
@@ -100,6 +104,7 @@ pub fn analyse_with_document(
     check_occluded_primary_controls(browser, &mut findings, &mut checks);
     check_scroll_locked(browser, &mut findings, &mut checks);
     check_dead_cta_links(browser, &mut findings, &mut checks);
+    check_rendered_seo_parity(browser, obs, &mut findings, &mut checks);
 
     AnalyserResult {
         dwarf_id: DwarfId::Browser,
@@ -1145,6 +1150,164 @@ fn check_dead_cta_links(
     }
 }
 
+fn check_rendered_seo_parity(
+    browser: &crate::domain::BrowserEvidence,
+    doc: Option<&DocumentObservations>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(doc) = doc else {
+        for rule in [RULE_AX_CONTENT_WITHOUT_JS, RULE_RENDERED_SIGNAL_MISMATCH] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId(rule.to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason: "source DocumentObservations unavailable".to_owned(),
+            });
+        }
+        return;
+    };
+    check_content_without_js(browser, doc, findings, checks);
+    check_rendered_signal_mismatch(browser, doc, findings, checks);
+}
+
+fn check_content_without_js(
+    browser: &crate::domain::BrowserEvidence,
+    doc: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(rendered_words) = browser.rendered_word_count else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_AX_CONTENT_WITHOUT_JS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "rendered_word_count not captured".to_owned(),
+        });
+        return;
+    };
+
+    if doc.visible_word_count < 30 && rendered_words >= 120 {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_AX_CONTENT_WITHOUT_JS.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::High,
+            confidence: Confidence::High,
+            title: "Primary page content unavailable without client-side JavaScript".to_owned(),
+            summary: format!(
+                "Source HTML contains {} visible word(s) while rendered DOM displays {rendered_words} word(s).",
+                doc.visible_word_count
+            ),
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::BrowserRuntime,
+                format!(
+                    "source_words={};rendered_words={rendered_words}",
+                    doc.visible_word_count
+                ),
+            )],
+            remediation: Some(
+                "Server-render or pre-render primary content so non-JS crawlers and AI agents can extract it."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_AX_CONTENT_WITHOUT_JS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_AX_CONTENT_WITHOUT_JS.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
+fn check_rendered_signal_mismatch(
+    browser: &crate::domain::BrowserEvidence,
+    doc: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let Some(ref rendered) = browser.rendered_signals else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_RENDERED_SIGNAL_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+            reason: "rendered_signals not captured".to_owned(),
+        });
+        return;
+    };
+
+    let mut mismatches = Vec::new();
+    if doc.title != rendered.title {
+        mismatches.push(format!(
+            "title: source={:?} vs rendered={:?}",
+            doc.title, rendered.title
+        ));
+    }
+    let src_h1 = doc
+        .headings
+        .iter()
+        .find(|h| h.level == 1)
+        .map(|h| h.text.as_str());
+    if src_h1 != rendered.h1.as_deref() {
+        mismatches.push(format!(
+            "h1: source={src_h1:?} vs rendered={:?}",
+            rendered.h1
+        ));
+    }
+    if doc.canonical_url != rendered.canonical_url {
+        mismatches.push(format!(
+            "canonical: source={:?} vs rendered={:?}",
+            doc.canonical_url, rendered.canonical_url
+        ));
+    }
+    let src_noindex = doc
+        .meta_robots
+        .as_deref()
+        .is_some_and(|v| v.to_ascii_lowercase().contains("noindex"));
+    let ren_noindex = rendered
+        .meta_robots
+        .as_deref()
+        .is_some_and(|v| v.to_ascii_lowercase().contains("noindex"));
+    if src_noindex != ren_noindex {
+        mismatches.push(format!(
+            "noindex: source={src_noindex} vs rendered={ren_noindex}"
+        ));
+    }
+
+    if mismatches.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_RENDERED_SIGNAL_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    } else {
+        findings.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(RULE_RENDERED_SIGNAL_MISMATCH.to_owned()),
+            category: FindingCategory::Seo,
+            evidence_level: EvidenceLevel::Rendered,
+            kind: FindingKind::Deterministic,
+            severity: Severity::Medium,
+            confidence: Confidence::High,
+            title: format!("Source vs rendered SEO signal mismatch ({})", mismatches.len()),
+            summary: format!("Client-side JS altered SEO signals: {}.", mismatches.join("; ")),
+            evidence_refs: mismatches
+                .into_iter()
+                .map(|m| EvidenceRef::new(EvidenceSource::BrowserRuntime, m))
+                .collect(),
+            remediation: Some(
+                "Ensure `<title>`, primary `<h1>`, `<link rel=\"canonical\">`, and `<meta name=\"robots\">` match between SSR HTML and hydrated DOM."
+                    .to_owned(),
+            ),
+        });
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(RULE_RENDERED_SIGNAL_MISMATCH.to_owned()),
+            evidence_level: EvidenceLevel::Rendered,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1428,5 +1591,32 @@ mod tests {
         let res = analyse(&snap);
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_DEAD_CTA_LINKS));
+    }
+
+    #[test]
+    fn flags_content_without_js_and_rendered_signal_mismatch() {
+        let html = r#"<html><head>
+            <title>Source Title</title>
+            <link rel="canonical" href="https://example.com/a">
+            <meta name="robots" content="index,follow">
+        </head><body><div id="app"></div></body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let snap = base_snapshot(CollectorOutcome::Captured {
+            data: BrowserEvidence {
+                final_url: "https://example.com/a".to_owned(),
+                rendered_word_count: Some(220),
+                rendered_signals: Some(Box::new(crate::domain::RenderedSeoSignals {
+                    title: Some("Hydrated Title".to_owned()),
+                    h1: Some("Client H1".to_owned()),
+                    canonical_url: Some("https://example.com/b".to_owned()),
+                    meta_robots: Some("noindex,nofollow".to_owned()),
+                })),
+                ..BrowserEvidence::default()
+            },
+        });
+        let res = analyse_with_document(&snap, Some(&obs));
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_AX_CONTENT_WITHOUT_JS));
+        assert!(ids.contains(&RULE_RENDERED_SIGNAL_MISMATCH));
     }
 }

@@ -962,4 +962,149 @@ mod tests {
         };
         assert!(synthesise(&report, &provider, &budget).await.is_err());
     }
+
+    #[test]
+    fn cloud_parity_prompt_and_parser_produce_ai_interpretation_findings() {
+        let report = sample_report("Example");
+        let obs = crate::analysis::document::DocumentObservations::from_html(
+            "<html><head><title>Example</title></head><body><main><p>Content</p></main></body></html>",
+        );
+        let prompt = build_cloud_parity_prompt(&report, &obs);
+        assert!(prompt.contains(OPEN_TAG));
+        assert!(prompt.contains("content.quality"));
+        assert!(prompt.contains("eeat.authority_signals"));
+
+        let raw = serde_json::json!({
+            "findings": [
+                {
+                    "rule_id": "content.quality",
+                    "severity": "medium",
+                    "title": "Shallow editorial depth",
+                    "summary": "Page body lacks concrete examples or primary citations.",
+                    "remediation": "Expand primary section with verifiable examples."
+                },
+                {
+                    "rule_id": "ai.llm_parsability",
+                    "severity": "low",
+                    "title": "Implicit section boundaries",
+                    "summary": "Headings do not clearly separate key claims.",
+                    "remediation": "Use explicit semantic headings and summary lists."
+                }
+            ]
+        })
+        .to_string();
+
+        let findings = parse_cloud_parity_findings(&raw, &report).expect("parsed findings");
+        assert_eq!(findings.len(), 2);
+        assert!(
+            findings
+                .iter()
+                .all(|f| f.kind == FindingKind::AiInterpretation)
+        );
+        assert_eq!(findings[0].rule_id.0, "content.quality");
+        assert_eq!(findings[1].rule_id.0, "ai.llm_parsability");
+    }
+}
+
+/// Optional LLM rule identifiers matching upstream `cloud_only` semantic/EEAT/AI rules.
+///
+/// Evaluated **only** when the user explicitly opts in via `--ai` / `--model`,
+/// outside the deterministic core.
+pub const CLOUD_PARITY_LLM_RULES: &[&str] = &[
+    "content.quality",
+    "eeat.authority_signals",
+    "ai.llm_parsability",
+    "ai.page_type_match",
+    "ai.site_metadata",
+];
+
+/// Builds a bounded, injection-delimited prompt asking an optional LLM to evaluate
+/// [`CLOUD_PARITY_LLM_RULES`] over untrusted page observations.
+#[must_use]
+pub fn build_cloud_parity_prompt(
+    report: &AuditReport,
+    obs: &crate::analysis::document::DocumentObservations,
+) -> String {
+    let sample: String = obs.main_content_text.chars().take(2_500).collect();
+    let payload = json!({
+        "url": report.target.as_str(),
+        "title": obs.title,
+        "meta_description": obs.meta_description,
+        "author_signal": obs.author_or_date_signal,
+        "visible_word_count": obs.visible_word_count,
+        "json_ld_count": obs.json_ld_count,
+        "main_content_excerpt": sample,
+        "requested_rules": CLOUD_PARITY_LLM_RULES,
+    });
+    format!(
+        "Evaluate the untrusted page evidence below strictly for these rules: {}.\n\
+         Return JSON {{\"findings\":[{{\"rule_id\":...,\"severity\":\"low|medium|high\",\"title\":...,\"summary\":...,\"remediation\":...}}]}}.\n\
+         {OPEN_TAG}\n{payload}\n{CLOSE_TAG}",
+        CLOUD_PARITY_LLM_RULES.join(", ")
+    )
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudParityFindingsEnvelope {
+    #[serde(default)]
+    findings: Vec<CloudParityFindingItem>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloudParityFindingItem {
+    rule_id: String,
+    #[serde(default)]
+    severity: String,
+    title: String,
+    summary: String,
+    #[serde(default)]
+    remediation: Option<String>,
+}
+
+/// Parses optional LLM cloud-parity output into [`Finding`] values tagged as
+/// [`FindingKind::AiInterpretation`].
+///
+/// # Errors
+///
+/// Returns an error string when `raw_json` is not valid JSON matching the envelope.
+pub fn parse_cloud_parity_findings(
+    raw_json: &str,
+    report: &AuditReport,
+) -> Result<Vec<Finding>, String> {
+    let envelope: CloudParityFindingsEnvelope = serde_json::from_str(raw_json)
+        .map_err(|e| format!("invalid cloud-parity LLM JSON: {e}"))?;
+
+    let mut out = Vec::new();
+    for item in envelope.findings {
+        if !CLOUD_PARITY_LLM_RULES.contains(&item.rule_id.as_str()) {
+            continue;
+        }
+        let severity = match item.severity.to_ascii_lowercase().as_str() {
+            "high" => Severity::High,
+            "medium" => Severity::Medium,
+            _ => Severity::Low,
+        };
+        let category = if item.rule_id.starts_with("ai.") {
+            FindingCategory::Seo
+        } else {
+            FindingCategory::Content
+        };
+        out.push(Finding {
+            fingerprint: FindingFingerprint::default(),
+            rule_id: RuleId(item.rule_id),
+            category,
+            evidence_level: EvidenceLevel::Source,
+            kind: FindingKind::AiInterpretation,
+            severity,
+            confidence: Confidence::Medium,
+            title: item.title,
+            summary: item.summary,
+            evidence_refs: vec![EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("ai_cloud_parity_eval target={}", report.target.as_str()),
+            )],
+            remediation: item.remediation,
+        });
+    }
+    Ok(out)
 }

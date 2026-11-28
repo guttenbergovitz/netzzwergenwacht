@@ -721,6 +721,86 @@ pub async fn check_external_links(
     ordered.into_iter().map(|(_, item)| item).collect()
 }
 
+/// Evidence returned by an opt-in archive indexing check (Wayback Machine CDX API).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ArchiveIndexingEvidence {
+    /// Target URL queried in the archive index.
+    pub queried_url: String,
+    /// Number of archived snapshots reported by the CDX endpoint.
+    pub snapshot_count: usize,
+    /// Most recent snapshot timestamp (`YYYYMMDDHHMMSS`), if any.
+    pub latest_timestamp: Option<String>,
+}
+
+/// Opt-in check (`such.ax.archive_indexing`) querying a Wayback-compatible CDX endpoint
+/// for archived captures of `target_url`.
+///
+/// Returns [`CollectorOutcome::Skipped`] when `cdx_endpoint` is `None` (default local-first mode).
+pub async fn check_archive_indexing(
+    target_url: &str,
+    cdx_endpoint: Option<&str>,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+) -> CollectorOutcome<ArchiveIndexingEvidence> {
+    let Some(endpoint) = cdx_endpoint.map(str::trim).filter(|s| !s.is_empty()) else {
+        return CollectorOutcome::Skipped {
+            reason: "archive-indexing opt-in endpoint not configured".to_owned(),
+        };
+    };
+
+    let Ok(mut cdx_url) = Url::parse(endpoint) else {
+        return CollectorOutcome::Failed {
+            error: "invalid CDX endpoint URL".to_owned(),
+        };
+    };
+    cdx_url
+        .query_pairs_mut()
+        .append_pair("url", target_url)
+        .append_pair("output", "json")
+        .append_pair("limit", "5");
+
+    let Ok(cdx_target) = AuditTarget::parse(cdx_url.as_str(), policy) else {
+        return CollectorOutcome::Skipped {
+            reason: "CDX endpoint blocked by target policy".to_owned(),
+        };
+    };
+
+    match tokio::time::timeout(
+        budget.http_timeout,
+        execute_bounded_get(&cdx_target, budget, policy, ClientSource::Fresh),
+    )
+    .await
+    {
+        Ok(Ok((http, _))) if http.status_code == 200 => {
+            let parsed: Vec<Vec<String>> =
+                serde_json::from_str(&http.body_text).unwrap_or_default();
+            // Wayback CDX JSON includes a header row at index 0.
+            let rows = parsed.len().saturating_sub(1);
+            let latest_timestamp = parsed
+                .last()
+                .filter(|_| parsed.len() > 1)
+                .and_then(|row| row.get(1).cloned());
+            CollectorOutcome::Captured {
+                data: ArchiveIndexingEvidence {
+                    queried_url: target_url.to_owned(),
+                    snapshot_count: rows,
+                    latest_timestamp,
+                },
+            }
+        }
+        Ok(Ok((http, _))) => CollectorOutcome::Failed {
+            error: format!("CDX endpoint returned HTTP {}", http.status_code),
+        },
+        Ok(Err(err)) => CollectorOutcome::Failed { error: err.error },
+        Err(_) => CollectorOutcome::Failed {
+            error: format!(
+                "CDX lookup timed out after {} ms",
+                budget.http_timeout.as_millis()
+            ),
+        },
+    }
+}
+
 async fn collect_http_with_source(
     target: &AuditTarget,
     budget: &ExecutionBudget,

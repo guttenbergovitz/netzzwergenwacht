@@ -291,6 +291,7 @@ fn operational_performance_handles_thousand_findings_and_rapid_events_under_budg
                 behavioural_a11y: None,
                 cpu_profile: None,
                 consent_banner: None,
+                rendered_signals: None,
                 provenance: None,
                 interactive_inventory: None,
                 application_state: None,
