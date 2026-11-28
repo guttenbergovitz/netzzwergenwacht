@@ -727,6 +727,7 @@ async fn execute_bounded_get(
             decode_body_encoding(&raw_body, &headers, current_target.as_str(), body_cap);
         let body_truncated = body_truncated || decoded_truncated;
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let body_text = decode_body_text(&body, &headers);
 
         return Ok((
             HttpEvidence {
@@ -740,7 +741,7 @@ async fn execute_bounded_get(
                 },
                 body_bytes: body.len(),
                 body_truncated,
-                body_text: String::from_utf8_lossy(&body).into_owned(),
+                body_text,
             },
             tls,
         ));
@@ -775,6 +776,61 @@ fn build_pinned_client(
         .resolve_to_addrs(host_for_pin, pinned_addrs)
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))
+}
+
+/// Decodes response bytes into UTF-8 using the charset declared in HTTP `Content-Type`,
+/// HTML `<meta charset>` / `<meta http-equiv="content-type">`, or BOM, falling back to lossy UTF-8.
+fn decode_body_text(body: &[u8], headers: &[HttpHeader]) -> String {
+    let header_charset = headers
+        .iter()
+        .find(|h| h.name == "content-type")
+        .and_then(|h| extract_charset_param(&h.value));
+    let label = header_charset.or_else(|| sniff_html_meta_charset(body));
+    if let Some(ref charset) = label
+        && let Some(encoding) = encoding_rs::Encoding::for_label(charset.as_bytes())
+        && encoding != encoding_rs::UTF_8
+    {
+        return encoding.decode_without_bom_handling(body).0.into_owned();
+    }
+    if let Some((encoding, bom_len)) = encoding_rs::Encoding::for_bom(body)
+        && encoding != encoding_rs::UTF_8
+    {
+        return encoding
+            .decode_without_bom_handling(&body[bom_len..])
+            .0
+            .into_owned();
+    }
+    String::from_utf8_lossy(body).into_owned()
+}
+
+fn extract_charset_param(value: &str) -> Option<String> {
+    let lower = value.to_ascii_lowercase();
+    let idx = lower.find("charset=")?;
+    let rest = value[idx + 8..].trim_start();
+    let raw = if let Some(quoted) = rest.strip_prefix('"') {
+        quoted.split('"').next().unwrap_or_default()
+    } else if let Some(quoted) = rest.strip_prefix('\'') {
+        quoted.split('\'').next().unwrap_or_default()
+    } else {
+        rest.split([';', ' ', '\t', '\r', '\n', '>'])
+            .next()
+            .unwrap_or_default()
+    };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_owned())
+    }
+}
+
+fn sniff_html_meta_charset(body: &[u8]) -> Option<String> {
+    let head = &body[..body.len().min(2048)];
+    let ascii = String::from_utf8_lossy(head);
+    let lower = ascii.to_ascii_lowercase();
+    let meta_pos = lower.find("<meta")?;
+    let rest = &ascii[meta_pos..];
+    extract_charset_param(rest)
 }
 
 /// Returns `true` when `content-type` is clearly binary/non-HTML (PDF, archive, media, font)
@@ -1393,5 +1449,16 @@ mod caa_tests {
             "expected content-encoding header to be preserved, got: {:?}",
             data.headers
         );
+    }
+
+    #[test]
+    fn decode_body_text_decodes_windows_1250_and_iso_8859_2() {
+        let (encoded, _, _) = encoding_rs::WINDOWS_1250.encode("Zażółć gęślą jaźń");
+        let headers = vec![crate::domain::HttpHeader {
+            name: "content-type".to_owned(),
+            value: "text/html; charset=windows-1250".to_owned(),
+        }];
+        let decoded = super::decode_body_text(&encoded, &headers);
+        assert_eq!(decoded, "Zażółć gęślą jaźń");
     }
 }

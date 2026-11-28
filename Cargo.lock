@@ -2361,6 +2361,7 @@ dependencies = [
  "brotli",
  "clap",
  "crossterm",
+ "encoding_rs",
  "flate2",
  "ratatui",
  "reqwest 0.12.28",
