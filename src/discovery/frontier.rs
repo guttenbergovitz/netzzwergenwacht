@@ -216,6 +216,24 @@ impl CrawlFrontier {
         self.popped.insert(key);
     }
 
+    /// Returns the shallowest depth currently queued in the frontier without removing it.
+    pub fn peek_min_depth(&mut self) -> Option<usize> {
+        while let Some(top) = self.heap.peek() {
+            let key = top.entry.target.as_str();
+            if self.popped.contains(key)
+                || self
+                    .best_depth
+                    .get(key)
+                    .is_some_and(|&best| top.entry.depth > best)
+            {
+                let _ = self.heap.pop();
+                continue;
+            }
+            return Some(top.entry.depth);
+        }
+        None
+    }
+
     /// Removes and returns the next entry, or `None` when the frontier is empty.
     pub fn pop(&mut self) -> Option<FrontierEntry> {
         while let Some(queued) = self.heap.pop() {

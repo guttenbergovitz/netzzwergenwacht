@@ -84,9 +84,13 @@ fn take_spawnable(
     in_flight: &HashMap<String, usize>,
     per_origin: usize,
 ) -> Option<super::frontier::FrontierEntry> {
-    if let Some(position) = pending
+    let frontier_min_depth = frontier.peek_min_depth();
+    if let Some((position, _)) = pending
         .iter()
-        .position(|entry| has_capacity(entry, in_flight, per_origin))
+        .enumerate()
+        .filter(|(_, entry)| has_capacity(entry, in_flight, per_origin))
+        .min_by_key(|(_, entry)| entry.depth)
+        && frontier_min_depth.is_none_or(|d| pending[position].depth <= d)
     {
         return Some(pending.remove(position));
     }
@@ -405,6 +409,17 @@ pub(super) async fn crawl_concurrently(
             ) else {
                 break;
             };
+            // Hard BFS layer barrier: never start depth d+1 while any depth d task is still
+            // in flight, so shallower discoveries always win before deeper URLs are popped.
+            if in_flight_entries
+                .values()
+                .map(|active| active.depth)
+                .min()
+                .is_some_and(|active_depth| entry.depth > active_depth)
+            {
+                pending.push(entry);
+                break;
+            }
             let remaining = crawl_budget.max_duration.saturating_sub(started.elapsed());
             if remaining.is_zero() {
                 deadline_reached = true;
@@ -1363,5 +1378,88 @@ mod tests {
             analysed_redirects, 1,
             "expected /new/dir/ to be analysed only once across /old and /old-two redirects"
         );
+    }
+
+    #[tokio::test]
+    async fn bfs_layer_barrier_keeps_depths_deterministic_when_seed_is_slower_than_sitemap() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 4096];
+                    let Ok(n) = sock.read(&mut buf).await else {
+                        return;
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("/")
+                        .to_owned();
+
+                    if path == "/" {
+                        tokio::time::sleep(Duration::from_millis(35)).await;
+                    }
+
+                    let response = match path.as_str() {
+                        "/sitemap.xml" => format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/xml\r\nConnection: close\r\n\r\n<urlset><url><loc>http://{addr}/map</loc></url></urlset>"
+                        ),
+                        "/" | "/map" => "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><a href=\"/shared\">shared</a></body></html>".to_owned(),
+                        "/shared" => "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><a href=\"/shared/leaf\">leaf</a></body></html>".to_owned(),
+                        "/shared/leaf" => "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body>leaf</body></html>".to_owned(),
+                        _ => "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\nnot found".to_owned(),
+                    };
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let seed =
+            AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+        for _ in 0..3 {
+            let summary = crawl_concurrently(
+                seed.clone(),
+                CrawlBudget {
+                    max_pages: 10,
+                    max_depth: 2,
+                    max_duration: Duration::from_secs(10),
+                },
+                ExecutionBudget {
+                    max_concurrency: 4,
+                    ..ExecutionBudget::default()
+                },
+                TargetPolicy::AllowPrivate,
+                &|_event| {},
+            )
+            .await;
+
+            let shared = summary
+                .pages
+                .iter()
+                .find(|p| p.url.as_str().ends_with("/shared"))
+                .expect("/shared should be discovered");
+            assert_eq!(
+                shared.depth, 1,
+                "seed must assign /shared depth 1 before depth-2 tasks run"
+            );
+            assert!(
+                summary
+                    .pages
+                    .iter()
+                    .any(|p| p.url.as_str().ends_with("/shared/leaf")),
+                "/shared/leaf at depth 2 must always be discovered"
+            );
+        }
     }
 }
