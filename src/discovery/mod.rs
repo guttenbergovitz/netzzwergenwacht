@@ -596,18 +596,74 @@ pub fn parse_sitemap_index_urls(
     extract_loc_targets(xml, base, policy)
 }
 
+fn decode_xml_text(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(cdata) = trimmed
+        .strip_prefix("<![CDATA[")
+        .and_then(|s| s.strip_suffix("]]>"))
+    {
+        return cdata.trim().to_owned();
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    let mut rest = trimmed;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let after = &rest[amp + 1..];
+        if let Some(semi) = after.find(';')
+            && semi <= 10
+        {
+            let entity = &after[..semi];
+            let decoded = match entity {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                _ if entity.starts_with("#x") || entity.starts_with("#X") => {
+                    u32::from_str_radix(&entity[2..], 16)
+                        .ok()
+                        .and_then(char::from_u32)
+                }
+                _ if entity.starts_with('#') => {
+                    entity[1..].parse::<u32>().ok().and_then(char::from_u32)
+                }
+                _ => None,
+            };
+            if let Some(ch) = decoded {
+                out.push(ch);
+                rest = &after[semi + 1..];
+                continue;
+            }
+        }
+        out.push('&');
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
 fn extract_loc_targets(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> Vec<AuditTarget> {
     let base_origin = Origin::from_target(base);
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     let mut rest = xml;
-    while let Some(start) = rest.find("<loc>") {
-        let after = &rest[start + 5..];
+    while let Some(start) = rest.find("<loc") {
+        let after_tag = &rest[start + 4..];
+        let Some(gt) = after_tag.find('>') else {
+            break;
+        };
+        // Skip unrelated tags such as `<location>`.
+        let attr_part = &after_tag[..gt];
+        if !attr_part.is_empty() && !attr_part.starts_with(char::is_whitespace) {
+            rest = &after_tag[gt + 1..];
+            continue;
+        }
+        let after = &after_tag[gt + 1..];
         let Some(end) = after.find("</loc>") else {
             break;
         };
-        let raw = after[..end].trim();
-        if let Ok(target) = AuditTarget::parse(raw, policy)
+        let decoded = decode_xml_text(&after[..end]);
+        if let Ok(target) = AuditTarget::parse(decoded.trim(), policy)
             && Origin::from_target(&target) == base_origin
             && seen.insert(target.as_str().to_owned())
         {
@@ -991,79 +1047,109 @@ pub(crate) fn unreachable_graph_input(
 
 /// Fetches `/sitemap.xml` (including bounded `<sitemapindex>` child sitemaps)
 /// on `seed`'s origin and returns prioritised same-origin URLs.
+/// Maximum child sitemaps fetched across nested `<sitemapindex>` trees.
+const MAX_CHILD_SITEMAPS: usize = 25;
+/// Maximum `<sitemapindex>` nesting depth.
+const MAX_SITEMAP_INDEX_DEPTH: usize = 3;
+
+/// Fetches `/sitemap.xml` (plus any `Sitemap:` directives already observed in `robots.txt`),
+/// decoding XML entities, `.xml.gz` payloads, and nested `<sitemapindex>` trees.
 pub async fn seed_sitemap_urls(
     seed: &AuditTarget,
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+) -> Vec<AuditTarget> {
+    seed_sitemap_urls_with_robots(seed, &[], exec_budget, policy).await
+}
+
+/// Variant of [`seed_sitemap_urls`] that reuses `Sitemap:` directives already parsed from
+/// `robots.txt` without fetching `/robots.txt` a second time.
+pub async fn seed_sitemap_urls_with_robots(
+    seed: &AuditTarget,
+    robots_sitemaps: &[AuditTarget],
     exec_budget: ExecutionBudget,
     policy: TargetPolicy,
 ) -> Vec<AuditTarget> {
     let Ok(seed_url) = Url::parse(seed.as_str()) else {
         return Vec::new();
     };
-    let Ok(sm_url) = seed_url.join("/sitemap.xml") else {
-        return Vec::new();
-    };
-    let Ok(sm_target) = AuditTarget::parse(sm_url.as_str(), policy) else {
-        return Vec::new();
-    };
-    if Origin::from_target(&sm_target) != Origin::from_target(seed) {
-        return Vec::new();
-    }
     let sm_budget = ExecutionBudget {
         audit_timeout: exec_budget.audit_timeout.min(Duration::from_secs(5)),
         http_timeout: exec_budget.http_timeout.min(Duration::from_secs(5)),
         ..exec_budget
     };
-    let sm_snap = collection::collect_http(&sm_target, &sm_budget, policy).await;
-    if let CollectorOutcome::Captured { data } = sm_snap.http
-        && data.status_code == 200
+
+    let mut roots = Vec::new();
+    let mut seen_roots = HashSet::new();
+    if let Ok(sm_url) = seed_url.join("/sitemap.xml")
+        && let Ok(sm_target) = AuditTarget::parse(sm_url.as_str(), policy)
+        && Origin::from_target(&sm_target) == Origin::from_target(seed)
+        && seen_roots.insert(sm_target.as_str().to_owned())
     {
-        let child_sitemaps = parse_sitemap_index_urls(&data.body_text, seed, policy);
-        if child_sitemaps.is_empty() {
-            return prioritise_representative_urls(parse_sitemap_urls(
-                &data.body_text,
-                seed,
-                policy,
-            ));
+        roots.push(sm_target);
+    }
+    for sm in robots_sitemaps {
+        if Origin::from_target(sm) == Origin::from_target(seed)
+            && seen_roots.insert(sm.as_str().to_owned())
+        {
+            roots.push(sm.clone());
         }
-        return collect_child_sitemaps(child_sitemaps, seed, &sm_budget, policy).await;
+    }
+    if roots.is_empty() {
+        return Vec::new();
     }
 
-    // Fallback: check /robots.txt for Sitemap: directives on the same origin.
-    let Ok(robots_url) = seed_url.join("/robots.txt") else {
-        return Vec::new();
-    };
-    let Ok(robots_target) = AuditTarget::parse(robots_url.as_str(), policy) else {
-        return Vec::new();
-    };
-    let robots_snap = collection::collect_http(&robots_target, &sm_budget, policy).await;
-    if let CollectorOutcome::Captured { data } = robots_snap.http
-        && data.status_code == 200
-    {
-        let sitemaps = parse_robots_sitemaps(&data.body_text, seed, policy);
-        if !sitemaps.is_empty() {
-            return collect_child_sitemaps(sitemaps, seed, &sm_budget, policy).await;
-        }
-    }
-    Vec::new()
+    collect_child_sitemaps(roots, seed, &sm_budget, policy).await
 }
 
 async fn collect_child_sitemaps(
-    child_sitemaps: Vec<AuditTarget>,
+    initial_sitemaps: Vec<AuditTarget>,
     seed: &AuditTarget,
     sm_budget: &ExecutionBudget,
     policy: TargetPolicy,
 ) -> Vec<AuditTarget> {
     let mut all_urls = Vec::new();
     let mut visited_urls = HashSet::new();
-    for child in child_sitemaps.into_iter().take(5) {
-        let child_snap = collection::collect_http(&child, sm_budget, policy).await;
-        if let CollectorOutcome::Captured { data: child_data } = child_snap.http
-            && child_data.status_code == 200
-        {
-            for u in parse_sitemap_urls(&child_data.body_text, seed, policy) {
-                if visited_urls.insert(u.as_str().to_owned()) {
-                    all_urls.push(u);
+    let mut visited_sitemaps = HashSet::new();
+    let mut queue: std::collections::VecDeque<(AuditTarget, usize)> = initial_sitemaps
+        .into_iter()
+        .filter(|sm| visited_sitemaps.insert(sm.as_str().to_owned()))
+        .map(|sm| (sm, 0))
+        .collect();
+    let mut fetched_count = 0usize;
+
+    while let Some((sitemap_target, depth)) = queue.pop_front() {
+        if fetched_count >= MAX_CHILD_SITEMAPS {
+            break;
+        }
+        fetched_count += 1;
+        let snap = collection::collect_http(&sitemap_target, sm_budget, policy).await;
+        let data = match snap.http {
+            CollectorOutcome::Captured { data } => data,
+            CollectorOutcome::Partial { data, warnings } => {
+                tracing::warn!(
+                    sitemap = sitemap_target.as_str(),
+                    warnings = ?warnings,
+                    "sitemap truncated at response byte cap; parsing observed entries"
+                );
+                data
+            }
+            CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => continue,
+        };
+        if !(200..=299).contains(&data.status_code) {
+            continue;
+        }
+        let child_indices = parse_sitemap_index_urls(&data.body_text, seed, policy);
+        if !child_indices.is_empty() && depth < MAX_SITEMAP_INDEX_DEPTH {
+            for child in child_indices {
+                if visited_sitemaps.insert(child.as_str().to_owned()) {
+                    queue.push_back((child, depth + 1));
                 }
+            }
+        }
+        for u in parse_sitemap_urls(&data.body_text, seed, policy) {
+            if visited_urls.insert(u.as_str().to_owned()) {
+                all_urls.push(u);
             }
         }
     }
@@ -1242,6 +1328,18 @@ mod tests {
         );
         assert_eq!(template_fingerprint(&p1), template_fingerprint(&p2));
         assert_ne!(template_fingerprint(&p1), template_fingerprint(&form));
+
+        let entity_xml = r"
+            <urlset>
+                <url><loc>https://example.org/search?a=1&amp;b=2</loc></url>
+                <url><loc><![CDATA[https://example.org/cdata?x=1&y=2]]></loc></url>
+                <url><location>https://example.org/ignored</location></url>
+            </urlset>
+        ";
+        let decoded = parse_sitemap_urls(entity_xml, &base, TargetPolicy::PublicOnly);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].as_str(), "https://example.org/search?a=1&b=2");
+        assert_eq!(decoded[1].as_str(), "https://example.org/cdata?x=1&y=2");
     }
 
     #[test]

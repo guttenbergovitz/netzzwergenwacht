@@ -676,8 +676,12 @@ async fn execute_bounded_get(
 
         let (raw_body, body_truncated) =
             read_bounded_body(&mut response, budget.max_response_bytes).await?;
-        let (body, decoded_truncated) =
-            decode_body_encoding(&raw_body, &headers, budget.max_response_bytes);
+        let (body, decoded_truncated) = decode_body_encoding(
+            &raw_body,
+            &headers,
+            current_target.as_str(),
+            budget.max_response_bytes,
+        );
         let body_truncated = body_truncated || decoded_truncated;
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
@@ -730,39 +734,49 @@ fn build_pinned_client(
         .map_err(|e| format!("failed to build HTTP client: {e}"))
 }
 
-/// Decompresses `raw_body` when `content-encoding` specifies `gzip`, `br`, `zstd`, or `deflate`,
-/// bounding output to `max_bytes` to prevent decompression bombs.
+/// Decompresses `raw_body` when `content-encoding` specifies `gzip`, `br`, `zstd`, or `deflate`
+/// (or when a `.gz` / `application/gzip` payload starts with the gzip magic header), bounding
+/// output to `max_bytes` to prevent decompression bombs.
 fn decode_body_encoding(
     raw_body: &[u8],
     headers: &[HttpHeader],
+    url: &str,
     max_bytes: usize,
 ) -> (Vec<u8>, bool) {
     use std::io::Read as _;
 
-    let Some(encoding) = headers
+    let encoding = headers
         .iter()
         .find(|h| h.name == "content-encoding")
-        .map(|h| h.value.to_ascii_lowercase())
-    else {
-        return (raw_body.to_vec(), false);
-    };
+        .map(|h| h.value.to_ascii_lowercase());
+    let is_gzip_payload = encoding.as_deref().is_some_and(|e| e.contains("gzip"))
+        || (encoding.is_none()
+            && raw_body.starts_with(&[0x1f, 0x8b])
+            && (url.to_ascii_lowercase().ends_with(".gz")
+                || headers.iter().any(|h| {
+                    h.name == "content-type" && h.value.to_ascii_lowercase().contains("gzip")
+                })));
 
     let cap = u64::try_from(max_bytes).unwrap_or(u64::MAX);
     let mut out = Vec::new();
-    let res = if encoding.contains("gzip") {
+    let res = if is_gzip_payload {
         let decoder = flate2::read::GzDecoder::new(raw_body);
         decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
-    } else if encoding.contains("br") {
-        let decoder = brotli::Decompressor::new(raw_body, 4096);
-        decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
-    } else if encoding.contains("zstd") {
-        match zstd::stream::read::Decoder::new(raw_body) {
-            Ok(decoder) => decoder.take(cap.saturating_add(1)).read_to_end(&mut out),
-            Err(e) => Err(e),
+    } else if let Some(ref enc) = encoding {
+        if enc.contains("br") {
+            let decoder = brotli::Decompressor::new(raw_body, 4096);
+            decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
+        } else if enc.contains("zstd") {
+            match zstd::stream::read::Decoder::new(raw_body) {
+                Ok(decoder) => decoder.take(cap.saturating_add(1)).read_to_end(&mut out),
+                Err(e) => Err(e),
+            }
+        } else if enc.contains("deflate") {
+            let decoder = flate2::read::ZlibDecoder::new(raw_body);
+            decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
+        } else {
+            return (raw_body.to_vec(), false);
         }
-    } else if encoding.contains("deflate") {
-        let decoder = flate2::read::ZlibDecoder::new(raw_body);
-        decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
     } else {
         return (raw_body.to_vec(), false);
     };

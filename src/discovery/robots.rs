@@ -52,6 +52,7 @@ struct RobotsRule {
 pub struct RobotsRules {
     rules: Vec<RobotsRule>,
     crawl_delay: Option<Duration>,
+    sitemaps: Vec<AuditTarget>,
 }
 
 impl RobotsRules {
@@ -68,7 +69,20 @@ impl RobotsRules {
                 pattern: "/".to_owned(),
             }],
             crawl_delay: None,
+            sitemaps: Vec::new(),
         }
+    }
+
+    #[must_use]
+    fn with_sitemaps(mut self, sitemaps: Vec<AuditTarget>) -> Self {
+        self.sitemaps = sitemaps;
+        self
+    }
+
+    /// Same-origin `Sitemap:` directives observed in `robots.txt`.
+    #[must_use]
+    pub fn sitemaps(&self) -> &[AuditTarget] {
+        &self.sitemaps
     }
 
     /// Parses a `robots.txt` body according to RFC 9309 group precedence.
@@ -162,11 +176,13 @@ impl RobotsRules {
             Self {
                 rules: specific_rules,
                 crawl_delay: specific_crawl_delay,
+                sitemaps: Vec::new(),
             }
         } else {
             Self {
                 rules: wildcard_rules,
                 crawl_delay: wildcard_crawl_delay,
+                sitemaps: Vec::new(),
             }
         }
     }
@@ -298,7 +314,13 @@ pub async fn fetch_robots(
     match &snapshot.http {
         CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
             match data.status_code {
-                200..=299 => (RobotsOutcome::Observed, RobotsRules::parse(&data.body_text)),
+                200..=299 => {
+                    let sitemaps = super::parse_robots_sitemaps(&data.body_text, seed, policy);
+                    (
+                        RobotsOutcome::Observed,
+                        RobotsRules::parse(&data.body_text).with_sitemaps(sitemaps),
+                    )
+                }
                 404 | 410 => (RobotsOutcome::Absent, RobotsRules::default()),
                 500..=599 => (RobotsOutcome::Unavailable, RobotsRules::disallow_all()),
                 _ => (RobotsOutcome::Unavailable, RobotsRules::default()),

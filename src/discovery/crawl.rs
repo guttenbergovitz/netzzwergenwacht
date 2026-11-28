@@ -17,7 +17,7 @@ use super::robots;
 use super::{
     CrawlBudget, CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageType,
     aggregate_analysis_totals, build_captured_graph_input, classify_page, cluster_systemic_issues,
-    discover_same_origin_links, prioritise_representative_urls, seed_sitemap_urls,
+    discover_same_origin_links, prioritise_representative_urls, seed_sitemap_urls_with_robots,
     unreachable_graph_input,
 };
 use crate::analysis::AuditReport;
@@ -350,7 +350,9 @@ pub(super) async fn crawl_concurrently(
         source: DiscoverySource::Seed,
     });
     if crawl_budget.max_depth > 0 && crawl_budget.max_pages > 1 {
-        for url in seed_sitemap_urls(&seed, exec_budget, policy).await {
+        for url in
+            seed_sitemap_urls_with_robots(&seed, robots_rules.sitemaps(), exec_budget, policy).await
+        {
             sitemap_urls.insert(url.as_str().to_owned());
             if frontier.enqueue(url.clone(), 1, DiscoverySource::Sitemap)
                 == EnqueueOutcome::Enqueued
