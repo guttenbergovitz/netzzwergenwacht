@@ -442,6 +442,7 @@ struct ScanReport {
     coverage: netzzwergenwacht::discovery::CrawlCoverage,
     resources: Vec<netzzwergenwacht::discovery::ResourceObservation>,
     systemic_issues: Vec<netzzwergenwacht::discovery::SystemicIssue>,
+    graph_results: Vec<netzzwergenwacht::domain::AnalyserResult>,
     quality_assessment: netzzwergenwacht::analysis::assessment::QualityAssessment,
     stored_at: Option<String>,
     store_error: Option<String>,
@@ -503,19 +504,7 @@ impl ScanReport {
             );
             lines.push(format!("    [{:?}] {} ({detail})", res.status, res.url));
         }
-        lines.push(String::new());
-        lines.push("DIAGNOSTICS".to_owned());
-        lines.push(format!(
-            "  Systemic issues:     {}",
-            self.systemic_issues.len()
-        ));
-        for issue in self.systemic_issues.iter().take(10) {
-            lines.push(format!(
-                "    {} on {} page(s)",
-                issue.rule_id.0,
-                issue.affected_urls.len()
-            ));
-        }
+        self.push_diagnostics_lines(&mut lines);
         lines.push(String::new());
         lines.push(format!(
             "QUALITY ASSESSMENT: {}",
@@ -538,6 +527,34 @@ impl ScanReport {
             (None, None) => lines.push("  Evidence NOT stored: no store was opened".to_owned()),
         }
         lines
+    }
+
+    fn push_diagnostics_lines(&self, lines: &mut Vec<String>) {
+        lines.push(String::new());
+        lines.push("DIAGNOSTICS".to_owned());
+        lines.push(format!(
+            "  Systemic issues:     {}",
+            self.systemic_issues.len()
+        ));
+        for issue in self.systemic_issues.iter().take(10) {
+            lines.push(format!(
+                "    {} on {} page(s)",
+                issue.rule_id.0,
+                issue.affected_urls.len()
+            ));
+        }
+        let graph_findings: Vec<_> = self
+            .graph_results
+            .iter()
+            .flat_map(|a| a.findings.iter())
+            .collect();
+        lines.push(format!("  Graph findings:      {}", graph_findings.len()));
+        for finding in graph_findings.iter().take(15) {
+            lines.push(format!(
+                "    [{:?}] {}: {}",
+                finding.severity, finding.rule_id.0, finding.title
+            ));
+        }
     }
 }
 
@@ -726,6 +743,7 @@ async fn main() -> ExitCode {
                 coverage: summary.coverage,
                 resources: summary.resources.clone(),
                 systemic_issues: summary.systemic_issues.clone(),
+                graph_results: summary.graph_results.clone(),
                 quality_assessment,
                 stored_at,
                 store_error,
@@ -757,6 +775,7 @@ async fn main() -> ExitCode {
                             coverage: &report.coverage,
                             resources: &report.resources,
                             systemic_issues: &report.systemic_issues,
+                            graph_results: &report.graph_results,
                             quality_assessment: &report.quality_assessment,
                             stored_at: report.stored_at.as_deref(),
                         },
@@ -766,9 +785,10 @@ async fn main() -> ExitCode {
                     }
                 }
                 OutputFormat::Sarif => {
-                    let sarif = netzzwergenwacht::report_sarif::render_scan_sarif(
+                    let sarif = netzzwergenwacht::report_sarif::render_scan_sarif_with_graph(
                         &report.seed_url,
                         &report.systemic_issues,
+                        &report.graph_results,
                     );
                     if let Err(code) = write_output_or_stdout(output.as_deref(), &sarif) {
                         return code;

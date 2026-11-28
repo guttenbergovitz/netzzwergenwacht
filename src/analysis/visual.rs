@@ -925,9 +925,12 @@ fn check_mobile_readability_and_tap_targets(
             kind: FindingKind::Deterministic,
             severity: Severity::Low,
             confidence: Confidence::High,
-            title: format!("Small mobile tap targets (<44x44px) ({})", mobile.small_tap_targets),
+            title: format!(
+                "Small mobile tap targets (<24x24px, WCAG 2.2 SC 2.5.8) ({})",
+                mobile.small_tap_targets
+            ),
             summary: format!(
-                "Mobile viewport measured {} interactive element(s) smaller than 44x44 CSS px.",
+                "Mobile viewport measured {} non-inline interactive element(s) smaller than 24x24 CSS px without 24px spacing clearance.",
                 mobile.small_tap_targets
             ),
             evidence_refs: vec![EvidenceRef::new(
@@ -935,7 +938,7 @@ fn check_mobile_readability_and_tap_targets(
                 format!("mobile_small_tap_targets={}", mobile.small_tap_targets),
             )],
             remediation: Some(
-                "Ensure buttons, links, and form controls meet at least 44x44 CSS px touch target size."
+                "Ensure interactive targets meet at least 24x24 CSS px or maintain 24 CSS px spacing clearance (WCAG 2.2 SC 2.5.8)."
                     .to_owned(),
             ),
         });
@@ -949,6 +952,66 @@ fn check_mobile_readability_and_tap_targets(
             evidence_level: EvidenceLevel::Rendered,
         });
     }
+}
+
+/// Rendered bounding box of an interactive control used to evaluate WCAG 2.2 SC 2.5.8.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TapTargetRect {
+    /// Left coordinate in CSS px.
+    pub left: f64,
+    /// Top coordinate in CSS px.
+    pub top: f64,
+    /// Width in CSS px.
+    pub width: f64,
+    /// Height in CSS px.
+    pub height: f64,
+    /// Whether the target is an inline link inside a block of running text.
+    pub inline_in_text: bool,
+}
+
+/// Counts interactive controls violating WCAG 2.2 SC 2.5.8 (24x24 CSS px minimum,
+/// with spacing clearance and inline-in-text exemptions).
+#[must_use]
+pub fn count_wcag_258_violations(targets: &[TapTargetRect]) -> usize {
+    const MIN_SIZE: f64 = 24.0;
+    const RADIUS: f64 = 12.0;
+    const EPS: f64 = 0.01;
+
+    let mut violations = 0usize;
+    for (i, c) in targets.iter().enumerate() {
+        if (c.width >= MIN_SIZE && c.height >= MIN_SIZE) || c.inline_in_text {
+            continue;
+        }
+        let cx = c.left + c.width / 2.0;
+        let cy = c.top + c.height / 2.0;
+
+        let intersects = targets.iter().enumerate().any(|(j, o)| {
+            if i == j {
+                return false;
+            }
+            let o_right = o.left + o.width;
+            let o_bottom = o.top + o.height;
+            let nearest_x = cx.clamp(o.left, o_right);
+            let nearest_y = cy.clamp(o.top, o_bottom);
+            let dist_to_box = (cx - nearest_x).hypot(cy - nearest_y);
+            if dist_to_box < RADIUS - EPS {
+                return true;
+            }
+            if o.width < MIN_SIZE || o.height < MIN_SIZE {
+                let ox = o.left + o.width / 2.0;
+                let oy = o.top + o.height / 2.0;
+                if (cx - ox).hypot(cy - oy) < MIN_SIZE - EPS {
+                    return true;
+                }
+            }
+            false
+        });
+
+        if intersects {
+            violations += 1;
+        }
+    }
+    violations
 }
 
 fn check_inline_data_uri_images(
@@ -1542,5 +1605,83 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_HIDDEN_DOWNLOADED_IMAGES));
         assert!(ids.contains(&RULE_VIEWPORT_ZOOM_LOCKED));
+    }
+
+    #[test]
+    fn wcag_258_respects_24px_spacing_and_inline_exemption() {
+        // 24x24px meets minimum directly.
+        assert_eq!(
+            count_wcag_258_violations(&[TapTargetRect {
+                left: 0.0,
+                top: 0.0,
+                width: 24.0,
+                height: 24.0,
+                inline_in_text: false,
+            }]),
+            0
+        );
+
+        // Inline link in running text is exempt even when crowded.
+        assert_eq!(
+            count_wcag_258_violations(&[
+                TapTargetRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 16.0,
+                    height: 16.0,
+                    inline_in_text: true,
+                },
+                TapTargetRect {
+                    left: 18.0,
+                    top: 0.0,
+                    width: 16.0,
+                    height: 16.0,
+                    inline_in_text: true,
+                },
+            ]),
+            0
+        );
+
+        // Isolated 16x16px targets >= 24px centre-to-centre apart pass spacing exemption.
+        assert_eq!(
+            count_wcag_258_violations(&[
+                TapTargetRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 16.0,
+                    height: 16.0,
+                    inline_in_text: false,
+                },
+                TapTargetRect {
+                    left: 24.0,
+                    top: 0.0,
+                    width: 16.0,
+                    height: 16.0,
+                    inline_in_text: false,
+                },
+            ]),
+            0
+        );
+
+        // Crowded 16x16px targets (<24px centre-to-centre) both violate WCAG 2.2 SC 2.5.8.
+        assert_eq!(
+            count_wcag_258_violations(&[
+                TapTargetRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 16.0,
+                    height: 16.0,
+                    inline_in_text: false,
+                },
+                TapTargetRect {
+                    left: 18.0,
+                    top: 0.0,
+                    width: 16.0,
+                    height: 16.0,
+                    inline_in_text: false,
+                },
+            ]),
+            2
+        );
     }
 }

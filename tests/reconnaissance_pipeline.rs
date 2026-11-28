@@ -294,5 +294,158 @@ async fn crawl_persists_coverage_findings_and_shared_resource_dependents() {
         .sum();
     assert_eq!(evaluated, expected);
 
+    let persisted_graph = store.graph_results("recon-test-run").await.unwrap();
+    assert_eq!(persisted_graph.len(), summary.graph_results.len());
+
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scan_cli_json_surfaces_graph_results() {
+    let fixture = spawn_fixture().await;
+    let dir = std::env::temp_dir().join(format!(
+        "nzw-scan-graph-cli-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_nzw"))
+        .args([
+            "scan",
+            "--allow-private",
+            "--max-pages",
+            "8",
+            "--max-depth",
+            "2",
+            "--format",
+            "json",
+            "--evidence-dir",
+        ])
+        .arg(&dir)
+        .arg(format!("http://{}/", fixture.addr))
+        .output()
+        .expect("run nzw scan");
+    assert!(
+        output.status.success(),
+        "nzw scan failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).expect("valid scan JSON");
+    let graph_results = json["graph_results"]
+        .as_array()
+        .expect("graph_results array in scan JSON");
+    let has_graph_rule = graph_results.iter().any(|analyser| {
+        analyser["checks"].as_array().is_some_and(|checks| {
+            checks.iter().any(|c| {
+                c["rule_id"]
+                    .as_str()
+                    .is_some_and(|r| r.starts_with("graph."))
+            })
+        })
+    });
+    assert!(
+        has_graph_rule,
+        "expected graph.* rules in scan JSON graph_results, got: {graph_results:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn scan_and_patrol_detect_duplicate_metadata_across_linked_pages() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut sock, _)) = listener.accept().await else {
+                break;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0_u8; 4096];
+                let Ok(n) = sock.read(&mut buf).await else {
+                    return;
+                };
+                let req = String::from_utf8_lossy(&buf[..n]);
+                let path = req
+                    .lines()
+                    .next()
+                    .and_then(|l| l.split_whitespace().nth(1))
+                    .unwrap_or("/")
+                    .to_owned();
+                let (status, body) = match path.as_str() {
+                    "/" => (
+                        "200 OK",
+                        "<html><head><title>Home</title><meta name=\"description\" content=\"Home desc\"></head><body><a href=\"/dup-a\">A</a><a href=\"/dup-b\">B</a></body></html>",
+                    ),
+                    "/dup-a" | "/dup-b" => (
+                        "200 OK",
+                        "<html><head><title>Same Title</title><meta name=\"description\" content=\"Same Description\"></head><body><main><p>Content</p></main></body></html>",
+                    ),
+                    _ => ("404 Not Found", "not found"),
+                };
+                let resp = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.shutdown().await;
+            });
+        }
+    });
+
+    let seed = AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+    let summary = crawl_and_cluster(
+        seed.clone(),
+        CrawlBudget {
+            max_pages: 8,
+            max_depth: 2,
+            max_duration: Duration::from_secs(10),
+        },
+        ExecutionBudget::default(),
+        TargetPolicy::AllowPrivate,
+    )
+    .await;
+    let scan_dup = summary
+        .graph_results
+        .iter()
+        .flat_map(|a| a.findings.iter())
+        .find(|f| f.rule_id.0 == "graph.content.duplicate_metadata")
+        .expect("scan must detect graph.content.duplicate_metadata");
+    assert!(scan_dup.summary.contains("/dup-a"));
+    assert!(scan_dup.summary.contains("/dup-b"));
+
+    let patrol_dir = std::env::temp_dir().join(format!(
+        "nzw-patrol-dup-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let backend: std::sync::Arc<dyn netzzwergenwacht::investigation::DiagnosticBackend> =
+        std::sync::Arc::new(netzzwergenwacht::investigation::LiveDiagnosticBackend);
+    let patrol_report = Box::pin(netzzwergenwacht::patrol::run_patrol(
+        seed,
+        TargetPolicy::AllowPrivate,
+        ExecutionBudget::default(),
+        netzzwergenwacht::patrol::PatrolBudget {
+            max_pages: 6,
+            ..netzzwergenwacht::patrol::PatrolBudget::default()
+        },
+        Some(&patrol_dir),
+        None,
+        backend,
+    ))
+    .await;
+    assert!(
+        patrol_report
+            .anomalies
+            .iter()
+            .any(|a| a.summary.contains("graph.content.duplicate_metadata")),
+        "patrol must surface graph.content.duplicate_metadata anomaly, got: {:?}",
+        patrol_report.anomalies
+    );
+    let _ = std::fs::remove_dir_all(&patrol_dir);
 }

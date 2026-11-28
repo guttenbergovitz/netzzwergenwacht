@@ -497,14 +497,64 @@ function findBrowser() {
           let smallTap = 0;
           let offscreenControls = 0;
           let visibleControls = 0;
+          const controls = [];
           for (const el of Array.from(document.querySelectorAll('a[href], button, input:not([type=hidden]), select, textarea')).slice(0, 200)) {
             const r = el.getBoundingClientRect();
             const cs = getComputedStyle(el);
             if (cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) !== 0 && r.width > 0 && r.height > 0) {
               visibleControls++;
-              if (r.width < 44 || r.height < 44) smallTap++;
               if (r.right < 0 || r.left > window.innerWidth) offscreenControls++;
+              let inlineInText = false;
+              if (el.tagName === 'A' && cs.display === 'inline') {
+                const block = el.closest('p, li, td, th, dd, dt, blockquote, figcaption');
+                if (block) {
+                  const blockText = (block.textContent || '').trim();
+                  const elText = (el.textContent || '').trim();
+                  if (blockText.length > elText.length + 2) {
+                    inlineInText = true;
+                  }
+                }
+              }
+              controls.push({
+                left: r.left,
+                right: r.right,
+                top: r.top,
+                bottom: r.bottom,
+                width: r.width,
+                height: r.height,
+                inlineInText,
+              });
             }
+          }
+          const radius = 12;
+          const eps = 0.01;
+          for (let i = 0; i < controls.length; i++) {
+            const c = controls[i];
+            if (c.width >= 24 && c.height >= 24) continue;
+            if (c.inlineInText) continue;
+            const cx = (c.left + c.right) / 2;
+            const cy = (c.top + c.bottom) / 2;
+            let intersects = false;
+            for (let j = 0; j < controls.length; j++) {
+              if (i === j) continue;
+              const o = controls[j];
+              const nearestX = Math.max(o.left, Math.min(cx, o.right));
+              const nearestY = Math.max(o.top, Math.min(cy, o.bottom));
+              const distToBox = Math.hypot(cx - nearestX, cy - nearestY);
+              if (distToBox < radius - eps) {
+                intersects = true;
+                break;
+              }
+              if (o.width < 24 || o.height < 24) {
+                const ox = (o.left + o.right) / 2;
+                const oy = (o.top + o.bottom) / 2;
+                if (Math.hypot(cx - ox, cy - oy) < 24 - eps) {
+                  intersects = true;
+                  break;
+                }
+              }
+            }
+            if (intersects) smallTap++;
           }
           let fixedTopHeight = 0;
           for (const el of Array.from(document.querySelectorAll('header, nav, [role=banner], div')).slice(0, 120)) {

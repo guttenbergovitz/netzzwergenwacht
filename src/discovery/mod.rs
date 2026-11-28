@@ -971,31 +971,46 @@ pub fn cluster_failed_resource_dependencies(
 pub fn aggregate_analysis_totals(
     page_reports: &[(AuditTarget, PageType, AuditReport)],
 ) -> Vec<DwarfAnalysisTotal> {
+    aggregate_analysis_totals_with_graph(page_reports, &[])
+}
+
+/// Aggregates per-dwarf check and finding totals across crawled pages and site-level graph analysers.
+#[must_use]
+pub fn aggregate_analysis_totals_with_graph(
+    page_reports: &[(AuditTarget, PageType, AuditReport)],
+    graph_results: &[crate::domain::AnalyserResult],
+) -> Vec<DwarfAnalysisTotal> {
     let mut totals: BTreeMap<DwarfId, DwarfAnalysisTotal> = BTreeMap::new();
-    for (_, _, report) in page_reports {
-        for analyser in &report.analysers {
-            let entry = totals
-                .entry(analyser.dwarf_id)
-                .or_insert(DwarfAnalysisTotal {
-                    dwarf_id: analyser.dwarf_id,
-                    checks_evaluated: 0,
-                    checks_passed: 0,
-                    checks_failed: 0,
-                    checks_skipped: 0,
-                    checks_unavailable: 0,
-                    findings_count: 0,
-                });
-            entry.checks_evaluated += analyser.checks.len();
-            entry.findings_count += analyser.findings.len();
-            for check in &analyser.checks {
-                match check {
-                    CheckStatus::Passed { .. } => entry.checks_passed += 1,
-                    CheckStatus::Failed { .. } => entry.checks_failed += 1,
-                    CheckStatus::Skipped { .. } => entry.checks_skipped += 1,
-                    CheckStatus::Unavailable { .. } => entry.checks_unavailable += 1,
-                }
+    let mut accumulate = |analyser: &crate::domain::AnalyserResult| {
+        let entry = totals
+            .entry(analyser.dwarf_id)
+            .or_insert(DwarfAnalysisTotal {
+                dwarf_id: analyser.dwarf_id,
+                checks_evaluated: 0,
+                checks_passed: 0,
+                checks_failed: 0,
+                checks_skipped: 0,
+                checks_unavailable: 0,
+                findings_count: 0,
+            });
+        entry.checks_evaluated += analyser.checks.len();
+        entry.findings_count += analyser.findings.len();
+        for check in &analyser.checks {
+            match check {
+                CheckStatus::Passed { .. } => entry.checks_passed += 1,
+                CheckStatus::Failed { .. } => entry.checks_failed += 1,
+                CheckStatus::Skipped { .. } => entry.checks_skipped += 1,
+                CheckStatus::Unavailable { .. } => entry.checks_unavailable += 1,
             }
         }
+    };
+    for (_, _, report) in page_reports {
+        for analyser in &report.analysers {
+            accumulate(analyser);
+        }
+    }
+    for analyser in graph_results {
+        accumulate(analyser);
     }
     totals.into_values().collect()
 }
@@ -1075,7 +1090,7 @@ pub(crate) fn build_captured_graph_input(
         lang: obs.html_lang.clone(),
         entities: crate::analysis::schema::extract_entities(&obs.json_ld_blocks).entities,
         resources: Vec::new(),
-        text_simhash: crate::analysis::graph::compute_text_simhash(&obs.visible_text_sample),
+        text_simhash: crate::analysis::graph::compute_text_simhash(&obs.main_content_text),
     }
 }
 

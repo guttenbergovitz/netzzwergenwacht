@@ -852,7 +852,8 @@ fn check_ax_rendering_dependency(
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    if http.body_bytes > 512 && obs.visible_word_count < 20 && obs.scripts.len() >= 2 {
+    let executable_scripts = obs.scripts.iter().filter(|s| s.is_executable_js()).count();
+    if http.body_bytes > 512 && obs.visible_word_count < 20 && executable_scripts >= 2 {
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_AX_RENDERING_DEP.to_owned()),
@@ -863,17 +864,14 @@ fn check_ax_rendering_dependency(
             confidence: Confidence::Medium,
             title: "Primary content appears dependent on client-side JS rendering".to_owned(),
             summary: format!(
-                "Source HTML ({} bytes, {} script(s)) contains only {} visible word(s), limiting non-JS crawler/agent extraction.",
-                http.body_bytes,
-                obs.scripts.len(),
-                obs.visible_word_count
+                "Source HTML ({} bytes, {} executable JS script(s)) contains only {} visible word(s), limiting non-JS crawler/agent extraction.",
+                http.body_bytes, executable_scripts, obs.visible_word_count
             ),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpBody,
                 format!(
-                    "visible_words={};scripts={}",
-                    obs.visible_word_count,
-                    obs.scripts.len()
+                    "visible_words={};executable_scripts={}",
+                    obs.visible_word_count, executable_scripts
                 ),
             )],
             remediation: Some(
@@ -1268,5 +1266,42 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_ROBOTS_HEADER_CONFLICT));
         assert!(ids.contains(&RULE_OG_URL_MISMATCH));
+    }
+
+    #[test]
+    fn ignores_non_executable_scripts_for_ax_rendering_dependency() {
+        let padding = "<!-- pad -->".repeat(50);
+        let html = format!(
+            r#"<html><head>
+                <title>JSON-LD only page</title>
+                <script type="application/ld+json">{{"@context":"https://schema.org","@type":"WebPage"}}</script>
+                <script type="importmap">{{"imports":{{}}}}</script>
+                <script type="text/template"><div>tmpl</div></script>
+                <script type="text/plain">note</script>
+            </head><body><p>Minimal static notice.</p>{padding}</body></html>"#
+        );
+        let (http, obs) = http_with_html(&html);
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(
+            !ids.contains(&RULE_AX_RENDERING_DEP),
+            "non-executable data/template scripts must not trigger {RULE_AX_RENDERING_DEP}"
+        );
+    }
+
+    #[test]
+    fn flags_module_and_classic_executable_scripts_for_ax_rendering_dependency() {
+        let padding = "<!-- pad -->".repeat(50);
+        let html = format!(
+            r#"<html><head>
+                <title>SPA shell</title>
+                <script type="module" src="/app.mjs"></script>
+                <script type="text/javascript; charset=utf-8" src="/vendor.js"></script>
+            </head><body><div id="root">{padding}</div></body></html>"#
+        );
+        let (http, obs) = http_with_html(&html);
+        let res = analyse(&http, &obs);
+        let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
+        assert!(ids.contains(&RULE_AX_RENDERING_DEP));
     }
 }

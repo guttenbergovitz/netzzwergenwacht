@@ -12,7 +12,7 @@ use crate::brigade::{MOTTO, profile};
 use crate::discovery::{
     CrawlCoverage, ResourceKind, ResourceObservation, ResourceStatus, SystemicIssue,
 };
-use crate::domain::{CollectorOutcome, Finding, Severity};
+use crate::domain::{AnalyserResult, CollectorOutcome, Finding, Severity};
 use crate::persistence::RegressionReport;
 
 const HEAVY_UNCOMPRESSED_THRESHOLD_BYTES: u64 = 20 * 1024;
@@ -116,6 +116,8 @@ pub struct ScanHtmlInput<'a> {
     pub resources: &'a [ResourceObservation],
     /// Clustered cross-page systemic issues.
     pub systemic_issues: &'a [SystemicIssue],
+    /// Site-wide Application Graph analyser results (`graph.*`).
+    pub graph_results: &'a [AnalyserResult],
     /// Unified multi-domain quality assessment.
     pub quality_assessment: &'a QualityAssessment,
     /// Optional local `EvidenceStore` path where the crawl was persisted.
@@ -226,6 +228,7 @@ pub fn render_scan_html(input: &ScanHtmlInput<'_>) -> String {
 
     render_blockers_section(&mut body, input.quality_assessment, None);
     render_systemic_issues_section(&mut body, input.systemic_issues);
+    render_graph_results_section(&mut body, input.graph_results);
     render_domains_section(&mut body, input.quality_assessment);
     render_resources_section(&mut body, cov, input.resources);
     render_limitations_section(&mut body, &input.quality_assessment.limitations);
@@ -725,6 +728,47 @@ fn render_systemic_issues_section(out: &mut String, issues: &[SystemicIssue]) {
     let _ = writeln!(out, "</tbody></table></section>");
 }
 
+fn render_graph_results_section(out: &mut String, graph_results: &[AnalyserResult]) {
+    let findings: Vec<(&AnalyserResult, &Finding)> = graph_results
+        .iter()
+        .flat_map(|a| a.findings.iter().map(move |f| (a, f)))
+        .collect();
+    let _ = writeln!(
+        out,
+        "<section class=\"panel\"><h2>Site-Wide Graph Findings</h2>"
+    );
+    if findings.is_empty() {
+        let _ = writeln!(
+            out,
+            "<p class=\"muted\">No site-wide graph findings detected.</p></section>"
+        );
+        return;
+    }
+    let _ = writeln!(
+        out,
+        "<table><thead><tr><th>Severity</th><th>Rule</th><th>Specialist</th><th>Title</th><th>Summary</th></tr></thead><tbody>"
+    );
+    for (analyser, finding) in findings {
+        let sev_class = match finding.severity {
+            Severity::Critical => "sev-crit",
+            Severity::High => "sev-high",
+            Severity::Medium => "sev-med",
+            Severity::Low | Severity::Info => "sev-low",
+        };
+        let _ = writeln!(
+            out,
+            "<tr><td><span class=\"badge {}\">{:?}</span></td><td><code>{}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            sev_class,
+            finding.severity,
+            escape_html(&finding.rule_id.0),
+            escape_html(analyser.dwarf_id.display_name()),
+            escape_html(&finding.title),
+            escape_html(&finding.summary),
+        );
+    }
+    let _ = writeln!(out, "</tbody></table></section>");
+}
+
 fn render_resources_section(
     out: &mut String,
     cov: &CrawlCoverage,
@@ -1042,6 +1086,7 @@ mod tests {
             coverage: &coverage,
             resources: &resources,
             systemic_issues: &issues,
+            graph_results: &[],
             quality_assessment: &assessment,
             stored_at: Some("/tmp/evidence.db"),
         });
@@ -1109,6 +1154,7 @@ mod tests {
             coverage: &coverage,
             resources: &resources,
             systemic_issues: &[],
+            graph_results: &[],
             quality_assessment: &assessment,
             stored_at: None,
         });

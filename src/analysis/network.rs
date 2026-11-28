@@ -51,6 +51,63 @@ const ALL_RULES: &[&str] = &[
     RULE_INTERMEDIARY_ERROR,
 ];
 
+/// Random-URL baseline and confirmation re-fetch outcome used to detect soft-404 responses
+/// without fragile title/heading substring heuristics.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Soft404Baseline {
+    /// Synthetic non-existent URL probed first.
+    pub probe_url: String,
+    /// HTTP status code returned by `probe_url`.
+    pub probe_status: u16,
+    /// Distinct-shingle `SimHash` of the primary content returned by `probe_url`, if sufficient text.
+    pub probe_simhash: Option<u64>,
+    /// Response body byte length returned by `probe_url`.
+    pub probe_body_bytes: usize,
+    /// Second synthetic non-existent URL fetched to confirm catch-all soft-404 behaviour.
+    pub confirmation_url: Option<String>,
+    /// HTTP status code returned by `confirmation_url`.
+    pub confirmation_status: Option<u16>,
+    /// Distinct-shingle `SimHash` returned by `confirmation_url`.
+    pub confirmation_simhash: Option<u64>,
+}
+
+impl Soft404Baseline {
+    /// Returns `true` when both the initial random-URL probe and the confirmation re-fetch
+    /// returned HTTP 200 with a consistent fallback template.
+    #[must_use]
+    pub fn is_confirmed_soft_404_origin(&self) -> bool {
+        if self.probe_status != 200 || self.confirmation_status != Some(200) {
+            return false;
+        }
+        match (self.probe_simhash, self.confirmation_simhash) {
+            (Some(a), Some(b)) => (a ^ b).count_ones() <= 6,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+
+    /// Returns `true` when the audited page matches the confirmed random-URL soft-404 template.
+    #[must_use]
+    pub fn matches_page(&self, obs: &DocumentObservations, body_bytes: usize) -> bool {
+        if !self.is_confirmed_soft_404_origin() {
+            return false;
+        }
+        let page_simhash = crate::analysis::graph::compute_text_simhash(&obs.main_content_text);
+        match (self.probe_simhash, page_simhash) {
+            (Some(base), Some(page)) => (base ^ page).count_ones() <= 6,
+            (None, None) => {
+                let max_bytes = self.probe_body_bytes.max(body_bytes);
+                if max_bytes == 0 {
+                    return true;
+                }
+                let diff = self.probe_body_bytes.abs_diff(body_bytes);
+                diff * 100 <= max_bytes * 15
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Evaluates HTTP response status and redirect-chain hygiene over `snapshot`.
 #[must_use]
 pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
@@ -62,6 +119,16 @@ pub fn analyse(snapshot: &EvidenceSnapshot) -> AnalyserResult {
 pub fn analyse_with_document(
     snapshot: &EvidenceSnapshot,
     obs: Option<&DocumentObservations>,
+) -> AnalyserResult {
+    analyse_with_baseline(snapshot, obs, None)
+}
+
+/// Evaluates HTTP reliability, redirect integrity, baseline-verified soft-404s, and link hygiene.
+#[must_use]
+pub fn analyse_with_baseline(
+    snapshot: &EvidenceSnapshot,
+    obs: Option<&DocumentObservations>,
+    soft_404_baseline: Option<&Soft404Baseline>,
 ) -> AnalyserResult {
     let http = match require_http(snapshot) {
         Ok(http) => http,
@@ -84,7 +151,7 @@ pub fn analyse_with_document(
     check_intermediary_error_response(http, &mut findings, &mut checks);
 
     if let Some(doc) = obs {
-        check_soft_error(http, doc, &mut findings, &mut checks);
+        check_soft_error(http, doc, soft_404_baseline, &mut findings, &mut checks);
         check_link_hygiene(http, doc, &mut findings, &mut checks);
         check_charset_mismatch(http, doc, &mut findings, &mut checks);
     } else {
@@ -259,6 +326,7 @@ fn check_redirect_loop(
 fn check_soft_error(
     http: &HttpEvidence,
     obs: &DocumentObservations,
+    baseline: Option<&Soft404Baseline>,
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
@@ -271,54 +339,48 @@ fn check_soft_error(
         return;
     }
 
-    let title_lower = obs
-        .title
-        .as_deref()
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
-    let h1_lower = obs
-        .headings
-        .iter()
-        .find(|h| h.level == 1)
-        .map(|h| h.text.to_ascii_lowercase())
-        .unwrap_or_default();
-    let combined = format!("{title_lower} {h1_lower}");
-    let looks_like_error_page = [
-        "404",
-        "410",
-        "page not found",
-        "not found",
-        "nie znaleziono",
-        "strona nie istnieje",
-        "seite nicht gefunden",
-        "nicht gefunden",
-        "500 internal server error",
-        "error 404",
-    ]
-    .iter()
-    .any(|p| combined.contains(p));
+    let Some(baseline) = baseline else {
+        checks.push(CheckStatus::Skipped {
+            rule_id: RuleId(RULE_SOFT_ERROR.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+            reason: "soft-404 random-URL baseline not collected".to_owned(),
+        });
+        return;
+    };
 
-    if looks_like_error_page && obs.visible_word_count < 80 {
+    if baseline.matches_page(obs, http.body_bytes) {
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_SOFT_ERROR.to_owned()),
             category: FindingCategory::Reliability,
             evidence_level: EvidenceLevel::Source,
-            kind: FindingKind::Heuristic,
+            kind: FindingKind::Deterministic,
             severity: Severity::Medium,
-            confidence: Confidence::Low,
-            title: "Potential soft-404 / error page served with HTTP 200".to_owned(),
+            confidence: Confidence::High,
+            title: "Soft-404 response served with HTTP 200 (confirmed against random-URL baseline)".to_owned(),
             summary: format!(
-                "Response returned HTTP 200 with error-like title `{}` and {} visible words.",
-                obs.title.as_deref().unwrap_or(""),
-                obs.visible_word_count
+                "Response returned HTTP 200 matching the origin's confirmed random-URL fallback template (`{}` -> {}, `{}` -> {}).",
+                baseline.probe_url,
+                baseline.probe_status,
+                baseline.confirmation_url.as_deref().unwrap_or("none"),
+                baseline.confirmation_status.unwrap_or(0)
             ),
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::HttpBody,
-                format!("status=200;words={}", obs.visible_word_count),
-            )],
+            evidence_refs: vec![
+                EvidenceRef::new(
+                    EvidenceSource::HttpBody,
+                    format!("probe_url={};status={}", baseline.probe_url, baseline.probe_status),
+                ),
+                EvidenceRef::new(
+                    EvidenceSource::HttpBody,
+                    format!(
+                        "confirmation_url={};status={}",
+                        baseline.confirmation_url.as_deref().unwrap_or("none"),
+                        baseline.confirmation_status.unwrap_or(0)
+                    ),
+                ),
+            ],
             remediation: Some(
-                "Return proper 404/410/5xx HTTP status codes for missing or error pages."
+                "Return proper 404/410 HTTP status codes for missing routes instead of serving a fallback template with HTTP 200."
                     .to_owned(),
             ),
         });
@@ -1238,8 +1300,63 @@ mod tests {
             .map(|f| f.rule_id.0.as_str())
             .collect();
         assert!(ids.contains(&RULE_REDIRECT_LOOP));
-        assert!(ids.contains(&RULE_SOFT_ERROR));
         assert!(ids.contains(&RULE_LINK_HYGIENE));
+        assert!(
+            !ids.contains(&RULE_SOFT_ERROR),
+            "substring title '404 Page Not Found' without baseline must not false-positive"
+        );
+    }
+
+    #[test]
+    fn detects_soft_404_only_with_confirmed_random_url_baseline() {
+        let error_template = "<html><head><title>Not Found</title></head><body><main><p>We could not find the requested resource on this server. Please check the web address or return to the main application portal for navigation and support information across all available services.</p></main></body></html>";
+        let mut snap = make_snapshot(200, 0);
+        if let CollectorOutcome::Captured { data } = &mut snap.http {
+            data.body_bytes = error_template.len();
+            data.body_text = error_template.to_owned();
+        }
+        let obs = DocumentObservations::from_html(error_template);
+        let simhash = crate::analysis::graph::compute_text_simhash(&obs.main_content_text);
+
+        // 1. Substring-only without baseline does not trigger.
+        let without_baseline = analyse_with_document(&snap, Some(&obs));
+        assert!(
+            !without_baseline
+                .findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_SOFT_ERROR)
+        );
+
+        // 2. Confirmed random-URL baseline matching the template triggers soft-404.
+        let confirmed_baseline = Soft404Baseline {
+            probe_url: "https://example.com/__nzw-soft404-probe-9f4c2a7e1b".to_owned(),
+            probe_status: 200,
+            probe_simhash: simhash,
+            probe_body_bytes: error_template.len(),
+            confirmation_url: Some(
+                "https://example.com/__nzw-soft404-confirm-3e8d1b5a4c".to_owned(),
+            ),
+            confirmation_status: Some(200),
+            confirmation_simhash: simhash,
+        };
+        let with_baseline = analyse_with_baseline(&snap, Some(&obs), Some(&confirmed_baseline));
+        assert!(
+            with_baseline
+                .findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_SOFT_ERROR)
+        );
+
+        // 3. Unconfirmed baseline (e.g. confirmation returned 404) does not trigger.
+        let mut unconfirmed = confirmed_baseline;
+        unconfirmed.confirmation_status = Some(404);
+        let res_unconfirmed = analyse_with_baseline(&snap, Some(&obs), Some(&unconfirmed));
+        assert!(
+            !res_unconfirmed
+                .findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_SOFT_ERROR)
+        );
     }
 
     #[test]

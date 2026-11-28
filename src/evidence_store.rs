@@ -690,6 +690,8 @@ impl EvidenceStore {
                 .map_err(classify)?;
         }
 
+        insert_graph_results(connection, record.run_id, &record.summary.graph_results).await?;
+
         for edge in &record.summary.page_resources {
             connection
                 .execute(
@@ -1195,6 +1197,59 @@ impl EvidenceStore {
         }
         Ok(issues)
     }
+
+    /// Returns persisted site-wide `graph.*` [`crate::domain::AnalyserResult`] entries for `run_id`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the query or JSON deserialisation fails.
+    pub async fn graph_results(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<crate::domain::AnalyserResult>, StoreError> {
+        let connection = self.database.connect()?;
+        let mut rows = connection
+            .query(
+                "SELECT payload_json FROM graph_results WHERE run_id = ?1 ORDER BY dwarf_id ASC",
+                [run_id],
+            )
+            .await?;
+
+        let mut results = Vec::new();
+        while let Some(row) = rows.next().await? {
+            let raw = row.get::<String>(0)?;
+            let parsed: crate::domain::AnalyserResult =
+                serde_json::from_str(&raw).map_err(|err| {
+                    StoreError::Database(format!("invalid persisted graph_results JSON: {err}"))
+                })?;
+            results.push(parsed);
+        }
+        Ok(results)
+    }
+}
+
+async fn insert_graph_results(
+    connection: &turso::Connection,
+    run_id: &str,
+    graph_results: &[crate::domain::AnalyserResult],
+) -> Result<(), WriteFailure> {
+    for analyser in graph_results {
+        let payload_json = serde_json::to_string(analyser).map_err(|err| {
+            WriteFailure::Permanent(StoreError::Database(format!(
+                "failed to serialise graph_results: {err}"
+            )))
+        })?;
+        connection
+            .execute(
+                "INSERT INTO graph_results (run_id, dwarf_id, payload_json)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(run_id, dwarf_id) DO UPDATE SET payload_json = excluded.payload_json",
+                (run_id, analyser.dwarf_id.display_name(), payload_json),
+            )
+            .await
+            .map_err(classify)?;
+    }
+    Ok(())
 }
 
 /// Internal classification of a failed write attempt.
@@ -1362,6 +1417,12 @@ CREATE TABLE IF NOT EXISTS systemic_issues (
     PRIMARY KEY (run_id, issue_id)
 );
 CREATE INDEX IF NOT EXISTS systemic_by_rule ON systemic_issues(run_id, rule_id);
+CREATE TABLE IF NOT EXISTS graph_results (
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    dwarf_id TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, dwarf_id)
+);
 ";
 
 /// Schema v2 adds the resource detail that v1 recorded in memory and then dropped.

@@ -36,6 +36,7 @@ const RULE_TRAILING_SLASH_INCONSISTENCY: &str = "graph.seo.trailing_slash_incons
 const RULE_HTTP_HTTPS_MIXED_PAGES: &str = "graph.seo.http_https_mixed_pages";
 const RULE_HEAVY_SHARED_ASSET: &str = "graph.resources.heavy_shared_asset";
 const RULE_NEAR_DUPLICATE_SIMHASH: &str = "graph.content.near_duplicate_simhash";
+const RULE_EXACT_DUPLICATE_CONTENT: &str = "graph.content.exact_duplicate";
 
 /// All rule identifiers evaluated by the Application Graph engine.
 pub const ALL_RULES: &[&str] = &[
@@ -59,6 +60,7 @@ pub const ALL_RULES: &[&str] = &[
     RULE_HTTP_HTTPS_MIXED_PAGES,
     RULE_HEAVY_SHARED_ASSET,
     RULE_NEAR_DUPLICATE_SIMHASH,
+    RULE_EXACT_DUPLICATE_CONTENT,
 ];
 
 /// Compact subresource record attached to a [`GraphPageInput`] for `ResourceGraph` projection.
@@ -719,8 +721,11 @@ fn check_duplicate_metadata(
         }
     }
 
-    let dup_titles: usize = by_title.values().filter(|urls| urls.len() > 1).count();
-    let dup_descs: usize = by_desc.values().filter(|urls| urls.len() > 1).count();
+    let dup_title_groups: Vec<&Vec<&str>> =
+        by_title.values().filter(|urls| urls.len() > 1).collect();
+    let dup_desc_groups: Vec<&Vec<&str>> = by_desc.values().filter(|urls| urls.len() > 1).collect();
+    let dup_titles = dup_title_groups.len();
+    let dup_descs = dup_desc_groups.len();
 
     if dup_titles == 0 && dup_descs == 0 {
         checks.push(CheckStatus::Passed {
@@ -728,6 +733,14 @@ fn check_duplicate_metadata(
             evidence_level: EvidenceLevel::Source,
         });
     } else {
+        let mut sample_urls: Vec<&str> = dup_title_groups
+            .iter()
+            .chain(dup_desc_groups.iter())
+            .flat_map(|urls| urls.iter().copied())
+            .collect();
+        sample_urls.sort_unstable();
+        sample_urls.dedup();
+        let sample_preview: Vec<&str> = sample_urls.into_iter().take(6).collect();
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_DUPLICATE_METADATA.to_owned()),
@@ -738,11 +751,15 @@ fn check_duplicate_metadata(
             confidence: Confidence::High,
             title: "Duplicate titles or meta descriptions across pages".to_owned(),
             summary: format!(
-                "{dup_titles} duplicate `<title>` group(s) and {dup_descs} duplicate meta description group(s) across indexable pages."
+                "{dup_titles} duplicate `<title>` group(s) and {dup_descs} duplicate meta description group(s) across indexable pages (affected: {}).",
+                sample_preview.join(", ")
             ),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpBody,
-                format!("dup_titles={dup_titles};dup_descriptions={dup_descs}"),
+                format!(
+                    "dup_titles={dup_titles};dup_descriptions={dup_descs};urls={}",
+                    sample_preview.join(",")
+                ),
             )],
             remediation: Some(
                 "Give every indexable page a unique `<title>` and `<meta name=\"description\">`."
@@ -1535,7 +1552,7 @@ fn is_weak_cache_control(raw: &str) -> bool {
     max_age_secs.is_none_or(|secs| secs < 3_600)
 }
 
-/// Computes a 64-bit FNV-1a `SimHash` over normalised word shingles when `text` has >= 25 tokens.
+/// Computes a 64-bit FNV-1a `SimHash` over distinct normalised 3-word shingles when `text` has >= 25 tokens.
 #[must_use]
 pub fn compute_text_simhash(text: &str) -> Option<u64> {
     let tokens: Vec<String> = text
@@ -1547,7 +1564,7 @@ pub fn compute_text_simhash(text: &str) -> Option<u64> {
         return None;
     }
 
-    let mut weights = [0_i32; 64];
+    let mut distinct_shingles: BTreeSet<u64> = BTreeSet::new();
     for window in tokens.windows(3) {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for tok in window {
@@ -1558,6 +1575,15 @@ pub fn compute_text_simhash(text: &str) -> Option<u64> {
             h ^= 0xff;
             h = h.wrapping_mul(0x0100_0000_01b3);
         }
+        distinct_shingles.insert(h);
+    }
+
+    if distinct_shingles.is_empty() {
+        return None;
+    }
+
+    let mut weights = [0_i32; 64];
+    for h in distinct_shingles {
         for (bit, weight) in weights.iter_mut().enumerate() {
             if (h >> bit) & 1 == 1 {
                 *weight += 1;
@@ -1576,6 +1602,93 @@ pub fn compute_text_simhash(text: &str) -> Option<u64> {
     Some(fingerprint)
 }
 
+fn connected_components(node_count: usize, edges: &[(usize, usize)]) -> Vec<Vec<usize>> {
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+    for &(u, v) in edges {
+        adj[u].push(v);
+        adj[v].push(u);
+    }
+    let mut visited = vec![false; node_count];
+    let mut clusters = Vec::new();
+    for start in 0..node_count {
+        if visited[start] || adj[start].is_empty() {
+            continue;
+        }
+        let mut stack = vec![start];
+        visited[start] = true;
+        let mut component = Vec::new();
+        while let Some(node) = stack.pop() {
+            component.push(node);
+            for &next in &adj[node] {
+                if !visited[next] {
+                    visited[next] = true;
+                    stack.push(next);
+                }
+            }
+        }
+        if component.len() >= 2 {
+            component.sort_unstable();
+            clusters.push(component);
+        }
+    }
+    clusters
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_duplicate_cluster_finding(
+    hashed: &[(&str, u64)],
+    clusters: &[Vec<usize>],
+    rule_id: &str,
+    kind: FindingKind,
+    severity: Severity,
+    confidence: Confidence,
+    title_prefix: &str,
+    summary_desc: &str,
+    remediation: &str,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    if clusters.is_empty() {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(rule_id.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    let first_cluster = clusters[0]
+        .iter()
+        .map(|&idx| hashed[idx].0)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let evidence_refs: Vec<EvidenceRef> = clusters
+        .iter()
+        .flat_map(|c| c.iter().map(|&idx| hashed[idx].0))
+        .take(10)
+        .map(|url| EvidenceRef::new(EvidenceSource::HttpBody, url.to_owned()))
+        .collect();
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(rule_id.to_owned()),
+        category: FindingCategory::Content,
+        evidence_level: EvidenceLevel::Source,
+        kind,
+        severity,
+        confidence,
+        title: format!("{title_prefix} ({})", clusters.len()),
+        summary: format!(
+            "{} {summary_desc} (for example [{first_cluster}]).",
+            clusters.len()
+        ),
+        evidence_refs,
+        remediation: Some(remediation.to_owned()),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(rule_id.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
+}
+
 fn check_near_duplicate_simhash(
     graph: &ApplicationGraph,
     findings: &mut Vec<Finding>,
@@ -1588,61 +1701,66 @@ fn check_near_duplicate_simhash(
         .filter_map(|p| p.text_simhash.map(|h| (p.url.as_str(), h)))
         .collect();
     if hashed.len() < 2 {
-        checks.push(CheckStatus::Skipped {
-            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-            reason: "fewer than two indexable pages with text_simhash".to_owned(),
-        });
+        for rule_id in [RULE_NEAR_DUPLICATE_SIMHASH, RULE_EXACT_DUPLICATE_CONTENT] {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId(rule_id.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "fewer than two indexable pages with text_simhash".to_owned(),
+            });
+        }
         return;
     }
 
-    let mut pairs = Vec::new();
+    let mut exact_edges: Vec<(usize, usize)> = Vec::new();
+    let mut near_edges: Vec<(usize, usize)> = Vec::new();
+    let mut has_near_edge = vec![false; hashed.len()];
+
     for i in 0..hashed.len() {
         for j in (i + 1)..hashed.len() {
             let dist = (hashed[i].1 ^ hashed[j].1).count_ones();
-            if dist <= 6 {
-                pairs.push(format!(
-                    "{} ~ {} (hamming={dist})",
-                    hashed[i].0, hashed[j].0
-                ));
+            if dist == 0 {
+                exact_edges.push((i, j));
+                near_edges.push((i, j));
+            } else if dist <= 6 {
+                near_edges.push((i, j));
+                has_near_edge[i] = true;
+                has_near_edge[j] = true;
             }
         }
     }
 
-    if pairs.is_empty() {
-        checks.push(CheckStatus::Passed {
-            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-        });
-    } else {
-        findings.push(Finding {
-            fingerprint: FindingFingerprint::default(),
-            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
-            category: FindingCategory::Content,
-            evidence_level: EvidenceLevel::Source,
-            kind: FindingKind::Heuristic,
-            severity: Severity::Medium,
-            confidence: Confidence::Medium,
-            title: format!("Near-duplicate content pairs detected ({})", pairs.len()),
-            summary: format!(
-                "{} indexable page pair(s) share SimHash distance <= 4 (for example `{}`).",
-                pairs.len(),
-                pairs[0]
-            ),
-            evidence_refs: vec![EvidenceRef::new(
-                EvidenceSource::HttpBody,
-                format!("near_duplicate_pairs={}", pairs.len()),
-            )],
-            remediation: Some(
-                "Consolidate near-duplicate pages with canonical tags or differentiate page copy."
-                    .to_owned(),
-            ),
-        });
-        checks.push(CheckStatus::Failed {
-            rule_id: RuleId(RULE_NEAR_DUPLICATE_SIMHASH.to_owned()),
-            evidence_level: EvidenceLevel::Source,
-        });
-    }
+    let exact_clusters = connected_components(hashed.len(), &exact_edges);
+    record_duplicate_cluster_finding(
+        &hashed,
+        &exact_clusters,
+        RULE_EXACT_DUPLICATE_CONTENT,
+        FindingKind::Deterministic,
+        Severity::High,
+        Confidence::High,
+        "Exact duplicate primary content clusters detected",
+        "exact-duplicate content cluster(s) share identical distinct-shingle SimHash",
+        "Consolidate exact-duplicate pages with canonical tags, 301 redirects, or distinct primary content.",
+        findings,
+        checks,
+    );
+
+    let near_clusters: Vec<Vec<usize>> = connected_components(hashed.len(), &near_edges)
+        .into_iter()
+        .filter(|c| c.iter().any(|&idx| has_near_edge[idx]))
+        .collect();
+    record_duplicate_cluster_finding(
+        &hashed,
+        &near_clusters,
+        RULE_NEAR_DUPLICATE_SIMHASH,
+        FindingKind::Heuristic,
+        Severity::Medium,
+        Confidence::Medium,
+        "Near-duplicate content clusters detected",
+        "transitive near-duplicate content cluster(s) share distinct-shingle SimHash distance <= 6",
+        "Consolidate near-duplicate pages with canonical tags or differentiate page copy.",
+        findings,
+        checks,
+    );
 }
 
 #[cfg(test)]
@@ -1866,5 +1984,44 @@ mod tests {
             .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
             .collect();
         assert!(rule_ids.contains(&RULE_NEAR_DUPLICATE_SIMHASH));
+    }
+
+    #[test]
+    fn detects_exact_duplicates_and_transitive_near_duplicate_clusters() {
+        let mut exact_a = page("https://example.com/exact-a");
+        exact_a.text_simhash = Some(0x0000_0000_0000_FFFF);
+        let mut exact_b = page("https://example.com/exact-b");
+        exact_b.text_simhash = Some(0x0000_0000_0000_FFFF);
+
+        // Transitive near-duplicate chain: n1 ~ n2 (dist=4), n2 ~ n3 (dist=4), n1 ~ n3 (dist=8 > 6).
+        let mut n1 = page("https://example.com/near-1");
+        n1.text_simhash = Some(0x0000_FFFF_0000_0000);
+        let mut n2 = page("https://example.com/near-2");
+        n2.text_simhash = Some(0x0000_FFFF_0000_000F);
+        let mut n3 = page("https://example.com/near-3");
+        n3.text_simhash = Some(0x0000_FFFF_0000_00FF);
+
+        let graph = ApplicationGraph::from_pages(&[exact_a, exact_b, n1, n2, n3], true);
+        let results = analyse(&graph);
+        let findings: Vec<&Finding> = results.iter().flat_map(|r| r.findings.iter()).collect();
+        let exact_finding = findings
+            .iter()
+            .find(|f| f.rule_id.0 == RULE_EXACT_DUPLICATE_CONTENT)
+            .expect("exact duplicate finding should be present");
+        assert!(exact_finding.summary.contains("exact-a"));
+        assert!(exact_finding.summary.contains("exact-b"));
+
+        let near_finding = findings
+            .iter()
+            .find(|f| f.rule_id.0 == RULE_NEAR_DUPLICATE_SIMHASH)
+            .expect("near duplicate cluster finding should be present");
+        assert!(
+            near_finding.title.contains("(1)"),
+            "expected 1 transitive near-duplicate cluster, got: {}",
+            near_finding.title
+        );
+        assert!(near_finding.summary.contains("near-1"));
+        assert!(near_finding.summary.contains("near-2"));
+        assert!(near_finding.summary.contains("near-3"));
     }
 }

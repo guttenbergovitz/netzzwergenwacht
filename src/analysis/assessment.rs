@@ -262,6 +262,22 @@ pub fn assess_crawl_summary(summary: &crate::discovery::CrawlSummary) -> Quality
             }
         }
     }
+    for analyser in &summary.graph_results {
+        for f in &analyser.findings {
+            let domain = domain_for_rule(analyser.dwarf_id, &f.rule_id.0);
+            if let Some((_, acc)) = accs.iter_mut().find(|(d, _)| *d == domain) {
+                match f.severity {
+                    Severity::Critical | Severity::High => {
+                        acc.critical_high = acc.critical_high.saturating_add(1);
+                    }
+                    Severity::Medium => acc.medium = acc.medium.saturating_add(1),
+                    Severity::Low | Severity::Info => {
+                        acc.low_info = acc.low_info.saturating_add(1);
+                    }
+                }
+            }
+        }
+    }
 
     let http_complete = summary.coverage.analysed_urls > 0 && !summary.budget_exhausted;
     finalise_assessment(accs, http_complete, limitations)

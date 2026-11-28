@@ -86,6 +86,35 @@ pub struct ScriptObs {
     pub inline_bytes: usize,
 }
 
+impl ScriptObs {
+    /// Returns `true` when this `<script>` element represents executable JavaScript
+    /// (empty/absent `type`, `"module"`, or a standard JS MIME essence) rather than
+    /// a declarative data or template block such as `application/ld+json` or `importmap`.
+    #[must_use]
+    pub fn is_executable_js(&self) -> bool {
+        let Some(raw_type) = self.script_type.as_deref() else {
+            return true;
+        };
+        let essence = raw_type
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        essence.is_empty()
+            || matches!(
+                essence.as_str(),
+                "module"
+                    | "text/javascript"
+                    | "application/javascript"
+                    | "text/ecmascript"
+                    | "application/ecmascript"
+                    | "application/x-javascript"
+                    | "text/jscript"
+            )
+    }
+}
+
 /// Observed `<link rel="stylesheet">` element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StylesheetObs {
@@ -218,6 +247,9 @@ pub struct DocumentObservations {
     pub visible_char_count: usize,
     /// Bounded sample of visible body text (up to 4096 bytes) for content-quality heuristics.
     pub visible_text_sample: String,
+    /// Bounded sample of primary content text (up to 16384 bytes), preferring `<main>`/`<article>`
+    /// and excluding navigation/header/footer/aside boilerplate.
+    pub main_content_text: String,
     /// Raw `href` values from `<a href="...">` elements in document order.
     pub link_hrefs: Vec<String>,
     /// Structured `<a href="...">` link observations.
@@ -851,6 +883,54 @@ fn extract_visible_text_stats(doc: &Html, obs: &mut DocumentObservations) {
     obs.visible_word_count = words;
     obs.visible_char_count = chars;
     obs.visible_text_sample = sample;
+
+    let main_cap: usize = 16_384;
+    let mut main_sample = String::new();
+    let main_sel = Selector::parse("main, [role=\"main\"], article").ok();
+    let main_roots: Vec<ElementRef<'_>> = main_sel
+        .as_ref()
+        .map(|sel| doc.select(sel).collect())
+        .unwrap_or_default();
+
+    let append_filtered_text = |root: ElementRef<'_>, out: &mut String| {
+        for node in root.descendants() {
+            if let Some(text) = node.value().as_text() {
+                let inside_boilerplate = node.ancestors().any(|anc| {
+                    anc.value().as_element().is_some_and(|el| {
+                        matches!(
+                            el.name(),
+                            "script" | "style" | "noscript" | "nav" | "header" | "footer" | "aside"
+                        )
+                    })
+                });
+                if !inside_boilerplate {
+                    for word in text.split_whitespace() {
+                        if out.len() >= main_cap {
+                            return;
+                        }
+                        if !out.is_empty() {
+                            out.push(' ');
+                        }
+                        let rem = main_cap.saturating_sub(out.len());
+                        if word.len() <= rem {
+                            out.push_str(word);
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    for root in main_roots {
+        append_filtered_text(root, &mut main_sample);
+        if main_sample.len() >= main_cap {
+            break;
+        }
+    }
+    if main_sample.is_empty() {
+        append_filtered_text(body, &mut main_sample);
+    }
+    obs.main_content_text = main_sample;
 }
 
 fn non_empty_attr(el: &ElementRef<'_>, attr: &str) -> Option<String> {

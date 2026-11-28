@@ -189,6 +189,72 @@ fn header_text(
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
+/// Probes a synthetic non-existent URL on the target origin to establish a soft-404 baseline,
+/// performing a confirmation re-fetch on a second synthetic path if the first probe returns HTTP 200.
+pub async fn probe_soft_404_baseline(
+    origin_target: &AuditTarget,
+    policy: TargetPolicy,
+    budget: &ExecutionBudget,
+) -> Option<crate::analysis::network::Soft404Baseline> {
+    let mut probe_url = url::Url::parse(origin_target.as_str()).ok()?;
+    probe_url.set_path("/__nzw-soft404-probe-9f4c2a7e1b");
+    probe_url.set_query(None);
+    probe_url.set_fragment(None);
+    let probe_target = AuditTarget::parse(probe_url.as_str(), policy).ok()?;
+
+    let (probe_http, _) = tokio::time::timeout(
+        budget.audit_timeout,
+        execute_bounded_get(&probe_target, budget, policy, ClientSource::Fresh),
+    )
+    .await
+    .ok()?
+    .ok()?;
+
+    let probe_obs =
+        crate::analysis::document::DocumentObservations::from_html(&probe_http.body_text);
+    let probe_simhash = crate::analysis::graph::compute_text_simhash(&probe_obs.main_content_text);
+
+    let (confirmation_url, confirmation_status, confirmation_simhash) = if probe_http.status_code
+        == 200
+    {
+        let mut confirm_url = url::Url::parse(origin_target.as_str()).ok()?;
+        confirm_url.set_path("/__nzw-soft404-confirm-3e8d1b5a4c");
+        confirm_url.set_query(None);
+        confirm_url.set_fragment(None);
+        if let Ok(confirm_target) = AuditTarget::parse(confirm_url.as_str(), policy)
+            && let Ok(Ok((confirm_http, _))) = tokio::time::timeout(
+                budget.audit_timeout,
+                execute_bounded_get(&confirm_target, budget, policy, ClientSource::Fresh),
+            )
+            .await
+        {
+            let confirm_obs =
+                crate::analysis::document::DocumentObservations::from_html(&confirm_http.body_text);
+            let confirm_hash =
+                crate::analysis::graph::compute_text_simhash(&confirm_obs.main_content_text);
+            (
+                Some(confirm_url.to_string()),
+                Some(confirm_http.status_code),
+                confirm_hash,
+            )
+        } else {
+            (Some(confirm_url.to_string()), None, None)
+        }
+    } else {
+        (None, None, None)
+    };
+
+    Some(crate::analysis::network::Soft404Baseline {
+        probe_url: probe_url.to_string(),
+        probe_status: probe_http.status_code,
+        probe_simhash,
+        probe_body_bytes: probe_http.body_bytes,
+        confirmation_url,
+        confirmation_status,
+        confirmation_simhash,
+    })
+}
+
 /// Where the HTTP client for one request comes from.
 #[derive(Clone, Copy)]
 enum ClientSource<'a> {

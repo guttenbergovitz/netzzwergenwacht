@@ -146,6 +146,17 @@ fn push_finding_sarif<'a>(
 /// SARIF 2.1.0 JSON string.
 #[must_use]
 pub fn render_scan_sarif(seed_url: &str, systemic_issues: &[SystemicIssue]) -> String {
+    render_scan_sarif_with_graph(seed_url, systemic_issues, &[])
+}
+
+/// Renders clustered [`SystemicIssue`] and site-wide `graph.*` [`crate::domain::AnalyserResult`] records from a
+/// multi-page scan as a SARIF 2.1.0 JSON string.
+#[must_use]
+pub fn render_scan_sarif_with_graph(
+    seed_url: &str,
+    systemic_issues: &[SystemicIssue],
+    graph_results: &[crate::domain::AnalyserResult],
+) -> String {
     let mut rules_by_id: BTreeMap<&str, Value> = BTreeMap::new();
     let mut results = Vec::new();
 
@@ -198,6 +209,31 @@ pub fn render_scan_sarif(seed_url: &str, systemic_issues: &[SystemicIssue]) -> S
                 "primaryLocationLineHash": issue.id
             }
         }));
+    }
+
+    for analyser in graph_results {
+        for finding in &analyser.findings {
+            let rule_id = finding.rule_id.0.as_str();
+            let level = sarif_level(finding.severity);
+            rules_by_id.entry(rule_id).or_insert_with(|| {
+                json!({
+                    "id": rule_id,
+                    "shortDescription": { "text": finding.title },
+                    "fullDescription": { "text": finding.summary },
+                    "defaultConfiguration": { "level": level }
+                })
+            });
+            results.push(json!({
+                "ruleId": rule_id,
+                "level": level,
+                "message": { "text": finding.summary },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": seed_url }
+                    }
+                }],
+            }));
+        }
     }
 
     let rules: Vec<Value> = rules_by_id.into_values().collect();

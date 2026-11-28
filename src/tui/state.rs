@@ -1802,6 +1802,8 @@ impl AppState {
             }
         }
 
+        append_graph_finding_rows(&mut rows, &crawl.graph_results, crawl.seed.as_str());
+
         self.findings = rows;
         self.refresh_visible_findings();
     }
@@ -2209,6 +2211,53 @@ fn build_systemic_finding_rows(
             }
         })
         .collect()
+}
+
+fn append_graph_finding_rows(
+    rows: &mut Vec<FindingRow>,
+    graph_results: &[crate::domain::AnalyserResult],
+    seed_url: &str,
+) {
+    let target_url = sanitize_url_for_display(seed_url, 120);
+    for analyser in graph_results {
+        for finding in &analyser.findings {
+            let index = rows.len();
+            let category = finding
+                .evidence_refs
+                .first()
+                .map_or(EvidenceCategory::Http, |reference| {
+                    evidence_category_for(reference.source, &reference.detail)
+                });
+            rows.push(FindingRow {
+                index,
+                dwarf_id: analyser.dwarf_id,
+                rule_id: sanitize_line(&finding.rule_id.0, 80),
+                severity: finding.severity,
+                confidence: finding.confidence,
+                evidence_level: finding.evidence_level,
+                target_url: target_url.clone(),
+                title: sanitize_line(&finding.title, 120),
+                description: sanitize_multiline(&finding.summary, 360),
+                recommendation: sanitize_multiline(
+                    finding
+                        .remediation
+                        .as_deref()
+                        .unwrap_or("No specific remediation guidance."),
+                    360,
+                ),
+                evidence_refs: finding
+                    .evidence_refs
+                    .iter()
+                    .map(|reference| EvidenceRef {
+                        source: reference.source,
+                        detail: sanitize_line(&reference.detail, 140),
+                        excerpt: reference.excerpt.as_ref().map(sanitize_excerpt),
+                    })
+                    .collect(),
+                primary_evidence_category: category,
+            });
+        }
+    }
 }
 
 fn evidence_category_for(source: EvidenceSource, detail: &str) -> EvidenceCategory {

@@ -498,12 +498,61 @@ pub async fn run_patrol_with_router(
         }
     }
 
-    // Include newly discovered homepage links in the application map for subsequent patrols.
+    // 3c. Inspect newly discovered seed links within remaining max_pages budget so first-run
+    // patrol also evaluates cross-page graph relationships (e.g. duplicate metadata).
+    let mut inspected_urls: std::collections::HashSet<String> = page_reports
+        .iter()
+        .map(|(sel, _, _, _)| sel.url.as_str().to_owned())
+        .collect();
     for link in extra_links {
         if !page_types.contains_key(link.as_str()) {
             page_types.insert(link.as_str().to_owned(), PageType::Unknown);
         }
         sampling_plan.total_discovered = page_types.len().max(sampling_plan.total_discovered);
+        if page_reports.len() >= patrol_budget.max_pages || budget_exhausted {
+            continue;
+        }
+        if inspected_urls.contains(link.as_str()) || mem.page_records.contains_key(link.as_str()) {
+            continue;
+        }
+        let rem = exec_budget.audit_timeout.saturating_sub(started.elapsed());
+        if rem.is_zero() {
+            budget_exhausted = true;
+            continue;
+        }
+        let step_budget = ExecutionBudget {
+            audit_timeout: rem,
+            http_timeout: exec_budget.http_timeout.min(rem),
+            ..exec_budget
+        };
+        let snap = collection::collect_http(&link, &step_budget, policy).await;
+        let report = analysis::run_all(&snap);
+        let (pt, tpl, body_hash) = if let CollectorOutcome::Captured { data } = &snap.http {
+            let obs = analysis::document::DocumentObservations::from_html(&data.body_text);
+            let pt = classify_page(&link, &obs);
+            let tpl = template_fingerprint(&obs);
+            (pt, Some(tpl), Some(hash_body(&data.body_text)))
+        } else {
+            (PageType::Unknown, None, None)
+        };
+        page_types.insert(link.as_str().to_owned(), pt);
+        if let Some(t) = &tpl {
+            template_families.insert(link.as_str().to_owned(), t.clone());
+        }
+        inspected_urls.insert(link.as_str().to_owned());
+        page_snapshots.insert(link.as_str().to_owned(), snap);
+        page_reports.push((
+            SampleSelection {
+                url: link,
+                reason: sampling::SelectionReason::RecentlyChanged,
+                depth: sampling::DiagnosticDepth::Level1Deterministic,
+                locale: None,
+                page_type: Some(pt),
+            },
+            report,
+            tpl,
+            body_hash,
+        ));
     }
 
     // 4. Historical comparison on the primary entry point and all remembered subpages.
@@ -522,8 +571,9 @@ pub async fn run_patrol_with_router(
         })
         .collect();
 
-    // 5. Application Graph analysis + anomaly detection across seed + subpages.
-    let graph_inputs: Vec<crate::analysis::graph::GraphPageInput> = page_reports
+    // 5. Application Graph analysis + anomaly detection across seed + subpages (including reused
+    // pages whose cached AuditReport is still in patrol memory).
+    let mut graph_inputs: Vec<crate::analysis::graph::GraphPageInput> = page_reports
         .iter()
         .map(|(sel, rep, _, _)| {
             let in_sitemap = sitemap_urls.contains(sel.url.as_str());
@@ -548,6 +598,25 @@ pub async fn run_patrol_with_router(
             }
         })
         .collect();
+    for reused_url in &sampling_plan.reused_urls {
+        if inspected_urls.contains(reused_url) {
+            continue;
+        }
+        if let Some(rec) = mem.page_records.get(reused_url)
+            && let Some(ref rep) = rec.latest_report
+            && let CollectorOutcome::Captured { data } = &rep.http
+        {
+            let in_sitemap = sitemap_urls.contains(reused_url.as_str());
+            graph_inputs.push(crate::discovery::build_captured_graph_input(
+                &rep.target,
+                data,
+                &crate::analysis::document::DocumentObservations::from_html(&data.body_text),
+                usize::from(rep.target != seed),
+                in_sitemap,
+                policy,
+            ));
+        }
+    }
     let app_graph = crate::analysis::graph::ApplicationGraph::from_pages(
         &graph_inputs,
         page_reports.len() >= discovered.len(),
