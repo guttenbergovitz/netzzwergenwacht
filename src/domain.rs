@@ -445,6 +445,48 @@ pub enum Confidence {
     High,
 }
 
+/// Explicit outcome counts aggregated across [`CheckStatus`] items.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CheckTally {
+    /// Checks that passed.
+    pub passed: usize,
+    /// Checks that failed.
+    pub failed: usize,
+    /// Checks skipped because preconditions did not apply.
+    pub skipped: usize,
+    /// Checks whose required evidence was unavailable.
+    pub unavailable: usize,
+}
+
+impl CheckTally {
+    /// Checks that were actually evaluated (`passed + failed`).
+    #[must_use]
+    pub const fn evaluated(self) -> usize {
+        self.passed + self.failed
+    }
+
+    /// Total checks across all four states.
+    #[must_use]
+    pub const fn total(self) -> usize {
+        self.passed + self.failed + self.skipped + self.unavailable
+    }
+}
+
+impl<'a> FromIterator<&'a CheckStatus> for CheckTally {
+    fn from_iter<I: IntoIterator<Item = &'a CheckStatus>>(iter: I) -> Self {
+        let mut tally = Self::default();
+        for status in iter {
+            match status {
+                CheckStatus::Passed { .. } => tally.passed += 1,
+                CheckStatus::Failed { .. } => tally.failed += 1,
+                CheckStatus::Skipped { .. } => tally.skipped += 1,
+                CheckStatus::Unavailable { .. } => tally.unavailable += 1,
+            }
+        }
+        tally
+    }
+}
+
 /// Typed measurement unit preventing stringly-typed unit drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1563,5 +1605,36 @@ mod tests {
             assert!(is_forbidden_ip(ip), "expected {raw} to be blocked");
         }
         assert!(!is_forbidden_ip("93.184.216.34".parse().expect("ip")));
+    }
+
+    #[test]
+    fn check_tally_counts_statuses_without_collapsing_skipped_or_unavailable() {
+        let checks = [
+            CheckStatus::Passed {
+                rule_id: RuleId("r1".to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            },
+            CheckStatus::Failed {
+                rule_id: RuleId("r2".to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            },
+            CheckStatus::Skipped {
+                rule_id: RuleId("r3".to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "n/a".to_owned(),
+            },
+            CheckStatus::Unavailable {
+                rule_id: RuleId("r4".to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: "offline".to_owned(),
+            },
+        ];
+        let tally: CheckTally = checks.iter().collect();
+        assert_eq!(tally.passed, 1);
+        assert_eq!(tally.failed, 1);
+        assert_eq!(tally.skipped, 1);
+        assert_eq!(tally.unavailable, 1);
+        assert_eq!(tally.evaluated(), 2);
+        assert_eq!(tally.total(), 4);
     }
 }

@@ -87,7 +87,7 @@ impl RobotsRules {
 
     /// Parses a `robots.txt` body according to RFC 9309 group precedence.
     ///
-    /// Specific groups matching [`Self::AGENT_TOKEN`] take precedence over `User-agent: *`; the
+    /// Specific groups matching `Self::AGENT_TOKEN` take precedence over `User-agent: *`; the
     /// wildcard group is only used when no specific group matches.
     #[must_use]
     pub fn parse(body: &str) -> Self {
@@ -223,7 +223,7 @@ impl RobotsRules {
         self.rules.is_empty()
     }
 
-    /// Optional `Crawl-delay` directive (capped at [`MAX_CRAWL_DELAY`]).
+    /// Optional `Crawl-delay` directive (capped at `MAX_CRAWL_DELAY`).
     #[must_use]
     pub const fn crawl_delay(&self) -> Option<Duration> {
         self.crawl_delay

@@ -3517,7 +3517,7 @@ fn render_overview_brief_modal(frame: &mut Frame<'_>, area: Rect, state: &AppSta
 }
 
 fn render_help_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
-    let modal_area = centered_rect(70, 20, area);
+    let modal_area = centered_rect(70, 22, area);
     frame.render_widget(Clear, modal_area);
 
     let lines = vec![
@@ -3538,11 +3538,13 @@ fn render_help_modal(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         Line::from("  d              Cycle Findings specialist (dwarf) filter"),
         Line::from("  [ / ]          Scroll Finding Details pane up / down"),
         Line::from("  n              Open Launcher to configure or start a new run"),
+        Line::from("  r              Open Mission Review modal"),
         Line::from("  w              Save current AuditReport to JSON"),
+        Line::from("  e              Export self-contained HTML report"),
         Line::from("  t / a          Cycle theme (Dark/Contrast/Mono) / Toggle ASCII"),
         Line::from("  c              Cancel active diagnostic run"),
         Line::from("  ? / Esc        Close this Help overlay"),
-        Line::from("  q / Ctrl+C     Exit Zwergenleitstand"),
+        Line::from("  q / Ctrl+C     Exit Zwergenleitstand (press q twice while running)"),
     ];
     let block = Block::default()
         .title(" ZWERGENLEITSTAND KEYBOARD REFERENCE ")

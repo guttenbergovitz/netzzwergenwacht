@@ -404,12 +404,12 @@ pub async fn run_tui(options: TuiStartupOptions) -> io::Result<()> {
     let mut active_task: Option<ActiveBackgroundTask> = None;
     let mut pending_connection_test: Option<mpsc::Receiver<ConnectionOutcome>> = None;
     let mut pending_model_discovery: Option<mpsc::Receiver<Result<Vec<String>, String>>> = None;
-    let mut pending_effects = initial_effects;
+    let mut pending_effects: std::collections::VecDeque<AppEffect> = initial_effects.into();
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_millis(100);
 
     loop {
-        while let Some(effect) = pending_effects.pop() {
+        while let Some(effect) = pending_effects.pop_front() {
             match effect {
                 AppEffect::StartRun(spec) => {
                     if let Some(mut prev) = active_task.take() {
