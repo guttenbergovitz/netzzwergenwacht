@@ -18,7 +18,7 @@ use super::{
     CrawlBudget, CrawlCoverage, CrawlSummary, DiscoveredPage, PageCrawlStatus, PageType,
     aggregate_analysis_totals_with_graph, build_captured_graph_input, classify_page,
     cluster_systemic_issues, discover_same_origin_links, prioritise_representative_urls,
-    seed_sitemap_urls_with_robots, unreachable_graph_input,
+    unreachable_graph_input,
 };
 use crate::analysis::AuditReport;
 use crate::analysis::document::DocumentObservations;
@@ -343,7 +343,9 @@ pub(super) async fn crawl_concurrently(
 
     // The exclusion file is consulted once per crawl, before any page is fetched. A failure to
     // retrieve it is recorded rather than assumed to mean "everything is allowed".
-    let (robots_outcome, robots_rules) = robots::fetch_robots(&seed, &exec_budget, policy).await;
+    let (robots_outcome, robots_rules, robots_evidence) =
+        robots::fetch_robots_with_evidence(&seed, &exec_budget, policy).await;
+    let mut sitemap_evidences: Vec<super::sitemap::SitemapEvidence> = Vec::new();
     let robots_rules = Arc::new(robots_rules);
     let cache = Arc::new(collection::CrawlHttpCache::new(global_limit.max(2)));
 
@@ -354,9 +356,15 @@ pub(super) async fn crawl_concurrently(
         source: DiscoverySource::Seed,
     });
     if crawl_budget.max_depth > 0 && crawl_budget.max_pages > 1 {
-        for url in
-            seed_sitemap_urls_with_robots(&seed, robots_rules.sitemaps(), exec_budget, policy).await
-        {
+        let (seeded_urls, evidences) = super::seed_sitemap_urls_and_evidence_with_robots(
+            &seed,
+            robots_rules.sitemaps(),
+            exec_budget,
+            policy,
+        )
+        .await;
+        sitemap_evidences = evidences;
+        for url in seeded_urls {
             sitemap_urls.insert(url.as_str().to_owned());
             if frontier.enqueue(url.clone(), 1, DiscoverySource::Sitemap)
                 == EnqueueOutcome::Enqueued
@@ -733,7 +741,12 @@ pub(super) async fn crawl_concurrently(
         &pages,
     ));
     let graph = ApplicationGraph::from_pages(&graph_inputs, complete);
-    let graph_results = crate::analysis::graph::analyse(&graph);
+    let graph_results = crate::analysis::graph::analyse_with_site_evidence(
+        &graph,
+        Some(&robots_evidence),
+        &sitemap_evidences,
+        None,
+    );
     let analysis_totals = aggregate_analysis_totals_with_graph(&page_reports, &graph_results);
 
     CrawlSummary {
@@ -1461,5 +1474,74 @@ mod tests {
                 "/shared/leaf at depth 2 must always be discovered"
             );
         }
+    }
+
+    /// Scan must feed robots and sitemap evidence to the site-wide rules; before this was
+    /// wired the evidence was parsed and then discarded, so these findings never appeared.
+    #[tokio::test]
+    async fn crawl_reports_ai_crawler_block_and_foreign_sitemap_entries() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut sock, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0_u8; 4096];
+                    let Ok(n) = sock.read(&mut buf).await else {
+                        return;
+                    };
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("/")
+                        .to_owned();
+                    let body = match path.as_str() {
+                        "/robots.txt" => "User-agent: GPTBot\nDisallow: /\n".to_owned(),
+                        "/sitemap.xml" => format!(
+                            "<urlset><url><loc>http://{addr}/</loc></url><url><loc>http://evil.example/x</loc></url></urlset>"
+                        ),
+                        "/" => "<html><body>home</body></html>".to_owned(),
+                        _ => String::new(),
+                    };
+                    let status = if body.is_empty() {
+                        "404 Not Found"
+                    } else {
+                        "200 OK"
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n{body}"
+                    );
+                    let _ = sock.write_all(response.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let seed =
+            AuditTarget::parse(&format!("http://{addr}/"), TargetPolicy::AllowPrivate).unwrap();
+        let summary = crawl_concurrently(
+            seed,
+            CrawlBudget {
+                max_pages: 5,
+                max_depth: 2,
+                max_duration: Duration::from_secs(10),
+            },
+            ExecutionBudget::default(),
+            TargetPolicy::AllowPrivate,
+            &|_event| {},
+        )
+        .await;
+
+        let ids: Vec<&str> = summary
+            .graph_results
+            .iter()
+            .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+        assert!(ids.contains(&"site.robots.ai_crawler_policy"), "{ids:?}");
+        assert!(ids.contains(&"site.sitemap.hygiene"), "{ids:?}");
     }
 }

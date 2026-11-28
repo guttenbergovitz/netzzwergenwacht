@@ -1081,8 +1081,22 @@ pub async fn seed_sitemap_urls_with_robots(
     exec_budget: ExecutionBudget,
     policy: TargetPolicy,
 ) -> Vec<AuditTarget> {
+    seed_sitemap_urls_and_evidence_with_robots(seed, robots_sitemaps, exec_budget, policy)
+        .await
+        .0
+}
+
+/// Like [`seed_sitemap_urls_with_robots`] but also returns the structured
+/// [`sitemap::SitemapEvidence`] of every sitemap that was actually fetched and parsed, so
+/// site-wide rules can judge sitemap hygiene from observed data.
+pub async fn seed_sitemap_urls_and_evidence_with_robots(
+    seed: &AuditTarget,
+    robots_sitemaps: &[AuditTarget],
+    exec_budget: ExecutionBudget,
+    policy: TargetPolicy,
+) -> (Vec<AuditTarget>, Vec<sitemap::SitemapEvidence>) {
     let Ok(seed_url) = Url::parse(seed.as_str()) else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
     let sm_budget = ExecutionBudget {
         audit_timeout: exec_budget.audit_timeout.min(Duration::from_secs(5)),
@@ -1107,7 +1121,7 @@ pub async fn seed_sitemap_urls_with_robots(
         }
     }
     if roots.is_empty() {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
 
     collect_child_sitemaps(roots, seed, &sm_budget, policy).await
@@ -1118,8 +1132,9 @@ async fn collect_child_sitemaps(
     seed: &AuditTarget,
     sm_budget: &ExecutionBudget,
     policy: TargetPolicy,
-) -> Vec<AuditTarget> {
+) -> (Vec<AuditTarget>, Vec<sitemap::SitemapEvidence>) {
     let mut all_urls = Vec::new();
+    let mut evidences = Vec::new();
     let mut visited_urls = HashSet::new();
     let mut visited_sitemaps = HashSet::new();
     let mut queue: std::collections::VecDeque<(AuditTarget, usize)> = initial_sitemaps
@@ -1150,6 +1165,11 @@ async fn collect_child_sitemaps(
         if !(200..=299).contains(&data.status_code) {
             continue;
         }
+        evidences.push(sitemap::SitemapEvidence::parse(
+            &data.body_text,
+            seed,
+            policy,
+        ));
         let child_indices = parse_sitemap_index_urls(&data.body_text, seed, policy);
         if !child_indices.is_empty() && depth < MAX_SITEMAP_INDEX_DEPTH {
             for child in child_indices {
@@ -1164,7 +1184,7 @@ async fn collect_child_sitemaps(
             }
         }
     }
-    prioritise_representative_urls(all_urls)
+    (prioritise_representative_urls(all_urls), evidences)
 }
 
 /// Remediation scope for a grouped finding cluster.

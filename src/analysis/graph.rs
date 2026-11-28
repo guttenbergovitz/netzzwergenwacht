@@ -227,6 +227,18 @@ fn compute_bfs_click_depth(
 /// Evaluates all Application Graph rules across `graph`, grouped by responsible dwarf.
 #[must_use]
 pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
+    analyse_with_site_evidence(graph, None, &[], None)
+}
+
+/// Like [`analyse`], additionally feeding origin-level `robots.txt`, sitemap and probe
+/// evidence to the site-wide rules. Missing evidence makes those rules silent, never passing.
+#[must_use]
+pub fn analyse_with_site_evidence(
+    graph: &ApplicationGraph,
+    robots_evidence: Option<&crate::discovery::robots::RobotsEvidence>,
+    sitemap_evidences: &[crate::discovery::sitemap::SitemapEvidence],
+    origin_probes: Option<&crate::collection::OriginProbes>,
+) -> Vec<AnalyserResult> {
     let mut netz_findings = Vec::new();
     let mut netz_checks = Vec::new();
     let mut such_findings = Vec::new();
@@ -283,7 +295,12 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
         },
     ];
 
-    for mut site_res in crate::analysis::site_rules::analyse_graph(graph) {
+    for mut site_res in crate::analysis::site_rules::analyse_graph_with_site_evidence(
+        graph,
+        robots_evidence,
+        sitemap_evidences,
+        origin_probes,
+    ) {
         if let Some(existing) = results.iter_mut().find(|r| r.dwarf_id == site_res.dwarf_id) {
             existing.findings.append(&mut site_res.findings);
             existing.checks.append(&mut site_res.checks);
