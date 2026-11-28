@@ -77,3 +77,4 @@ Allowed types: `feat`, `fix`, `refactor`, `perf`, `docs`, `test`, `build`, `ci`,
 - **Atomic commits:** Each commit should represent one cohesive, reviewable change.
 - **Subject line:** Imperative mood, lowercase, no trailing full stop, under 72 characters.
 - **Scope:** Concise module or area name (`domain`, `collect`, `analysis`, `cli`, `adr`, `docs`, `rust`).
+- **No AI attribution:** Never add `Co-Authored-By` trailers for AI tools, "Generated with" footers, or any tool advertising to commit messages, PR descriptions, or code comments. Commits are authored by the human developer.

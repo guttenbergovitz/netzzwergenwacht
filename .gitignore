@@ -164,6 +164,13 @@ portfolio.toml
 # Agent working specs and scratchpads
 .specs/
 
+# Agent tooling directories (local-only; .agents/ is the single source of truth)
+.claude/
+.codex/
+.cursor/
+.pi/
+.serena/
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db

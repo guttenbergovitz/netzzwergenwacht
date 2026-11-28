@@ -20,6 +20,7 @@ NetzZwergenWacht is an **evidence-driven external web quality and reliability au
 
 - Temporary working specifications, design scratchpads, and agent plans must live exclusively under `.specs/` (which is gitignored). Never scatter temporary markdown plans, notes, or checklists across the repository.
 - Canonical project skills live under `.agents/skills/` (`nzw-feature-slice`, `nzw-architecture-review`, `nzw-security-audit`). Use them when implementing features, reviewing changes, or auditing security boundaries.
+- `.agents/` is the single source of truth for agent configuration. Tool-specific directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`, `.serena/`) are local-only and gitignored; do not commit them.
 - Durable architectural decisions belong in `docs/adr/` following `docs/adr/README.md`.
 - Work in small, verifiable steps. Do not introduce speculative abstractions, unused traits, or unrequested dependencies.
 
@@ -57,7 +58,9 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --locked
 cargo test --all-targets --locked
 ```
 
-Follow **Conventional Commits** in `en-GB`. Keep commits atomic and never commit secrets or files from `.specs/`.
+Follow **Git Flow** for branching (`main`, `develop`, `feature/*`, `release/*`, `hotfix/*`) as defined in `docs/conventions.md`. Follow **Conventional Commits** in `en-GB`. Keep commits atomic and never commit secrets or files from `.specs/`.
+
+Never add AI/LLM attribution to commits: no `Co-Authored-By` trailers for AI tools, no "Generated with" footers, no tool advertising in commit messages, PR descriptions, or code comments. Commits are authored by the human developer.
 
 <!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
