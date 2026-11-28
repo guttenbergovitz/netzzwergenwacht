@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
-use crate::adapters::run_bounded_command;
+use crate::adapters::run_bounded_command_with_stdin;
 use crate::domain::{AuditTarget, BrowserEvidence, CollectorOutcome, RenderedContentSegmentation};
 
 const CDP_HARNESS_JS: &str = concat!(
@@ -23,12 +23,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const targetUrl = process.argv[1];
+const targetUrl = process.argv[2];
 // Explicit arguments from the Rust parent take precedence over inherited
 // environment variables, because the parent clears the child environment to a
 // safe allow-list before spawning.
-const sessionPolicy = process.argv[3] || process.env.NZW_BROWSER_POLICY || '';
-const sessionLoadTimeoutMs = Number(process.argv[2] || process.env.NZW_LOAD_TIMEOUT_MS || 15000);
+const sessionPolicy = process.argv[4] || process.env.NZW_BROWSER_POLICY || '';
+const sessionLoadTimeoutMs = Number(process.argv[3] || process.env.NZW_LOAD_TIMEOUT_MS || 15000);
 if (!targetUrl) {
   console.error('missing target URL');
   process.exit(2);
@@ -1361,13 +1361,19 @@ pub async fn run_browser_with_policy(
     };
     let load_timeout_ms = (timeout.as_millis() / 2).clamp(1000, 12000);
     let mut cmd = Command::new("node");
-    cmd.arg("-e")
-        .arg(CDP_HARNESS_JS)
+    cmd.arg("-")
         .arg(target.as_str())
         .arg(load_timeout_ms.to_string())
         .arg(policy_env);
 
-    let stdout = match run_bounded_command("browser", &mut cmd, timeout).await {
+    let stdout = match run_bounded_command_with_stdin(
+        "browser",
+        &mut cmd,
+        timeout,
+        CDP_HARNESS_JS.as_bytes(),
+    )
+    .await
+    {
         Ok(out) => out,
         Err(error) => return CollectorOutcome::Failed { error },
     };

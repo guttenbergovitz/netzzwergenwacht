@@ -65,15 +65,41 @@ pub(crate) async fn run_bounded_command(
     cmd: &mut Command,
     timeout: Duration,
 ) -> Result<String, String> {
+    run_bounded_command_impl(label, cmd, timeout, None).await
+}
+
+/// Variant of [`run_bounded_command`] that pipes `stdin_payload` to the child process and closes
+/// stdin immediately so large scripts do not need to be passed on the command line.
+pub(crate) async fn run_bounded_command_with_stdin(
+    label: &str,
+    cmd: &mut Command,
+    timeout: Duration,
+    stdin_payload: &[u8],
+) -> Result<String, String> {
+    run_bounded_command_impl(label, cmd, timeout, Some(stdin_payload)).await
+}
+
+async fn run_bounded_command_impl(
+    label: &str,
+    cmd: &mut Command,
+    timeout: Duration,
+    stdin_payload: Option<&[u8]>,
+) -> Result<String, String> {
+    use tokio::io::AsyncWriteExt as _;
+
     tracing::debug!(
         adapter = label,
         timeout_ms = timeout.as_millis(),
         "spawning bounded adapter"
     );
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
+    cmd.stdin(if stdin_payload.is_some() {
+        Stdio::piped()
+    } else {
+        Stdio::null()
+    })
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .kill_on_drop(true);
     apply_restricted_environment(cmd);
     #[cfg(unix)]
     cmd.process_group(0);
@@ -82,6 +108,13 @@ pub(crate) async fn run_bounded_command(
         .spawn()
         .map_err(|err| format!("failed to launch {label}: {err}"))?;
     let child_pid = child.id();
+
+    if let Some(payload) = stdin_payload
+        && let Some(mut stdin_pipe) = child.stdin.take()
+    {
+        let _ = stdin_pipe.write_all(payload).await;
+        let _ = stdin_pipe.shutdown().await;
+    }
 
     let stdout_pipe = child
         .stdout
