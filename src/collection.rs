@@ -561,15 +561,7 @@ impl CrawlHttpCache {
             return Ok(client.clone());
         }
 
-        let client = reqwest::Client::builder()
-            .no_proxy()
-            .tls_info(true)
-            .redirect(Policy::none())
-            .timeout(http_timeout)
-            .user_agent(USER_AGENT)
-            .resolve_to_addrs(host_for_pin, &pinned_addrs)
-            .build()
-            .map_err(|e| format!("failed to build HTTP client: {e}"))?;
+        let client = build_pinned_client(host_for_pin, &pinned_addrs, http_timeout)?;
 
         if let Ok(mut clients) = self.clients.lock() {
             if clients.len() >= self.capacity {
@@ -632,15 +624,7 @@ async fn execute_bounded_get(
             ClientSource::Fresh => {
                 let pinned_addrs = resolve_and_validate(&current_target, policy).await?;
                 let host_for_pin = strip_ipv6_brackets(current_target.host());
-                reqwest::Client::builder()
-                    .no_proxy()
-                    .tls_info(true)
-                    .redirect(Policy::none())
-                    .timeout(budget.http_timeout)
-                    .user_agent(USER_AGENT)
-                    .resolve_to_addrs(host_for_pin, &pinned_addrs)
-                    .build()
-                    .map_err(|e| format!("failed to build HTTP client: {e}"))?
+                build_pinned_client(host_for_pin, &pinned_addrs, budget.http_timeout)?
             }
         };
 
@@ -679,7 +663,7 @@ async fn execute_bounded_get(
             continue;
         }
 
-        let headers = response
+        let headers: Vec<HttpHeader> = response
             .headers()
             .iter()
             .map(|(name, value)| HttpHeader {
@@ -690,8 +674,11 @@ async fn execute_bounded_get(
 
         let tls = extract_tls_evidence(&current_target, &response, captured_now_i64());
 
-        let (body, body_truncated) =
+        let (raw_body, body_truncated) =
             read_bounded_body(&mut response, budget.max_response_bytes).await?;
+        let (body, decoded_truncated) =
+            decode_body_encoding(&raw_body, &headers, budget.max_response_bytes);
+        let body_truncated = body_truncated || decoded_truncated;
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         return Ok((
@@ -710,6 +697,85 @@ async fn execute_bounded_get(
             },
             tls,
         ));
+    }
+}
+
+/// Builds a pinned HTTP client that advertises compression (`Accept-Encoding`) while disabling
+/// `reqwest`'s automatic decompression so `Content-Encoding` and `Content-Length` headers remain
+/// intact for deterministic evidence inspection.
+fn build_pinned_client(
+    host_for_pin: &str,
+    pinned_addrs: &[std::net::SocketAddr],
+    timeout: std::time::Duration,
+) -> Result<reqwest::Client, String> {
+    let mut default_headers = reqwest::header::HeaderMap::new();
+    default_headers.insert(
+        reqwest::header::ACCEPT_ENCODING,
+        reqwest::header::HeaderValue::from_static("gzip, br, zstd, deflate"),
+    );
+
+    reqwest::Client::builder()
+        .no_proxy()
+        .tls_info(true)
+        .redirect(Policy::none())
+        .timeout(timeout)
+        .user_agent(USER_AGENT)
+        .default_headers(default_headers)
+        .no_gzip()
+        .no_brotli()
+        .no_zstd()
+        .no_deflate()
+        .resolve_to_addrs(host_for_pin, pinned_addrs)
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {e}"))
+}
+
+/// Decompresses `raw_body` when `content-encoding` specifies `gzip`, `br`, `zstd`, or `deflate`,
+/// bounding output to `max_bytes` to prevent decompression bombs.
+fn decode_body_encoding(
+    raw_body: &[u8],
+    headers: &[HttpHeader],
+    max_bytes: usize,
+) -> (Vec<u8>, bool) {
+    use std::io::Read as _;
+
+    let Some(encoding) = headers
+        .iter()
+        .find(|h| h.name == "content-encoding")
+        .map(|h| h.value.to_ascii_lowercase())
+    else {
+        return (raw_body.to_vec(), false);
+    };
+
+    let cap = u64::try_from(max_bytes).unwrap_or(u64::MAX);
+    let mut out = Vec::new();
+    let res = if encoding.contains("gzip") {
+        let decoder = flate2::read::GzDecoder::new(raw_body);
+        decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
+    } else if encoding.contains("br") {
+        let decoder = brotli::Decompressor::new(raw_body, 4096);
+        decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
+    } else if encoding.contains("zstd") {
+        match zstd::stream::read::Decoder::new(raw_body) {
+            Ok(decoder) => decoder.take(cap.saturating_add(1)).read_to_end(&mut out),
+            Err(e) => Err(e),
+        }
+    } else if encoding.contains("deflate") {
+        let decoder = flate2::read::ZlibDecoder::new(raw_body);
+        decoder.take(cap.saturating_add(1)).read_to_end(&mut out)
+    } else {
+        return (raw_body.to_vec(), false);
+    };
+
+    match res {
+        Ok(_) => {
+            let truncated = out.len() > max_bytes;
+            if truncated {
+                out.truncate(max_bytes);
+            }
+            (out, truncated)
+        }
+        Err(_) => (raw_body.to_vec(), false),
     }
 }
 
@@ -1136,5 +1202,69 @@ mod caa_tests {
         )
         .await;
         assert_eq!(outcome, CaaLookupOutcome::Unsupported);
+    }
+
+    #[tokio::test]
+    async fn collect_http_sends_accept_encoding_and_preserves_content_encoding() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        const GZIP_BODY: &[u8] = &[
+            31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 179, 201, 40, 201, 205, 177, 179, 73, 202, 79, 169,
+            180, 75, 28, 5, 163, 96, 20, 140, 2, 42, 0, 27, 125, 112, 145, 98, 163, 15, 46, 95, 0,
+            83, 170, 7, 45, 102, 4, 0, 0,
+        ];
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let (tx, rx) = tokio::sync::oneshot::channel::<String>();
+
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.expect("accept");
+            let mut buf = [0_u8; 4096];
+            let n = sock.read(&mut buf).await.expect("read");
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let _ = tx.send(req);
+
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Encoding: gzip\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                GZIP_BODY.len()
+            );
+            sock.write_all(header.as_bytes()).await.expect("write hdr");
+            sock.write_all(GZIP_BODY).await.expect("write body");
+            let _ = sock.shutdown().await;
+        });
+
+        let target = crate::domain::AuditTarget::parse(
+            &format!("http://{addr}/"),
+            crate::domain::TargetPolicy::AllowPrivate,
+        )
+        .expect("target");
+        let budget = crate::domain::ExecutionBudget::default();
+        let snapshot =
+            super::collect_http(&target, &budget, crate::domain::TargetPolicy::AllowPrivate).await;
+
+        let req_text = rx.await.expect("req");
+        let lower_req = req_text.to_ascii_lowercase();
+        assert!(
+            lower_req.contains("accept-encoding:") && lower_req.contains("gzip"),
+            "expected Accept-Encoding with gzip, got:\n{req_text}"
+        );
+
+        let crate::domain::CollectorOutcome::Captured { data } = snapshot.http else {
+            panic!("expected captured HTTP, got: {:?}", snapshot.http);
+        };
+        assert!(
+            data.body_text.contains("<html><body>"),
+            "expected decompressed HTML body, got: {}",
+            &data.body_text[..data.body_text.len().min(80)]
+        );
+        assert!(
+            data.headers
+                .iter()
+                .any(|h| h.name == "content-encoding" && h.value.contains("gzip")),
+            "expected content-encoding header to be preserved, got: {:?}",
+            data.headers
+        );
     }
 }

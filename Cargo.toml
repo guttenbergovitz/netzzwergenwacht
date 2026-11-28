@@ -14,10 +14,12 @@ name = "nzw"
 path = "src/main.rs"
 
 [dependencies]
+brotli = "9"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
+flate2 = "1"
 ratatui = "0.30"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "gzip", "brotli", "zstd", "http2"] }
 rig-core = { version = "0.42.0", features = ["reqwest"] }
 schemars = "0.8"
 scraper = "0.22"
@@ -33,6 +35,7 @@ url = "2"
 whatlang = "0.17"
 zeroize = "1"
 x509-parser = "0.17"
+zstd = "0.14"
 
 [profile.release]
 lto = "thin"
