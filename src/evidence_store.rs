@@ -1231,7 +1231,7 @@ impl EvidenceStore {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] if serialisation or the SQLite upsert fails.
+    /// Returns [`StoreError`] if serialisation or the `SQLite` upsert fails.
     pub async fn save_checkpoint(&self, checkpoint: &CrawlCheckpoint) -> Result<(), StoreError> {
         let frontier_json = serde_json::to_string(&checkpoint.frontier_urls)
             .map_err(|e| StoreError::Database(format!("failed to serialise frontier: {e}")))?;
@@ -1325,7 +1325,7 @@ impl EvidenceStore {
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the SQLite delete fails.
+    /// Returns [`StoreError`] when the `SQLite` delete fails.
     pub async fn clear_checkpoint(&self, application: &str) -> Result<(), StoreError> {
         let connection = self.database.connect()?;
         connection

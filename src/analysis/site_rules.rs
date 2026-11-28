@@ -23,6 +23,12 @@ pub const RULE_SITE_LANGUAGE_CONSISTENCY: &str = "site.i18n.language_consistency
 pub const RULE_SITE_MISSING_DESCRIPTION_PATTERN: &str = "site.seo.missing_meta_description_pattern";
 /// Rule ID for site-wide thin-page concentration detection.
 pub const RULE_SITE_THIN_PAGE_CONCENTRATION: &str = "site.content.thin_page_concentration";
+/// Rule ID for `robots.txt` AI crawler policy observations.
+pub const RULE_SITE_ROBOTS_AI_POLICY: &str = "site.robots.ai_crawler_policy";
+/// Rule ID for sitemap foreign-origin and duplicate URL hygiene.
+pub const RULE_SITE_SITEMAP_HYGIENE: &str = "site.sitemap.hygiene";
+/// Rule ID for origin probe findings (exposed files, `security.txt`).
+pub const RULE_SITE_ORIGIN_PROBES: &str = "site.origin.well_known_probes";
 /// Rule ID for template-level metadata consistency within a chrome cluster.
 pub const RULE_SITE_TEMPLATE_CONSISTENCY: &str = "site.seo.template_metadata_consistency";
 
@@ -423,6 +429,12 @@ pub struct SiteRuleContext<'a> {
     pub graph: Option<&'a ApplicationGraph>,
     /// Whether all discovered internal URLs were inspected.
     pub coverage_complete: bool,
+    /// Optional structured `/robots.txt` evidence collected for the origin.
+    pub robots_evidence: Option<&'a crate::discovery::robots::RobotsEvidence>,
+    /// Structured `sitemap.xml` evidence collected for the origin.
+    pub sitemap_evidences: &'a [crate::discovery::sitemap::SitemapEvidence],
+    /// Optional origin-level probes (`soft_404_baseline`, `/.well-known/security.txt`, `/llms.txt`).
+    pub origin_probes: Option<&'a crate::collection::OriginProbes>,
 }
 
 /// Deterministic cross-page rule operating over [`SiteRuleContext`].
@@ -463,6 +475,9 @@ impl SiteRuleRegistry {
         registry.register(Box::new(SiteMissingDescriptionPatternRule));
         registry.register(Box::new(SiteThinPageConcentrationRule));
         registry.register(Box::new(SiteTemplateConsistencyRule));
+        registry.register(Box::new(SiteRobotsAiPolicyRule));
+        registry.register(Box::new(SiteSitemapHygieneRule));
+        registry.register(Box::new(SiteOriginProbesRule));
         registry
     }
 
@@ -499,6 +514,18 @@ impl SiteRuleRegistry {
 /// Convenience helper that evaluates the default [`SiteRuleRegistry`] over `graph`.
 #[must_use]
 pub fn analyse_graph(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
+    analyse_graph_with_site_evidence(graph, None, &[], None)
+}
+
+/// Evaluates the default [`SiteRuleRegistry`] over `graph` together with
+/// origin-level `robots.txt`, `sitemap.xml`, and well-known probe evidence.
+#[must_use]
+pub fn analyse_graph_with_site_evidence(
+    graph: &ApplicationGraph,
+    robots_evidence: Option<&crate::discovery::robots::RobotsEvidence>,
+    sitemap_evidences: &[crate::discovery::sitemap::SitemapEvidence],
+    origin_probes: Option<&crate::collection::OriginProbes>,
+) -> Vec<AnalyserResult> {
     if graph.pages.is_empty() {
         return Vec::new();
     }
@@ -507,8 +534,241 @@ pub fn analyse_graph(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
         pages: &table,
         graph: Some(graph),
         coverage_complete: graph.coverage_complete,
+        robots_evidence,
+        sitemap_evidences,
+        origin_probes,
     };
     SiteRuleRegistry::with_default_rules().evaluate_all(&ctx)
+}
+
+/// Builds a deterministic origin-level finding backed by a single evidence reference.
+fn origin_finding(
+    rule_id: &str,
+    category: FindingCategory,
+    severity: Severity,
+    title: String,
+    summary: String,
+    evidence: EvidenceRef,
+    remediation: &str,
+) -> Finding {
+    Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(rule_id.to_owned()),
+        category,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity,
+        confidence: Confidence::High,
+        title,
+        summary,
+        evidence_refs: vec![evidence],
+        remediation: Some(remediation.to_owned()),
+    }
+}
+
+/// Reports `robots.txt` policies that block known AI crawlers.
+///
+/// This is an observation about declared policy, not a defect: the site owner may block
+/// AI crawlers deliberately. It is only evaluated when `robots.txt` was actually observed,
+/// because an unavailable file says nothing about policy.
+pub struct SiteRobotsAiPolicyRule;
+
+impl SiteRule for SiteRobotsAiPolicyRule {
+    fn id(&self) -> &'static str {
+        RULE_SITE_ROBOTS_AI_POLICY
+    }
+
+    fn dwarf(&self) -> DwarfId {
+        DwarfId::Such
+    }
+
+    fn evaluate(
+        &self,
+        ctx: &SiteRuleContext<'_>,
+        findings: &mut Vec<Finding>,
+        checks: &mut Vec<CheckStatus>,
+    ) {
+        use crate::discovery::robots::{AiCrawlerPolicy, RobotsOutcome};
+
+        let Some(robots) = ctx
+            .robots_evidence
+            .filter(|r| r.outcome == RobotsOutcome::Observed)
+        else {
+            return;
+        };
+        let blocked: Vec<&str> = robots
+            .ai_crawler_policies
+            .iter()
+            .filter(|s| s.policy == AiCrawlerPolicy::Disallowed)
+            .map(|s| s.user_agent.as_str())
+            .collect();
+        if blocked.is_empty() {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(self.id().to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+            return;
+        }
+        findings.push(origin_finding(
+            self.id(),
+            FindingCategory::Seo,
+            Severity::Info,
+            format!("robots.txt blocks {} AI crawler(s)", blocked.len()),
+            format!(
+                "`Disallow: /` applies to: {}. AI search and answer engines will not use this content.",
+                blocked.join(", ")
+            ),
+            EvidenceRef::new(EvidenceSource::HttpBody, format!("robots.txt blocked={}", blocked.join(","))),
+            "Confirm the block is intentional; allow AI crawlers you want to be cited by.",
+        ));
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(self.id().to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+/// Flags sitemap entries that point to other origins or repeat the same URL.
+pub struct SiteSitemapHygieneRule;
+
+impl SiteRule for SiteSitemapHygieneRule {
+    fn id(&self) -> &'static str {
+        RULE_SITE_SITEMAP_HYGIENE
+    }
+
+    fn dwarf(&self) -> DwarfId {
+        DwarfId::Such
+    }
+
+    fn evaluate(
+        &self,
+        ctx: &SiteRuleContext<'_>,
+        findings: &mut Vec<Finding>,
+        checks: &mut Vec<CheckStatus>,
+    ) {
+        if ctx.sitemap_evidences.is_empty() {
+            return;
+        }
+        let cross_origin: usize = ctx
+            .sitemap_evidences
+            .iter()
+            .map(|s| s.cross_origin_locs)
+            .sum();
+        let duplicates: usize = ctx.sitemap_evidences.iter().map(|s| s.duplicate_locs).sum();
+        if cross_origin == 0 && duplicates == 0 {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(self.id().to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+            return;
+        }
+        let severity = if cross_origin > 0 {
+            Severity::Medium
+        } else {
+            Severity::Low
+        };
+        findings.push(origin_finding(
+            self.id(),
+            FindingCategory::Seo,
+            severity,
+            "Sitemap contains foreign-origin or duplicate URLs".to_owned(),
+            format!(
+                "{cross_origin} <loc> entr(ies) point to another origin and {duplicates} repeat an earlier URL."
+            ),
+            EvidenceRef::new(
+                EvidenceSource::HttpBody,
+                format!("sitemap cross_origin={cross_origin} duplicates={duplicates}"),
+            ),
+            "Keep only canonical same-origin URLs, each listed once, in the sitemap.",
+        ));
+        checks.push(CheckStatus::Failed {
+            rule_id: RuleId(self.id().to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+    }
+}
+
+/// Flags exposed sensitive files and a missing `security.txt` from origin probes.
+///
+/// Only probes that were actually captured count; failed or skipped probes are never
+/// treated as "not exposed".
+pub struct SiteOriginProbesRule;
+
+impl SiteRule for SiteOriginProbesRule {
+    fn id(&self) -> &'static str {
+        RULE_SITE_ORIGIN_PROBES
+    }
+
+    fn dwarf(&self) -> DwarfId {
+        DwarfId::Sicherheits
+    }
+
+    fn evaluate(
+        &self,
+        ctx: &SiteRuleContext<'_>,
+        findings: &mut Vec<Finding>,
+        checks: &mut Vec<CheckStatus>,
+    ) {
+        use crate::domain::CollectorOutcome;
+
+        let Some(probes) = ctx.origin_probes else {
+            return;
+        };
+        let mut failed = false;
+        for probe in &probes.well_known {
+            let (CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. }) =
+                &probe.outcome
+            else {
+                continue;
+            };
+            let is_html = data
+                .content_type
+                .as_deref()
+                .is_some_and(|c| c.to_ascii_lowercase().contains("html"));
+            let ok = (200..300).contains(&data.status_code);
+            let sensitive = probe.path.ends_with("/.env") || probe.path.ends_with("/.git/config");
+            if sensitive && ok && !is_html {
+                failed = true;
+                findings.push(origin_finding(
+                    self.id(),
+                    FindingCategory::Security,
+                    Severity::High,
+                    format!("Sensitive file {} is publicly readable", probe.path),
+                    format!(
+                        "GET {} returned HTTP {} with a non-HTML body.",
+                        probe.path, data.status_code
+                    ),
+                    EvidenceRef::new(
+                        EvidenceSource::HttpBody,
+                        format!("{}={}", probe.path, data.status_code),
+                    ),
+                    "Remove the file from the web root and rotate any secrets it contained.",
+                ));
+            } else if probe.path.ends_with("/security.txt") && data.status_code == 404 {
+                failed = true;
+                findings.push(origin_finding(
+                    self.id(),
+                    FindingCategory::Security,
+                    Severity::Low,
+                    "No security.txt published".to_owned(),
+                    "`/.well-known/security.txt` returned HTTP 404 (RFC 9116).".to_owned(),
+                    EvidenceRef::new(EvidenceSource::HttpBody, format!("{}=404", probe.path)),
+                    "Publish a security.txt with a contact and expiry date.",
+                ));
+            }
+        }
+        checks.push(if failed {
+            CheckStatus::Failed {
+                rule_id: RuleId(self.id().to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            }
+        } else {
+            CheckStatus::Passed {
+                rule_id: RuleId(self.id().to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            }
+        });
+    }
 }
 
 /// Flags inconsistent or missing `<html lang>` declarations across indexable pages
@@ -679,7 +939,8 @@ impl SiteRule for SiteMissingDescriptionPatternRule {
     }
 }
 
-/// Flags high concentration of thin-content indexable pages (< 150 visible words).
+/// Flags high concentration of thin-content editorial/indexable pages (< 100 visible words),
+/// aligned with `inh.content.thin_content` and excluding functional utility pages (`auth`, `legal`, `contact`, `form`, `support`).
 pub struct SiteThinPageConcentrationRule;
 
 impl SiteRule for SiteThinPageConcentrationRule {
@@ -700,13 +961,24 @@ impl SiteRule for SiteThinPageConcentrationRule {
         let measured: Vec<(&str, usize)> = ctx
             .pages
             .indexable_pages()
+            .filter(|p| {
+                !matches!(
+                    p.classification.page_type,
+                    PageType::Auth
+                        | PageType::Legal
+                        | PageType::Contact
+                        | PageType::Form
+                        | PageType::Support
+                )
+            })
             .filter_map(|p| p.word_count.map(|wc| (p.url.as_str(), wc)))
             .collect();
         if measured.len() < 3 {
             checks.push(CheckStatus::Skipped {
                 rule_id: RuleId(self.id().to_owned()),
                 evidence_level: EvidenceLevel::Source,
-                reason: "fewer than three indexable pages with measured word_count".to_owned(),
+                reason: "fewer than three content-bearing indexable pages with measured word_count"
+                    .to_owned(),
             });
             return;
         }
@@ -714,7 +986,7 @@ impl SiteRule for SiteThinPageConcentrationRule {
         let thin: Vec<(&str, usize)> = measured
             .iter()
             .copied()
-            .filter(|&(_, wc)| wc < 150)
+            .filter(|&(_, wc)| wc < 100)
             .collect();
 
         if thin.len() >= 3 && thin.len() * 10 >= measured.len() * 3 {
@@ -732,7 +1004,7 @@ impl SiteRule for SiteThinPageConcentrationRule {
                     measured.len()
                 ),
                 summary: format!(
-                    "{} of {} indexable pages contain fewer than 150 visible words.",
+                    "{} of {} content-bearing indexable pages contain fewer than 100 visible words.",
                     thin.len(),
                     measured.len()
                 ),
@@ -961,6 +1233,9 @@ mod tests {
             pages: &table,
             graph: None,
             coverage_complete: true,
+            robots_evidence: None,
+            sitemap_evidences: &[],
+            origin_probes: None,
         };
         let res = SiteRuleRegistry::with_default_rules().evaluate_all(&ctx);
         let ids: Vec<&str> = res
@@ -1015,6 +1290,9 @@ mod tests {
             pages: &table,
             graph: None,
             coverage_complete: true,
+            robots_evidence: None,
+            sitemap_evidences: &[],
+            origin_probes: None,
         };
         let results = SiteRuleRegistry::with_default_rules().evaluate_all(&ctx);
         let ids: Vec<&str> = results
@@ -1037,6 +1315,9 @@ mod tests {
             pages: &small,
             graph: None,
             coverage_complete: true,
+            robots_evidence: None,
+            sitemap_evidences: &[],
+            origin_probes: None,
         };
         let small_res = SiteRuleRegistry::with_default_rules().evaluate_all(&small_ctx);
         assert!(small_res.iter().all(|r| r.findings.is_empty()));
@@ -1056,6 +1337,9 @@ mod tests {
             pages: &healthy,
             graph: None,
             coverage_complete: true,
+            robots_evidence: None,
+            sitemap_evidences: &[],
+            origin_probes: None,
         };
         let healthy_res = SiteRuleRegistry::with_default_rules().evaluate_all(&healthy_ctx);
         assert!(healthy_res.iter().all(|r| r.findings.is_empty()));
@@ -1064,6 +1348,91 @@ mod tests {
                 .iter()
                 .flat_map(|r| r.checks.iter())
                 .all(|c| matches!(c, CheckStatus::Passed { .. }))
+        );
+    }
+
+    fn ctx_for<'a>(
+        table: &'a PageFeaturesTable,
+        robots: Option<&'a crate::discovery::robots::RobotsEvidence>,
+        sitemaps: &'a [crate::discovery::sitemap::SitemapEvidence],
+        probes: Option<&'a crate::collection::OriginProbes>,
+    ) -> SiteRuleContext<'a> {
+        SiteRuleContext {
+            pages: table,
+            graph: None,
+            coverage_complete: true,
+            robots_evidence: robots,
+            sitemap_evidences: sitemaps,
+            origin_probes: probes,
+        }
+    }
+
+    fn finding_ids(ctx: &SiteRuleContext<'_>) -> Vec<String> {
+        SiteRuleRegistry::with_default_rules()
+            .evaluate_all(ctx)
+            .into_iter()
+            .flat_map(|r| r.findings.into_iter().map(|f| f.rule_id.0))
+            .collect()
+    }
+
+    #[test]
+    fn robots_rule_reports_blocked_ai_crawler_only_when_observed() {
+        use crate::discovery::robots::{RobotsEvidence, RobotsOutcome};
+        let table = PageFeaturesTable::from_pages([]);
+        let observed = RobotsEvidence::parse("User-agent: GPTBot\nDisallow: /\n", Some(200));
+        assert_eq!(observed.outcome, RobotsOutcome::Observed);
+        let ids = finding_ids(&ctx_for(&table, Some(&observed), &[], None));
+        assert!(ids.iter().any(|i| i == RULE_SITE_ROBOTS_AI_POLICY));
+
+        let unavailable = RobotsEvidence::default();
+        let ids = finding_ids(&ctx_for(&table, Some(&unavailable), &[], None));
+        assert!(!ids.iter().any(|i| i == RULE_SITE_ROBOTS_AI_POLICY));
+    }
+
+    #[test]
+    fn sitemap_rule_flags_cross_origin_entries() {
+        let table = PageFeaturesTable::from_pages([]);
+        let bad = crate::discovery::sitemap::SitemapEvidence {
+            cross_origin_locs: 2,
+            ..Default::default()
+        };
+        let ids = finding_ids(&ctx_for(&table, None, std::slice::from_ref(&bad), None));
+        assert!(ids.iter().any(|i| i == RULE_SITE_SITEMAP_HYGIENE));
+    }
+
+    #[test]
+    fn origin_probe_rule_flags_exposed_env_but_ignores_failed_probes() {
+        use crate::collection::{OriginProbes, WellKnownPathProbe, WellKnownProbeObservation};
+        use crate::domain::CollectorOutcome;
+        let table = PageFeaturesTable::from_pages([]);
+        let probes = OriginProbes {
+            origin: "https://example.com".to_owned(),
+            soft_404_baseline: None,
+            well_known: vec![
+                WellKnownPathProbe {
+                    path: "/.env".to_owned(),
+                    outcome: CollectorOutcome::Captured {
+                        data: WellKnownProbeObservation {
+                            final_url: "https://example.com/.env".to_owned(),
+                            status_code: 200,
+                            content_type: Some("text/plain".to_owned()),
+                            body_bytes: 10,
+                            body_preview: "KEY=1".to_owned(),
+                        },
+                    },
+                },
+                WellKnownPathProbe {
+                    path: "/.git/config".to_owned(),
+                    outcome: CollectorOutcome::Failed {
+                        error: "timeout".to_owned(),
+                    },
+                },
+            ],
+        };
+        let ids = finding_ids(&ctx_for(&table, None, &[], Some(&probes)));
+        assert_eq!(
+            ids.iter().filter(|i| *i == RULE_SITE_ORIGIN_PROBES).count(),
+            1
         );
     }
 }

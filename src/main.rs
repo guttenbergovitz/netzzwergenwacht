@@ -345,7 +345,11 @@ enum Command {
         max_depth: usize,
     },
     /// Start an MCP (Model Context Protocol) JSON-RPC 2.0 stdio server.
-    Mcp,
+    Mcp {
+        /// Allow loopback and private network targets for all MCP tool calls.
+        #[arg(long)]
+        allow_private: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -901,13 +905,15 @@ async fn main() -> ExitCode {
                 ExitCode::from(EXIT_OK)
             }
         }
-        Command::Mcp => match netzzwergenwacht::mcp::run_stdio_server().await {
-            Ok(()) => ExitCode::from(EXIT_OK),
-            Err(err) => {
-                eprintln!("mcp server error: {err}");
-                ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+        Command::Mcp { allow_private } => {
+            match netzzwergenwacht::mcp::run_stdio_server(allow_private).await {
+                Ok(()) => ExitCode::from(EXIT_OK),
+                Err(err) => {
+                    eprintln!("mcp server error: {err}");
+                    ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR)
+                }
             }
-        },
+        }
         Command::Validate { url, allow_private } => {
             let policy = target_policy(allow_private);
             match AuditTarget::parse(&url, policy) {
@@ -1858,7 +1864,10 @@ async fn run_check(
         };
     }
     collection::hydrate_browser_tls_and_caa(&mut snapshot);
-    let mut report = analysis::run_all(&snapshot);
+    let origin_probes = collection::ProbeCollector::default()
+        .collect_origin_probes(&target, target_pol, &budget, &[])
+        .await;
+    let mut report = analysis::run_all_with_origin_probes(&snapshot, Some(&origin_probes));
 
     if let Some(history_path) = history
         && let Err(code) = persist_check_history(history_path, &report).await

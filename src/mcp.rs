@@ -41,10 +41,13 @@ struct JsonRpcError {
 
 /// Runs the blocking line-delimited MCP `stdio` loop until EOF.
 ///
+/// `allow_private` is fixed at server startup (`nzw mcp --allow-private`) and
+/// cannot be escalated by MCP tool callers.
+///
 /// # Errors
 ///
 /// Returns an `io::Error` if reading from `stdin` or writing to `stdout` fails.
-pub async fn run_stdio_server() -> std::io::Result<()> {
+pub async fn run_stdio_server(allow_private: bool) -> std::io::Result<()> {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
 
@@ -54,7 +57,7 @@ pub async fn run_stdio_server() -> std::io::Result<()> {
         if trimmed.is_empty() {
             continue;
         }
-        if let Some(reply) = handle_mcp_request_line(trimmed).await {
+        if let Some(reply) = handle_mcp_request_line(trimmed, allow_private).await {
             stdout.write_all(reply.as_bytes())?;
             stdout.write_all(b"\n")?;
             stdout.flush()?;
@@ -63,8 +66,8 @@ pub async fn run_stdio_server() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Processes a single JSON-RPC 2.0 request line and returns an optional serialised response.
-pub async fn handle_mcp_request_line(line: &str) -> Option<String> {
+/// Processes a single JSON-RPC 2.0 request line under the server's fixed `allow_private` policy.
+pub async fn handle_mcp_request_line(line: &str, allow_private: bool) -> Option<String> {
     let req: JsonRpcRequest = match serde_json::from_str(line) {
         Ok(req) => req,
         Err(err) => {
@@ -98,7 +101,7 @@ pub async fn handle_mcp_request_line(line: &str) -> Option<String> {
         ),
         "ping" => ok_response(id, json!({})),
         "tools/list" => ok_response(id, json!({ "tools": mcp_tool_definitions() })),
-        "tools/call" => handle_tool_call(id, &req.params).await,
+        "tools/call" => handle_tool_call(id, &req.params, allow_private).await,
         other => err_response(id, -32601, format!("Method not found: {other}")),
     };
     serde_json::to_string(&response).ok()
@@ -130,8 +133,7 @@ fn mcp_tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "url": { "type": "string" },
-                    "allow_private": { "type": "boolean", "default": false }
+                    "url": { "type": "string" }
                 },
                 "required": ["url"]
             }
@@ -142,8 +144,7 @@ fn mcp_tool_definitions() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "url": { "type": "string" },
-                    "allow_private": { "type": "boolean", "default": false }
+                    "url": { "type": "string" }
                 },
                 "required": ["url"]
             }
@@ -156,8 +157,7 @@ fn mcp_tool_definitions() -> Value {
                 "properties": {
                     "url": { "type": "string" },
                     "max_pages": { "type": "integer", "default": 10 },
-                    "max_depth": { "type": "integer", "default": 2 },
-                    "allow_private": { "type": "boolean", "default": false }
+                    "max_depth": { "type": "integer", "default": 2 }
                 },
                 "required": ["url"]
             }
@@ -175,15 +175,11 @@ fn tool_error_response(id: Value, message: &str) -> JsonRpcResponse {
     )
 }
 
-async fn handle_tool_call(id: Value, params: &Value) -> JsonRpcResponse {
+async fn handle_tool_call(id: Value, params: &Value, allow_private: bool) -> JsonRpcResponse {
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return err_response(id, -32602, "Missing tool `name`".to_owned());
     };
     let args = params.get("arguments").unwrap_or(&Value::Null);
-    let allow_private = args
-        .get("allow_private")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let policy = if allow_private {
         TargetPolicy::AllowPrivate
     } else {
@@ -206,9 +202,12 @@ async fn handle_tool_call(id: Value, params: &Value) -> JsonRpcResponse {
             }),
         ),
         "nzw_audit_url" => {
-            let snap =
-                crate::collection::collect_http(&target, &ExecutionBudget::default(), policy).await;
-            let report = crate::analysis::run_all(&snap);
+            let budget = ExecutionBudget::default();
+            let snap = crate::collection::collect_http(&target, &budget, policy).await;
+            let origin_probes = crate::collection::ProbeCollector::default()
+                .collect_origin_probes(&target, policy, &budget, &[])
+                .await;
+            let report = crate::analysis::run_all_with_origin_probes(&snap, Some(&origin_probes));
             let http_ok = matches!(
                 report.http,
                 CollectorOutcome::Captured { .. } | CollectorOutcome::Partial { .. }
@@ -259,6 +258,7 @@ mod tests {
     async fn mcp_server_handles_initialize_tools_list_and_validate_call() {
         let init = handle_mcp_request_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
+            false,
         )
         .await
         .expect("init reply");
@@ -267,15 +267,27 @@ mod tests {
 
         let list = handle_mcp_request_line(
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}"#,
+            false,
         )
         .await
         .expect("tools/list reply");
         assert!(list.contains("nzw_validate_url"));
         assert!(list.contains("nzw_audit_url"));
         assert!(list.contains("nzw_scan_site"));
+        assert!(!list.contains("allow_private"));
+
+        // Even if an untrusted caller passes allow_private: true, server policy stays PublicOnly.
+        let blocked = handle_mcp_request_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"nzw_validate_url","arguments":{"url":"http://127.0.0.1/","allow_private":true}}}"#,
+            false,
+        )
+        .await
+        .expect("blocked reply");
+        assert!(blocked.contains("\"isError\":true"));
 
         let call = handle_mcp_request_line(
-            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"nzw_validate_url","arguments":{"url":"https://example.com/"}}}"#,
+            r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"nzw_validate_url","arguments":{"url":"https://example.com/"}}}"#,
+            false,
         )
         .await
         .expect("tools/call reply");
@@ -283,6 +295,7 @@ mod tests {
 
         let notif = handle_mcp_request_line(
             r#"{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}"#,
+            false,
         )
         .await;
         assert!(notif.is_none());

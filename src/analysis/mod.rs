@@ -112,15 +112,40 @@ pub struct AuditReport {
 /// false absence findings.
 #[must_use]
 pub fn run_all(snapshot: &EvidenceSnapshot) -> AuditReport {
-    run_all_with_events(snapshot, &crate::events::DiagnosticEventSink::noop())
+    run_all_with_events_and_probes(snapshot, None, &crate::events::DiagnosticEventSink::noop())
+}
+
+/// Runs all Phase 1 deterministic Zwerg analysers against `snapshot` using
+/// collected origin probes (soft-404 baseline and well-known paths).
+#[must_use]
+pub fn run_all_with_origin_probes(
+    snapshot: &EvidenceSnapshot,
+    origin_probes: Option<&crate::collection::OriginProbes>,
+) -> AuditReport {
+    run_all_with_events_and_probes(
+        snapshot,
+        origin_probes,
+        &crate::events::DiagnosticEventSink::noop(),
+    )
 }
 
 /// Runs all deterministic Zwerg analysers against `snapshot` while emitting
 /// structured lifecycle and finding events to `sink`.
-#[allow(clippy::too_many_lines)]
 #[must_use]
 pub fn run_all_with_events(
     snapshot: &EvidenceSnapshot,
+    sink: &crate::events::DiagnosticEventSink,
+) -> AuditReport {
+    run_all_with_events_and_probes(snapshot, None, sink)
+}
+
+/// Runs all deterministic Zwerg analysers against `snapshot` with optional
+/// [`crate::collection::OriginProbes`] while emitting lifecycle and finding events to `sink`.
+#[allow(clippy::too_many_lines)]
+#[must_use]
+pub fn run_all_with_events_and_probes(
+    snapshot: &EvidenceSnapshot,
+    origin_probes: Option<&crate::collection::OriginProbes>,
     sink: &crate::events::DiagnosticEventSink,
 ) -> AuditReport {
     let mut analysers = Vec::new();
@@ -173,10 +198,12 @@ pub fn run_all_with_events(
         analysers.push(result);
     };
 
+    let soft_404_baseline = origin_probes.and_then(|probes| probes.soft_404_baseline.as_ref());
+
     match extract_complete_html(snapshot) {
         Ok((http, obs)) => {
             run_analyser(DwarfId::Netz, &mut || {
-                network::analyse_with_document(snapshot, Some(&obs))
+                network::analyse_with_baseline(snapshot, Some(&obs), soft_404_baseline)
             });
             run_analyser(DwarfId::Sicherheits, &mut || {
                 security::analyse_with_document(snapshot, Some(&obs))

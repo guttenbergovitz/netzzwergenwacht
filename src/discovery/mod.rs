@@ -1202,14 +1202,28 @@ pub struct FixGroup {
     pub remediation: Option<String>,
 }
 
+fn is_site_wide_or_transport_rule(rule_id: &str) -> bool {
+    rule_id.starts_with("site.")
+        || rule_id.starts_with("graph.")
+        || rule_id.starts_with("sec.headers.")
+        || rule_id.starts_with("sec.transport.")
+        || rule_id.starts_with("sec.tls.")
+        || rule_id.starts_with("netz.http.")
+}
+
 fn component_signature_for_finding(
     rule_id: &str,
     evidence_refs: &[EvidenceRef],
     title: &str,
 ) -> String {
+    if is_site_wide_or_transport_rule(rule_id) {
+        return format!("{rule_id}::site-wide");
+    }
     if let Some(first) = evidence_refs.first() {
         let trimmed = first.detail.trim();
-        if !trimmed.is_empty() {
+        let is_page_url = trimmed.starts_with("http://") || trimmed.starts_with("https://");
+        let is_count_only = trimmed.contains('=') && !trimmed.contains('/');
+        if !trimmed.is_empty() && !is_page_url && !is_count_only {
             return format!("{rule_id}::{trimmed}");
         }
     }
@@ -1235,10 +1249,7 @@ pub fn group_fixes_by_component(summary: &CrawlSummary) -> Vec<FixGroup> {
     for page in &summary.page_diagnostics {
         for f in &page.findings {
             let sig = component_signature_for_finding(&f.rule_id.0, &f.evidence_refs, &f.title);
-            let is_site_header_or_graph = f.rule_id.0.starts_with("site.")
-                || f.rule_id.0.starts_with("graph.")
-                || f.rule_id.0.starts_with("sec.headers.")
-                || f.rule_id.0.starts_with("sec.tls.");
+            let is_site_header_or_graph = is_site_wide_or_transport_rule(&f.rule_id.0);
             let key = (is_site_header_or_graph, f.rule_id.0.clone(), sig);
             let entry = groups.entry(key).or_insert_with(|| Accumulator {
                 rule_id: f.rule_id.clone(),

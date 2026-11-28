@@ -691,7 +691,7 @@ pub async fn execute_diagnostic_run(
         )
         .unwrap_or_default(),
     );
-    execute_diagnostic_run_cancellable(
+    Box::pin(execute_diagnostic_run_cancellable(
         spec,
         policy,
         budget,
@@ -700,7 +700,7 @@ pub async fn execute_diagnostic_run(
         cancel_rx,
         Path::new(crate::patrol::memory::DEFAULT_MEMORY_DIR),
         router,
-    )
+    ))
     .await
 }
 
