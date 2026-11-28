@@ -422,10 +422,24 @@ pub fn discover_same_origin_links(
     obs: &DocumentObservations,
     policy: TargetPolicy,
 ) -> Vec<AuditTarget> {
-    let Ok(base_url) = Url::parse(base.as_str()) else {
+    if obs
+        .meta_robots
+        .as_deref()
+        .is_some_and(|v| v.to_ascii_lowercase().contains("nofollow"))
+    {
+        return Vec::new();
+    }
+    let Ok(mut base_url) = Url::parse(base.as_str()) else {
         return Vec::new();
     };
     let base_origin = Origin::from_target(base);
+    if let Some(ref base_href) = obs.base_href
+        && let Ok(joined) = base_url.join(base_href)
+        && let Ok(base_target) = AuditTarget::parse(joined.as_str(), policy)
+        && Origin::from_target(&base_target) == base_origin
+    {
+        base_url = joined;
+    }
     let mut seen = HashSet::new();
     seen.insert(base.as_str().to_owned());
 
@@ -447,6 +461,7 @@ pub fn discover_same_origin_links(
             continue;
         };
         resolved.set_fragment(None);
+        strip_tracking_query_params(&mut resolved);
         let candidate = resolved.as_str().to_owned();
         let Ok(target) = AuditTarget::parse(&candidate, policy) else {
             continue;
@@ -460,6 +475,31 @@ pub fn discover_same_origin_links(
         out.push(target);
     }
     out
+}
+
+fn strip_tracking_query_params(url: &mut Url) {
+    let Some(query) = url.query() else {
+        return;
+    };
+    let kept: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(k, _)| {
+            let lower = k.to_ascii_lowercase();
+            !lower.starts_with("utm_") && lower != "fbclid" && lower != "gclid"
+        })
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    if kept.is_empty() {
+        if !query.is_empty() {
+            url.set_query(None);
+        }
+        return;
+    }
+    let mut pairs = url.query_pairs_mut();
+    pairs.clear();
+    for (k, v) in kept {
+        pairs.append_pair(&k, &v);
+    }
 }
 
 /// Language and optional regional market variant detected for a page.
@@ -674,6 +714,15 @@ fn extract_loc_targets(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> V
     out
 }
 
+fn path_has_segment(path: &str, keyword: &str) -> bool {
+    path.split('/').any(|seg| {
+        let stem = seg.split('.').next().unwrap_or(seg);
+        stem == keyword
+            || stem.starts_with(&format!("{keyword}-"))
+            || stem.starts_with(&format!("{keyword}_"))
+    })
+}
+
 /// Orders discovered URLs so journey-critical pages are sampled ahead of legal/boilerplate pages.
 #[must_use]
 pub fn prioritise_representative_urls(mut urls: Vec<AuditTarget>) -> Vec<AuditTarget> {
@@ -683,17 +732,17 @@ pub fn prioritise_representative_urls(mut urls: Vec<AuditTarget>) -> Vec<AuditTa
             .unwrap_or_default();
         if p == "/" || p.is_empty() {
             0
-        } else if p.contains("checkout")
-            || p.contains("cart")
-            || p.contains("product")
-            || p.contains("pricing")
-            || p.contains("login")
+        } else if path_has_segment(&p, "checkout")
+            || path_has_segment(&p, "cart")
+            || path_has_segment(&p, "product")
+            || path_has_segment(&p, "pricing")
+            || path_has_segment(&p, "login")
         {
             1
-        } else if p.contains("privacy")
-            || p.contains("terms")
-            || p.contains("legal")
-            || p.contains("imprint")
+        } else if path_has_segment(&p, "privacy")
+            || path_has_segment(&p, "terms")
+            || path_has_segment(&p, "legal")
+            || path_has_segment(&p, "imprint")
         {
             3
         } else {
@@ -713,20 +762,26 @@ pub fn classify_page(url: &AuditTarget, obs: &DocumentObservations) -> PageType 
     if path == "/" || path.is_empty() {
         return PageType::Homepage;
     }
-    if path.contains("login") || path.contains("signin") || path.contains("auth") {
+    if path_has_segment(&path, "login")
+        || path_has_segment(&path, "signin")
+        || path_has_segment(&path, "auth")
+    {
         return PageType::Auth;
     }
-    if path.contains("privacy")
-        || path.contains("terms")
-        || path.contains("legal")
-        || path.contains("imprint")
+    if path_has_segment(&path, "privacy")
+        || path_has_segment(&path, "terms")
+        || path_has_segment(&path, "legal")
+        || path_has_segment(&path, "imprint")
     {
         return PageType::Legal;
     }
-    if path.contains("contact") {
+    if path_has_segment(&path, "contact") {
         return PageType::Contact;
     }
-    if path.contains("help") || path.contains("support") || path.contains("faq") {
+    if path_has_segment(&path, "help")
+        || path_has_segment(&path, "support")
+        || path_has_segment(&path, "faq")
+    {
         return PageType::Support;
     }
     if !obs.form_controls.is_empty() {

@@ -276,6 +276,8 @@ pub struct DocumentObservations {
     pub declared_charset: Option<String>,
     /// Trimmed `<meta http-equiv="Content-Security-Policy" content="...">`, if present.
     pub meta_csp: Option<String>,
+    /// Trimmed `<base href="...">` URL, if present.
+    pub base_href: Option<String>,
 }
 
 impl DocumentObservations {
@@ -312,6 +314,7 @@ impl DocumentObservations {
             canonical_count: count_selector(&doc, r#"link[rel="canonical"]"#),
             declared_charset: extract_declared_charset(&doc),
             meta_csp: first_meta_attr_ci(&doc, "http-equiv", "content-security-policy", "content"),
+            base_href: first_attr(&doc, "base[href]", "href"),
             ..Self::default()
         };
 

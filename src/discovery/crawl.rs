@@ -371,6 +371,8 @@ pub(super) async fn crawl_concurrently(
     let mut page_diagnostics: Vec<super::PageDiagnostics> = Vec::new();
     let mut graph_inputs = Vec::new();
     let mut in_flight: JoinSet<PageOutcome> = JoinSet::new();
+    let mut in_flight_entries: HashMap<tokio::task::Id, super::frontier::FrontierEntry> =
+        HashMap::new();
     let mut per_origin_in_flight: HashMap<String, usize> = HashMap::new();
     let mut pending: Vec<super::frontier::FrontierEntry> = Vec::new();
     let mut fetched = 0usize;
@@ -437,11 +439,13 @@ pub(super) async fn crawl_concurrently(
                 policy,
                 max_depth: crawl_budget.max_depth,
             };
+            let target_for_task = entry.target.clone();
+            let depth_for_task = entry.depth;
             let cache = Arc::clone(&cache);
-            in_flight.spawn(async move {
+            let handle = in_flight.spawn(async move {
                 acquire_page(
-                    entry.target,
-                    entry.depth,
+                    target_for_task,
+                    depth_for_task,
                     remaining,
                     schedule,
                     in_sitemap,
@@ -449,6 +453,7 @@ pub(super) async fn crawl_concurrently(
                 )
                 .await
             });
+            in_flight_entries.insert(handle.id(), entry);
         }
 
         if in_flight.is_empty() {
@@ -461,16 +466,40 @@ pub(super) async fn crawl_concurrently(
             cancelled = cancelled.saturating_add(in_flight.len());
             in_flight.abort_all();
             while in_flight.join_next().await.is_some() {}
+            for (_, entry) in in_flight_entries.drain() {
+                pages.push(DiscoveredPage {
+                    url: entry.target,
+                    page_type: PageType::Unknown,
+                    depth: entry.depth,
+                    status: PageCrawlStatus::SkippedBudget,
+                });
+            }
             break;
         }
 
-        let Some(joined) = in_flight.join_next().await else {
+        let Some(joined) = in_flight.join_next_with_id().await else {
             break;
         };
-        let Ok(outcome) = joined else {
-            // A panicked or aborted worker leaves the frontier consistent but unaccounted;
-            // the process budget is what protects the run, so record nothing fabricated.
-            continue;
+        let outcome = match joined {
+            Ok((id, outcome)) => {
+                in_flight_entries.remove(&id);
+                outcome
+            }
+            Err(join_err) => {
+                if let Some(entry) = in_flight_entries.remove(&join_err.id()) {
+                    if let Some(count) = per_origin_in_flight.get_mut(&origin_key(&entry.target)) {
+                        *count = count.saturating_sub(1);
+                    }
+                    failed_pages = failed_pages.saturating_add(1);
+                    pages.push(DiscoveredPage {
+                        url: entry.target,
+                        page_type: PageType::Unknown,
+                        depth: entry.depth,
+                        status: PageCrawlStatus::Unreachable,
+                    });
+                }
+                continue;
+            }
         };
 
         if let Some(count) = per_origin_in_flight.get_mut(&origin_key(&outcome.target)) {
@@ -658,7 +687,7 @@ pub(super) async fn crawl_concurrently(
 
     let coverage = CrawlCoverage {
         discovered_urls: pages.len().saturating_add(robots_blocked),
-        fetched_urls: fetched,
+        fetched_urls: analysed_urls.saturating_add(failed_urls),
         analysed_urls,
         failed_urls,
         skipped_budget_urls,

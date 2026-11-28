@@ -717,14 +717,14 @@ async fn execute_bounded_get(
 
         let tls = extract_tls_evidence(&current_target, &response, captured_now_i64());
 
-        let (raw_body, body_truncated) =
-            read_bounded_body(&mut response, budget.max_response_bytes).await?;
-        let (body, decoded_truncated) = decode_body_encoding(
-            &raw_body,
-            &headers,
-            current_target.as_str(),
-            budget.max_response_bytes,
-        );
+        let body_cap = if is_non_textual_content_type(&headers) {
+            0
+        } else {
+            budget.max_response_bytes
+        };
+        let (raw_body, body_truncated) = read_bounded_body(&mut response, body_cap).await?;
+        let (body, decoded_truncated) =
+            decode_body_encoding(&raw_body, &headers, current_target.as_str(), body_cap);
         let body_truncated = body_truncated || decoded_truncated;
         let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
@@ -775,6 +775,25 @@ fn build_pinned_client(
         .resolve_to_addrs(host_for_pin, pinned_addrs)
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))
+}
+
+/// Returns `true` when `content-type` is clearly binary/non-HTML (PDF, archive, media, font)
+/// so page acquisition avoids downloading up to 10 MiB of non-document bytes.
+fn is_non_textual_content_type(headers: &[HttpHeader]) -> bool {
+    let Some(ct) = headers
+        .iter()
+        .find(|h| h.name == "content-type")
+        .map(|h| h.value.to_ascii_lowercase())
+    else {
+        return false;
+    };
+    ct.starts_with("image/")
+        || ct.starts_with("audio/")
+        || ct.starts_with("video/")
+        || ct.starts_with("font/")
+        || ct.contains("application/pdf")
+        || ct.contains("application/zip")
+        || ct.contains("application/octet-stream")
 }
 
 /// Decompresses `raw_body` when `content-encoding` specifies `gzip`, `br`, `zstd`, or `deflate`
