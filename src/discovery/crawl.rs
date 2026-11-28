@@ -387,6 +387,20 @@ pub(super) async fn crawl_concurrently(
                 robots_blocked = robots_blocked.saturating_add(1);
                 continue;
             }
+            let remaining = if fetched > 0
+                && let Some(delay) = robots_rules.crawl_delay()
+            {
+                tokio::time::sleep(delay.min(remaining)).await;
+                let left = crawl_budget.max_duration.saturating_sub(started.elapsed());
+                if left.is_zero() {
+                    deadline_reached = true;
+                    pending.push(entry);
+                    break;
+                }
+                left
+            } else {
+                remaining
+            };
             let origin = origin_key(&entry.target);
             *per_origin_in_flight.entry(origin).or_insert(0) += 1;
             fetched = fetched.saturating_add(1);

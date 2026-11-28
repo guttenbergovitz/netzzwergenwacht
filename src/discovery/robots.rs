@@ -5,11 +5,16 @@
 //! retrieved" are different conclusions and are recorded separately; neither is presented as
 //! evidence that a URL was absent from the application.
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::collection;
 use crate::domain::{AuditTarget, CollectorOutcome, ExecutionBudget, TargetPolicy};
+
+/// Maximum `Crawl-delay` honoured per request so hostile directives cannot stall a bounded audit.
+const MAX_CRAWL_DELAY: Duration = Duration::from_secs(10);
 
 /// How the robots exclusion file was obtained for an origin.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,22 +51,51 @@ struct RobotsRule {
 #[derive(Debug, Clone, Default)]
 pub struct RobotsRules {
     rules: Vec<RobotsRule>,
+    crawl_delay: Option<Duration>,
 }
 
 impl RobotsRules {
     /// The agent token used when matching `User-agent` groups.
     const AGENT_TOKEN: &'static str = "netzzwergenwacht";
 
-    /// Parses a `robots.txt` body, keeping only the groups that apply to this agent.
+    /// Returns a rule set that disallows all paths (`Disallow: /`), used on 5xx responses per
+    /// RFC 9309 Section 2.3.1.4.
+    #[must_use]
+    pub fn disallow_all() -> Self {
+        Self {
+            rules: vec![RobotsRule {
+                allow: false,
+                pattern: "/".to_owned(),
+            }],
+            crawl_delay: None,
+        }
+    }
+
+    /// Parses a `robots.txt` body according to RFC 9309 group precedence.
+    ///
+    /// Specific groups matching [`Self::AGENT_TOKEN`] take precedence over `User-agent: *`; the
+    /// wildcard group is only used when no specific group matches.
     #[must_use]
     pub fn parse(body: &str) -> Self {
-        let mut rules = Vec::new();
-        let mut group_applies = false;
+        let mut specific_rules = Vec::new();
+        let mut wildcard_rules = Vec::new();
+        let mut specific_crawl_delay: Option<Duration> = None;
+        let mut wildcard_crawl_delay: Option<Duration> = None;
+        let mut specific_matched = false;
+
+        let mut group_specific = false;
+        let mut group_wildcard = false;
         let mut awaiting_agent = true;
 
         for raw in body.lines() {
             let line = raw.split('#').next().unwrap_or_default().trim();
             if line.is_empty() {
+                // Blank lines separate record groups per RFC 9309 Section 2.2.
+                if !awaiting_agent {
+                    group_specific = false;
+                    group_wildcard = false;
+                    awaiting_agent = true;
+                }
                 continue;
             }
             let Some((key, value)) = line.split_once(':') else {
@@ -71,14 +105,33 @@ impl RobotsRules {
             let value = value.trim();
 
             if key == "user-agent" {
-                // A blank line separates groups; a new `user-agent` after rules starts one.
                 if !awaiting_agent {
-                    group_applies = false;
+                    group_specific = false;
+                    group_wildcard = false;
                     awaiting_agent = true;
                 }
                 let agent = value.to_ascii_lowercase();
-                if agent == "*" || Self::AGENT_TOKEN.starts_with(&agent) && !agent.is_empty() {
-                    group_applies = true;
+                if agent == "*" {
+                    group_wildcard = true;
+                } else if agent == Self::AGENT_TOKEN {
+                    group_specific = true;
+                    specific_matched = true;
+                }
+                continue;
+            }
+
+            if key == "crawl-delay" {
+                awaiting_agent = false;
+                if let Ok(secs) = value.parse::<f64>()
+                    && secs.is_finite()
+                    && secs > 0.0
+                {
+                    let delay = Duration::from_secs_f64(secs).min(MAX_CRAWL_DELAY);
+                    if group_specific {
+                        specific_crawl_delay = Some(delay);
+                    } else if group_wildcard {
+                        wildcard_crawl_delay = Some(delay);
+                    }
                 }
                 continue;
             }
@@ -87,17 +140,35 @@ impl RobotsRules {
                 continue;
             }
             awaiting_agent = false;
-            if !group_applies || value.is_empty() {
+            if value.is_empty() || (!group_specific && !group_wildcard) {
                 // An empty `Disallow:` is explicitly "no restriction", not a rule.
                 continue;
             }
-            rules.push(RobotsRule {
-                allow: key == "allow",
-                pattern: value.to_owned(),
-            });
+            if group_specific {
+                specific_rules.push(RobotsRule {
+                    allow: key == "allow",
+                    pattern: value.to_owned(),
+                });
+            }
+            if group_wildcard {
+                wildcard_rules.push(RobotsRule {
+                    allow: key == "allow",
+                    pattern: value.to_owned(),
+                });
+            }
         }
 
-        Self { rules }
+        if specific_matched {
+            Self {
+                rules: specific_rules,
+                crawl_delay: specific_crawl_delay,
+            }
+        } else {
+            Self {
+                rules: wildcard_rules,
+                crawl_delay: wildcard_crawl_delay,
+            }
+        }
     }
 
     /// Returns `true` when no directive restricts `path_and_query`.
@@ -135,6 +206,12 @@ impl RobotsRules {
     pub fn is_empty(&self) -> bool {
         self.rules.is_empty()
     }
+
+    /// Optional `Crawl-delay` directive (capped at [`MAX_CRAWL_DELAY`]).
+    #[must_use]
+    pub const fn crawl_delay(&self) -> Option<Duration> {
+        self.crawl_delay
+    }
 }
 
 /// Matches a robots pattern against a path, honouring `*` wildcards and a trailing `$` anchor.
@@ -147,26 +224,34 @@ fn pattern_matches(pattern: &str, path: &str) -> bool {
         return prefix_matches(&segments, path);
     }
 
-    // Anchored: the pattern must consume the whole path.
-    let mut cursor = 0usize;
-    for (index, segment) in segments.iter().enumerate() {
-        if index == 0 {
-            if !path.starts_with(segment) {
-                return false;
-            }
-            cursor = segment.len();
-            continue;
-        }
+    // Anchored: first segment must match the start, last segment must match the end, and all
+    // intermediate wildcard-separated segments must appear in order in between.
+    let [first, ref rest @ ..] = segments[..] else {
+        return path.is_empty();
+    };
+    let Some((last, middle)) = rest.split_last() else {
+        return path == first;
+    };
+    if !path.starts_with(first) || !path.ends_with(last) {
+        return false;
+    }
+    let Some(mid_end) = path.len().checked_sub(last.len()) else {
+        return false;
+    };
+    if first.len() > mid_end {
+        return false;
+    }
+    let mut cursor = first.len();
+    for segment in middle {
         if segment.is_empty() {
             continue;
         }
-        let Some(found) = path[cursor..].find(segment) else {
+        let Some(found) = path[cursor..mid_end].find(segment) else {
             return false;
         };
         cursor += found + segment.len();
     }
-    // The final segment must reach the end of the path when the pattern is anchored.
-    cursor == path.len() || segments.last().is_some_and(|last| last.is_empty())
+    true
 }
 
 /// Matches a wildcard pattern as a prefix: every segment must appear in order.
@@ -213,8 +298,9 @@ pub async fn fetch_robots(
     match &snapshot.http {
         CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
             match data.status_code {
-                200 => (RobotsOutcome::Observed, RobotsRules::parse(&data.body_text)),
+                200..=299 => (RobotsOutcome::Observed, RobotsRules::parse(&data.body_text)),
                 404 | 410 => (RobotsOutcome::Absent, RobotsRules::default()),
+                500..=599 => (RobotsOutcome::Unavailable, RobotsRules::disallow_all()),
                 _ => (RobotsOutcome::Unavailable, RobotsRules::default()),
             }
         }
@@ -292,5 +378,41 @@ mod tests {
         );
         assert_eq!(rules.directive_count(), 1);
         assert!(!rules.allows("/secret"));
+    }
+
+    #[test]
+    fn anchored_wildcard_matches_rightmost_suffix() {
+        let rules = RobotsRules::parse("User-agent: *\nDisallow: /*.php$\n");
+        assert!(!rules.allows("/index.php"));
+        assert!(!rules.allows("/a.php.php"));
+        assert!(rules.allows("/a.php/extra"));
+    }
+
+    #[test]
+    fn specific_group_replaces_wildcard_and_rejects_partial_agent_prefixes() {
+        let rules = RobotsRules::parse(
+            "User-agent: *\nDisallow: /private\n\nUser-agent: netzzwergenwacht\nDisallow: /admin\n",
+        );
+        assert!(rules.allows("/private"));
+        assert!(!rules.allows("/admin"));
+
+        let prefix_trick = RobotsRules::parse("User-agent: n\nDisallow: /\n");
+        assert!(prefix_trick.allows("/anything"));
+    }
+
+    #[test]
+    fn crawl_delay_is_parsed_and_capped() {
+        let rules = RobotsRules::parse("User-agent: *\nCrawl-delay: 2.5\nDisallow: /tmp\n");
+        assert_eq!(rules.crawl_delay(), Some(Duration::from_secs_f64(2.5)));
+
+        let capped = RobotsRules::parse("User-agent: *\nCrawl-delay: 999\n");
+        assert_eq!(capped.crawl_delay(), Some(MAX_CRAWL_DELAY));
+    }
+
+    #[test]
+    fn disallow_all_blocks_root_and_subpaths() {
+        let rules = RobotsRules::disallow_all();
+        assert!(!rules.allows("/"));
+        assert!(!rules.allows("/index.html"));
     }
 }
