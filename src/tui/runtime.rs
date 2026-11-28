@@ -1094,6 +1094,17 @@ fn emit_crawl_completion(
             },
         );
     }
+    if target_str.starts_with("http://") {
+        sink.emit(
+            EventContext::new()
+                .with_target(target_str)
+                .with_collector(CollectorId::Tls),
+            DiagnosticEventPayload::CollectionSkipped {
+                collector: CollectorId::Tls,
+                reason: String::from("N/A (HTTP target)"),
+            },
+        );
+    }
 }
 
 /// Persists a completed crawl, reporting a failed write instead of hiding it.

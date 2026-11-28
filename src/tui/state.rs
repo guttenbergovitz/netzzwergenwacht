@@ -1613,27 +1613,16 @@ impl AppState {
         // Update Brigade rows from analyser results.
         for row in &mut self.brigade_rows {
             if let Some(analyser) = report.analysers.iter().find(|a| a.dwarf_id == row.dwarf_id) {
-                let mut passed = 0usize;
-                let mut failed = 0usize;
-                let mut skipped = 0usize;
-                let mut inconclusive = 0usize;
-                for check in &analyser.checks {
-                    match check {
-                        crate::domain::CheckStatus::Passed { .. } => passed += 1,
-                        crate::domain::CheckStatus::Failed { .. } => failed += 1,
-                        crate::domain::CheckStatus::Skipped { .. } => skipped += 1,
-                        crate::domain::CheckStatus::Unavailable { .. } => inconclusive += 1,
-                    }
-                }
+                let tally: crate::domain::CheckTally = analyser.checks.iter().collect();
                 row.checks_total = analyser.checks.len();
-                row.checks_passed = passed;
-                row.checks_failed = failed;
-                row.checks_skipped = skipped;
-                row.checks_inconclusive = inconclusive;
+                row.checks_passed = tally.passed;
+                row.checks_failed = tally.failed;
+                row.checks_skipped = tally.skipped;
+                row.checks_inconclusive = tally.unavailable;
                 row.findings_count = analyser.findings.len();
-                row.status = if row.checks_total > 0 && skipped == row.checks_total {
+                row.status = if row.checks_total > 0 && tally.skipped == row.checks_total {
                     OperationalStatus::Skipped
-                } else if inconclusive > 0 {
+                } else if tally.unavailable > 0 {
                     OperationalStatus::Partial
                 } else {
                     OperationalStatus::Done
@@ -1746,7 +1735,9 @@ impl AppState {
                 row.checks_skipped = total.checks_skipped;
                 row.checks_inconclusive = total.checks_unavailable;
                 row.findings_count = total.findings_count;
-                row.status = if total.checks_evaluated == 0 {
+                row.status = if total.checks_evaluated == 0
+                    || total.checks_skipped == total.checks_evaluated
+                {
                     OperationalStatus::Skipped
                 } else {
                     OperationalStatus::Done
@@ -2203,7 +2194,7 @@ fn build_systemic_finding_rows(
                     120,
                 ),
                 title: sanitize_line(
-                    &format!("[Systemic: {affected} page(s)] {}", issue.rule_id.0),
+                    &format!("[{affected}p] {}", issue.summary),
                     120,
                 ),
                 description: sanitize_multiline(
