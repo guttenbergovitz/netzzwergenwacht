@@ -13,6 +13,7 @@ use crate::domain::{
 
 const RULE_HTTPS: &str = "sec.transport.https";
 const RULE_TLS_EXPIRY: &str = "sec.tls.certificate_expiry";
+const RULE_TLS_VERIFICATION: &str = "sec.tls.certificate_verification";
 const RULE_HSTS: &str = "sec.headers.hsts";
 const RULE_CSP: &str = "sec.headers.csp";
 const RULE_XCTO: &str = "sec.headers.x_content_type_options";
@@ -59,6 +60,7 @@ const RULE_SOURCE_MAP_EXPOSURE: &str = "sec.deploy.source_map_exposure";
 const ALL_RULES: &[&str] = &[
     RULE_HTTPS,
     RULE_TLS_EXPIRY,
+    RULE_TLS_VERIFICATION,
     RULE_HSTS,
     RULE_CSP,
     RULE_XCTO,
@@ -136,8 +138,9 @@ pub fn analyse_with_document(
                 let mut findings = Vec::new();
                 let mut checks = Vec::new();
                 check_tls_expiry(snapshot, &mut findings, &mut checks);
+                check_tls_verification(snapshot, &mut findings, &mut checks);
                 for &rule_id in ALL_RULES {
-                    if rule_id != RULE_TLS_EXPIRY {
+                    if rule_id != RULE_TLS_EXPIRY && rule_id != RULE_TLS_VERIFICATION {
                         checks.push(CheckStatus::Skipped {
                             rule_id: RuleId(rule_id.to_owned()),
                             evidence_level: EvidenceLevel::Source,
@@ -166,6 +169,7 @@ pub fn analyse_with_document(
     let uses_https = http.final_url.starts_with("https://");
     check_https(http, uses_https, &mut findings, &mut checks);
     check_tls_expiry(snapshot, &mut findings, &mut checks);
+    check_tls_verification(snapshot, &mut findings, &mut checks);
     check_hsts(http, uses_https, &mut findings, &mut checks);
     check_csp(http, obs, &mut findings, &mut checks);
     check_xcto(http, &mut findings, &mut checks);
@@ -321,6 +325,74 @@ fn check_tls_expiry(
             rule_id: RuleId(RULE_TLS_EXPIRY.to_owned()),
             evidence_level: EvidenceLevel::Source,
         });
+    }
+}
+
+fn check_tls_verification(
+    snapshot: &EvidenceSnapshot,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    match &snapshot.tls {
+        CollectorOutcome::Captured { .. } => {
+            checks.push(CheckStatus::Passed {
+                rule_id: RuleId(RULE_TLS_VERIFICATION.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+            });
+        }
+        CollectorOutcome::Partial { data, warnings } => {
+            let verification_warning = warnings
+                .iter()
+                .find(|w| w.contains("TLS verification failed"));
+            if let Some(warning) = verification_warning {
+                findings.push(Finding {
+                    fingerprint: FindingFingerprint::default(),
+                    rule_id: RuleId(RULE_TLS_VERIFICATION.to_owned()),
+                    category: FindingCategory::Security,
+                    evidence_level: EvidenceLevel::Source,
+                    kind: FindingKind::Deterministic,
+                    severity: Severity::High,
+                    confidence: Confidence::High,
+                    title: "TLS certificate failed trust verification".to_owned(),
+                    summary: format!(
+                        "Leaf certificate `{}` (issuer `{}`, self_signed={}) failed TLS verification: {warning}",
+                        data.subject, data.issuer, data.self_signed
+                    ),
+                    evidence_refs: vec![EvidenceRef::new(
+                        EvidenceSource::TlsCertificate,
+                        format!("self_signed={}; {warning}", data.self_signed),
+                    )],
+                    remediation: Some(
+                        "Deploy a valid certificate chain signed by a publicly trusted CA matching the target hostname."
+                            .to_owned(),
+                    ),
+                });
+                checks.push(CheckStatus::Failed {
+                    rule_id: RuleId(RULE_TLS_VERIFICATION.to_owned()),
+                    evidence_level: EvidenceLevel::Source,
+                });
+            } else {
+                checks.push(CheckStatus::Unavailable {
+                    rule_id: RuleId(RULE_TLS_VERIFICATION.to_owned()),
+                    evidence_level: EvidenceLevel::Source,
+                    reason: warnings.join("; "),
+                });
+            }
+        }
+        CollectorOutcome::Skipped { reason } => {
+            checks.push(CheckStatus::Skipped {
+                rule_id: RuleId(RULE_TLS_VERIFICATION.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: reason.clone(),
+            });
+        }
+        CollectorOutcome::Failed { error } => {
+            checks.push(CheckStatus::Unavailable {
+                rule_id: RuleId(RULE_TLS_VERIFICATION.to_owned()),
+                evidence_level: EvidenceLevel::Source,
+                reason: format!("TLS certificate unavailable: {error}"),
+            });
+        }
     }
 }
 
@@ -3457,7 +3529,10 @@ mod tests {
                     caa_query_succeeded: false,
                     caa_lookup_outcome: CaaLookupOutcome::NotAttempted,
                 },
-                warnings: vec!["captured via diagnostic probe".to_owned()],
+                warnings: vec![
+                    "TLS verification failed (CaUsedAsEndEntity); captured via diagnostic probe"
+                        .to_owned(),
+                ],
             },
             browser: CollectorOutcome::default(),
             lighthouse: CollectorOutcome::default(),
@@ -3469,6 +3544,13 @@ mod tests {
                 .iter()
                 .any(|f| f.rule_id.0 == RULE_TLS_EXPIRY && f.severity == Severity::Critical),
             "expected critical sec.tls.certificate_expiry finding, got: {:?}",
+            res.findings
+        );
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_TLS_VERIFICATION && f.severity == Severity::High),
+            "expected high sec.tls.certificate_verification finding, got: {:?}",
             res.findings
         );
     }
