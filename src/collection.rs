@@ -232,13 +232,15 @@ async fn collect_http_with_source(
             tls,
         ),
         Ok(Ok((evidence, tls))) => (CollectorOutcome::Captured { data: evidence }, tls),
-        Ok(Err(error)) => {
-            tracing::warn!(target = target.as_str(), %error, "HTTP collection failed");
+        Ok(Err(failed)) => {
+            tracing::warn!(target = target.as_str(), error = %failed.error, "HTTP collection failed");
             (
-                CollectorOutcome::Failed { error },
-                CollectorOutcome::Skipped {
-                    reason: "TLS outcome unavailable because HTTP collection failed".to_owned(),
+                CollectorOutcome::Failed {
+                    error: failed.error,
                 },
+                failed.tls.unwrap_or_else(|| CollectorOutcome::Skipped {
+                    reason: "TLS outcome unavailable because HTTP collection failed".to_owned(),
+                }),
             )
         }
         Err(_) => {
@@ -604,12 +606,41 @@ pub async fn collect_batch(
     ordered.into_iter().map(|(_, snap)| snap).collect()
 }
 
+struct FailedHttpAttempt {
+    error: String,
+    tls: Option<CollectorOutcome<TlsEvidence>>,
+}
+
+impl From<String> for Box<FailedHttpAttempt> {
+    fn from(error: String) -> Self {
+        Self::new(FailedHttpAttempt { error, tls: None })
+    }
+}
+
+async fn handle_http_send_error(
+    current_target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: std::time::Duration,
+    err: &reqwest::Error,
+) -> Box<FailedHttpAttempt> {
+    let error_msg = format!("HTTP request failed: {}", format_error_chain(err));
+    let tls_probe = if current_target.scheme() == TargetScheme::Https {
+        probe_tls_certificate_unverified(current_target, policy, timeout, &error_msg).await
+    } else {
+        None
+    };
+    Box::new(FailedHttpAttempt {
+        error: error_msg,
+        tls: tls_probe,
+    })
+}
+
 async fn execute_bounded_get(
     initial_target: &AuditTarget,
     budget: &ExecutionBudget,
     policy: TargetPolicy,
     source: ClientSource<'_>,
-) -> Result<(HttpEvidence, CollectorOutcome<TlsEvidence>), String> {
+) -> Result<(HttpEvidence, CollectorOutcome<TlsEvidence>), Box<FailedHttpAttempt>> {
     let started = Instant::now();
     let mut current_target = initial_target.clone();
     let mut redirect_chain = Vec::new();
@@ -628,30 +659,42 @@ async fn execute_bounded_get(
             }
         };
 
-        let mut response = client
-            .get(current_target.as_str())
-            .send()
-            .await
-            .map_err(|e| format!("HTTP request failed: {e}"))?;
+        let mut response = match client.get(current_target.as_str()).send().await {
+            Ok(resp) => resp,
+            Err(err) => {
+                return Err(handle_http_send_error(
+                    &current_target,
+                    policy,
+                    budget.http_timeout,
+                    &err,
+                )
+                .await);
+            }
+        };
 
         let status = response.status();
         if is_redirect_status(status) {
             if redirect_chain.len() >= budget.max_redirects {
-                return Err(format!(
+                return Err(Box::<FailedHttpAttempt>::from(format!(
                     "exceeded maximum redirect limit of {}",
                     budget.max_redirects
-                ));
+                )));
             }
 
             let location = response
                 .headers()
                 .get(reqwest::header::LOCATION)
                 .and_then(|v| v.to_str().ok())
-                .ok_or_else(|| format!("redirect status {status} missing valid Location header"))?;
+                .ok_or_else(|| {
+                    Box::<FailedHttpAttempt>::from(format!(
+                        "redirect status {status} missing valid Location header"
+                    ))
+                })?;
 
             let next_url = resolve_redirect_url(current_target.as_str(), location)?;
-            let next_target = AuditTarget::parse(next_url.as_str(), policy)
-                .map_err(|e| format!("redirect target rejected: {e}"))?;
+            let next_target = AuditTarget::parse(next_url.as_str(), policy).map_err(|e| {
+                Box::<FailedHttpAttempt>::from(format!("redirect target rejected: {e}"))
+            })?;
 
             redirect_chain.push(RedirectHop {
                 from_url: current_target.as_str().to_owned(),
@@ -793,6 +836,57 @@ fn decode_body_encoding(
     }
 }
 
+fn format_error_chain(err: &dyn std::error::Error) -> String {
+    let mut parts = vec![err.to_string()];
+    let mut current = err.source();
+    let mut depth = 0usize;
+    while let Some(source) = current
+        && depth < 6
+    {
+        let text = source.to_string();
+        if parts.last().is_none_or(|prev| prev != &text) {
+            parts.push(text);
+        }
+        current = source.source();
+        depth += 1;
+    }
+    parts.join(": ")
+}
+
+/// Performs a strictly diagnostic-only TLS handshake when verified HTTPS collection failed,
+/// capturing peer certificate metadata (for example expiry) without ever reading HTTP content.
+async fn probe_tls_certificate_unverified(
+    target: &AuditTarget,
+    policy: TargetPolicy,
+    timeout: std::time::Duration,
+    verification_error: &str,
+) -> Option<CollectorOutcome<TlsEvidence>> {
+    let pinned_addrs = resolve_and_validate(target, policy).await.ok()?;
+    let host_for_pin = strip_ipv6_brackets(target.host());
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .tls_info(true)
+        .danger_accept_invalid_certs(true)
+        .redirect(Policy::none())
+        .timeout(timeout.min(std::time::Duration::from_secs(5)))
+        .user_agent(USER_AGENT)
+        .resolve_to_addrs(host_for_pin, &pinned_addrs)
+        .build()
+        .ok()?;
+    let response = client.head(target.as_str()).send().await.ok()?;
+    match extract_tls_evidence(target, &response, captured_now_i64()) {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => {
+            Some(CollectorOutcome::Partial {
+                data,
+                warnings: vec![format!(
+                    "TLS verification failed ({verification_error}); certificate captured via diagnostic probe"
+                )],
+            })
+        }
+        other => Some(other),
+    }
+}
+
 fn captured_now_i64() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -826,7 +920,7 @@ fn extract_tls_evidence(
         Ok((_, cert)) => {
             let not_before = Some(cert.validity().not_before.timestamp());
             let not_after = cert.validity().not_after.timestamp();
-            let days_until_expiry = (not_after - now_unix_secs) / 86_400;
+            let days_until_expiry = (not_after - now_unix_secs).div_euclid(86_400);
             let subject_alt_names = cert
                 .subject_alternative_name()
                 .ok()

@@ -129,6 +129,28 @@ pub fn analyse_with_document(
     let http = match require_http(snapshot) {
         Ok(http) => http,
         Err(reason) => {
+            if matches!(
+                snapshot.tls,
+                CollectorOutcome::Captured { .. } | CollectorOutcome::Partial { .. }
+            ) {
+                let mut findings = Vec::new();
+                let mut checks = Vec::new();
+                check_tls_expiry(snapshot, &mut findings, &mut checks);
+                for &rule_id in ALL_RULES {
+                    if rule_id != RULE_TLS_EXPIRY {
+                        checks.push(CheckStatus::Skipped {
+                            rule_id: RuleId(rule_id.to_owned()),
+                            evidence_level: EvidenceLevel::Source,
+                            reason: reason.clone(),
+                        });
+                    }
+                }
+                return AnalyserResult {
+                    dwarf_id: DwarfId::Sicherheits,
+                    findings,
+                    checks,
+                };
+            }
             return skip_all(
                 DwarfId::Sicherheits,
                 ALL_RULES,
@@ -3388,5 +3410,48 @@ mod tests {
         let ids: Vec<&str> = res.findings.iter().map(|f| f.rule_id.0.as_str()).collect();
         assert!(ids.contains(&RULE_DEBUG_HEADERS));
         assert!(ids.contains(&RULE_SOURCE_MAP_EXPOSURE));
+    }
+
+    #[test]
+    fn expired_tls_partial_without_http_still_emits_critical_expiry_finding() {
+        use crate::domain::{AuditTarget, CaaLookupOutcome, TargetPolicy, TlsEvidence};
+
+        let target = AuditTarget::parse("https://expired.example/", TargetPolicy::PublicOnly)
+            .expect("target");
+        let snap = EvidenceSnapshot {
+            target,
+            captured_at_unix_secs: 1_700_000_000,
+            http: CollectorOutcome::Failed {
+                error: "HTTP request failed: certificate expired".to_owned(),
+            },
+            tls: CollectorOutcome::Partial {
+                data: TlsEvidence {
+                    subject: "CN=expired.example".to_owned(),
+                    issuer: "CN=Example CA".to_owned(),
+                    not_before_unix_secs: Some(1_600_000_000),
+                    not_after_unix_secs: 1_699_800_000,
+                    days_until_expiry: -2,
+                    san_entries: vec!["expired.example".to_owned()],
+                    signature_algorithm: None,
+                    public_key_algorithm: None,
+                    self_signed: false,
+                    caa_records: Vec::new(),
+                    caa_query_succeeded: false,
+                    caa_lookup_outcome: CaaLookupOutcome::NotAttempted,
+                },
+                warnings: vec!["captured via diagnostic probe".to_owned()],
+            },
+            browser: CollectorOutcome::default(),
+            lighthouse: CollectorOutcome::default(),
+            axe: CollectorOutcome::default(),
+        };
+        let res = analyse(&snap);
+        assert!(
+            res.findings
+                .iter()
+                .any(|f| f.rule_id.0 == RULE_TLS_EXPIRY && f.severity == Severity::Critical),
+            "expected critical sec.tls.certificate_expiry finding, got: {:?}",
+            res.findings
+        );
     }
 }
