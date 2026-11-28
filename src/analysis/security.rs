@@ -167,7 +167,7 @@ pub fn analyse_with_document(
     check_https(http, uses_https, &mut findings, &mut checks);
     check_tls_expiry(snapshot, &mut findings, &mut checks);
     check_hsts(http, uses_https, &mut findings, &mut checks);
-    check_csp(http, &mut findings, &mut checks);
+    check_csp(http, obs, &mut findings, &mut checks);
     check_xcto(http, &mut findings, &mut checks);
     check_xfo(http, &mut findings, &mut checks);
     check_referrer_policy(http, &mut findings, &mut checks);
@@ -454,11 +454,28 @@ fn parse_hsts_max_age(value: &str) -> Option<u64> {
     None
 }
 
-fn check_csp(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<CheckStatus>) {
-    let Some(csp) = header_value(http, "content-security-policy")
+fn check_csp(
+    http: &HttpEvidence,
+    obs: Option<&DocumentObservations>,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let mut policies: Vec<&str> = http
+        .headers
+        .iter()
+        .filter(|h| h.name.eq_ignore_ascii_case("content-security-policy"))
+        .map(|h| h.value.trim())
+        .filter(|v| !v.is_empty())
+        .collect();
+    if let Some(meta_csp) = obs
+        .and_then(|o| o.meta_csp.as_deref())
         .map(str::trim)
         .filter(|v| !v.is_empty())
-    else {
+    {
+        policies.push(meta_csp);
+    }
+
+    if policies.is_empty() {
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_CSP.to_owned()),
@@ -485,9 +502,10 @@ fn check_csp(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<
             evidence_level: EvidenceLevel::Source,
         });
         return;
-    };
+    }
 
-    let lower = csp.to_ascii_lowercase();
+    let joined = policies.join("; ");
+    let lower = joined.to_ascii_lowercase();
     let has_unsafe = lower.contains("'unsafe-inline'") || lower.contains("'unsafe-eval'");
     if has_unsafe {
         findings.push(Finding {
@@ -502,7 +520,7 @@ fn check_csp(http: &HttpEvidence, findings: &mut Vec<Finding>, checks: &mut Vec<
             summary: "Content-Security-Policy allows `'unsafe-inline'` or `'unsafe-eval'`, weakening XSS protection.".to_owned(),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpHeaders,
-                format!("content-security-policy={csp}"),
+                format!("content-security-policy={joined}"),
             )],
             remediation: Some(
                 "Replace `'unsafe-inline'` and `'unsafe-eval'` with nonces or hashes where feasible."

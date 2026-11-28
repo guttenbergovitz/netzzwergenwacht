@@ -181,7 +181,9 @@ pub fn run_all_with_events(
             run_analyser(DwarfId::Leistungs, &mut || {
                 performance::analyse_with_document(snapshot, Some(&obs))
             });
-            run_analyser(DwarfId::Struktur, &mut || semantics::analyse(&obs));
+            run_analyser(DwarfId::Struktur, &mut || {
+                semantics::analyse_with_http(&obs, Some(http))
+            });
             run_analyser(DwarfId::Zugaenglichkeits, &mut || {
                 accessibility::analyse_with_browser(&obs, &snapshot.axe, &snapshot.browser)
             });

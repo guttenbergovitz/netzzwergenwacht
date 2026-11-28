@@ -4,10 +4,11 @@
 //! without claiming to validate original un-repaired HTML syntax.
 
 use crate::analysis::document::DocumentObservations;
+use crate::analysis::header_value;
 use crate::brigade::DwarfId;
 use crate::domain::{
     AnalyserResult, CheckStatus, Confidence, EvidenceLevel, EvidenceRef, EvidenceSource, Finding,
-    FindingCategory, FindingFingerprint, FindingKind, RuleId, Severity,
+    FindingCategory, FindingFingerprint, FindingKind, HttpEvidence, RuleId, Severity,
 };
 
 const RULE_DUPLICATE_IDS: &str = "str.doc.duplicate_ids";
@@ -48,6 +49,16 @@ pub const ALL_RULES: &[&str] = &[
 /// Evaluates semantic HTML structure and element integrity over `obs`.
 #[must_use]
 pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
+    analyse_with_http(obs, None)
+}
+
+/// Evaluates semantic HTML structure and element integrity over `obs`, optionally consulting
+/// HTTP `Content-Type` headers for charset declaration.
+#[must_use]
+pub fn analyse_with_http(
+    obs: &DocumentObservations,
+    http: Option<&HttpEvidence>,
+) -> AnalyserResult {
     let mut findings = Vec::new();
     let mut checks = Vec::new();
 
@@ -56,7 +67,7 @@ pub fn analyse(obs: &DocumentObservations) -> AnalyserResult {
     check_landmarks(obs, &mut findings, &mut checks);
     check_interactive_semantics(obs, &mut findings, &mut checks);
     check_container_ratio(obs, &mut findings, &mut checks);
-    check_charset(obs, &mut findings, &mut checks);
+    check_charset(obs, http, &mut findings, &mut checks);
     check_skip_link(obs, &mut findings, &mut checks);
     check_meta_refresh(obs, &mut findings, &mut checks);
     check_favicon(obs, &mut findings, &mut checks);
@@ -386,10 +397,14 @@ fn check_container_ratio(
 
 fn check_charset(
     obs: &DocumentObservations,
+    http: Option<&HttpEvidence>,
     findings: &mut Vec<Finding>,
     checks: &mut Vec<CheckStatus>,
 ) {
-    if obs.charset_declared {
+    let header_charset = http
+        .and_then(|h| header_value(h, "content-type"))
+        .is_some_and(|ct| ct.to_ascii_lowercase().contains("charset="));
+    if obs.charset_declared || header_charset {
         checks.push(CheckStatus::Passed {
             rule_id: RuleId(RULE_CHARSET.to_owned()),
             evidence_level: EvidenceLevel::Source,

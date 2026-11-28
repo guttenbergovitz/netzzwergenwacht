@@ -746,25 +746,29 @@ pub fn classify_page(url: &AuditTarget, obs: &DocumentObservations) -> PageType 
 pub fn cluster_systemic_issues(
     page_reports: &[(AuditTarget, PageType, AuditReport)],
 ) -> Vec<SystemicIssue> {
-    let mut by_rule: BTreeMap<String, Vec<(&str, PageType, Severity, DwarfId)>> = BTreeMap::new();
+    type ClusterOccurrences<'a> = Vec<(&'a str, PageType, Severity, DwarfId)>;
+    let mut by_rule: BTreeMap<(String, Severity), ClusterOccurrences<'_>> = BTreeMap::new();
     for (target, page_type, report) in page_reports {
-        let mut seen_rules_on_page = HashSet::new();
+        let mut seen_rules_on_page = std::collections::BTreeSet::new();
         for analyser in &report.analysers {
             for finding in &analyser.findings {
-                if seen_rules_on_page.insert(finding.rule_id.0.as_str()) {
-                    by_rule.entry(finding.rule_id.0.clone()).or_default().push((
-                        target.as_str(),
-                        *page_type,
-                        finding.severity,
-                        analyser.dwarf_id,
-                    ));
+                if seen_rules_on_page.insert((finding.rule_id.0.as_str(), finding.severity)) {
+                    by_rule
+                        .entry((finding.rule_id.0.clone(), finding.severity))
+                        .or_default()
+                        .push((
+                            target.as_str(),
+                            *page_type,
+                            finding.severity,
+                            analyser.dwarf_id,
+                        ));
                 }
             }
         }
     }
 
     let mut clusters = Vec::new();
-    for (rule_id, occurrences) in by_rule {
+    for ((rule_id, _), occurrences) in by_rule {
         if occurrences.len() < 2 {
             continue;
         }

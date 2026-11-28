@@ -274,6 +274,8 @@ pub struct DocumentObservations {
     pub canonical_count: usize,
     /// Normalised charset declared via `<meta charset>` or `<meta http-equiv="content-type">`.
     pub declared_charset: Option<String>,
+    /// Trimmed `<meta http-equiv="Content-Security-Policy" content="...">`, if present.
+    pub meta_csp: Option<String>,
 }
 
 impl DocumentObservations {
@@ -287,15 +289,15 @@ impl DocumentObservations {
             content: super::segmentation::ContentSegmentation::extract(&doc),
             title: first_text(&doc, "title"),
             html_lang: first_attr(&doc, "html", "lang"),
-            meta_description: first_attr(&doc, r#"meta[name="description"]"#, "content"),
-            meta_robots: first_attr(&doc, r#"meta[name="robots"]"#, "content"),
-            meta_generator: first_attr(&doc, r#"meta[name="generator"]"#, "content"),
+            meta_description: first_meta_attr_ci(&doc, "name", "description", "content"),
+            meta_robots: first_meta_attr_ci(&doc, "name", "robots", "content"),
+            meta_generator: first_meta_attr_ci(&doc, "name", "generator", "content"),
             canonical_url: first_attr(&doc, r#"link[rel="canonical"]"#, "href"),
             hreflang_count: hreflangs.len(),
             json_ld_count: json_ld_blocks.len(),
-            viewport_meta: first_attr(&doc, r#"meta[name="viewport"]"#, "content"),
+            viewport_meta: first_meta_attr_ci(&doc, "name", "viewport", "content"),
             charset_declared: count_selector(&doc, "meta[charset]") > 0
-                || first_attr(&doc, r#"meta[http-equiv="content-type"]"#, "content").is_some(),
+                || first_meta_attr_ci(&doc, "http-equiv", "content-type", "content").is_some(),
             hreflangs,
             json_ld_blocks,
             social_meta: extract_social_meta(&doc),
@@ -304,11 +306,12 @@ impl DocumentObservations {
                 &doc,
                 r#"link[rel="preconnect"], link[rel="dns-prefetch"]"#,
             ),
-            meta_refresh: first_attr(&doc, r#"meta[http-equiv="refresh"]"#, "content"),
+            meta_refresh: first_meta_attr_ci(&doc, "http-equiv", "refresh", "content"),
             doctype_kind: detect_doctype(html),
             title_count: count_selector(&doc, "title"),
             canonical_count: count_selector(&doc, r#"link[rel="canonical"]"#),
             declared_charset: extract_declared_charset(&doc),
+            meta_csp: first_meta_attr_ci(&doc, "http-equiv", "content-security-policy", "content"),
             ..Self::default()
         };
 
@@ -323,6 +326,29 @@ impl DocumentObservations {
 
         obs
     }
+}
+
+fn first_meta_attr_ci(
+    doc: &Html,
+    match_attr: &str,
+    expected: &str,
+    value_attr: &str,
+) -> Option<String> {
+    let sel = Selector::parse("meta").ok()?;
+    for el in doc.select(&sel) {
+        if el
+            .value()
+            .attr(match_attr)
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case(expected))
+            && let Some(val) = el.value().attr(value_attr)
+        {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_owned());
+            }
+        }
+    }
+    None
 }
 
 fn extract_declared_charset(doc: &Html) -> Option<String> {
