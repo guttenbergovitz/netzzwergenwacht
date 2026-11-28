@@ -6,7 +6,7 @@
 //! and duplicate titles/descriptions) over a typed [`ApplicationGraph`]
 //! without performing network I/O.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
 use crate::analysis::document::HreflangObs;
 use crate::analysis::schema::SchemaEntitySummary;
@@ -115,6 +115,10 @@ pub struct GraphPageInput {
     pub resources: Vec<GraphResourceInput>,
     /// Optional 64-bit `SimHash` of visible body text for near-duplicate clustering.
     pub text_simhash: Option<u64>,
+    /// Optional visible word count extracted from `<body>`.
+    pub word_count: Option<usize>,
+    /// Optional 64-bit chrome fingerprint for template clustering.
+    pub chrome_fingerprint: Option<u64>,
 }
 
 /// Normalised application-level URL, link, canonical, and hreflang graph.
@@ -126,6 +130,8 @@ pub struct ApplicationGraph {
     pub redirect_map: BTreeMap<String, String>,
     /// Incoming internal link sources per target URL.
     pub incoming_links: BTreeMap<String, BTreeSet<String>>,
+    /// Shortest BFS click-depth from the home/seed page following internal links.
+    pub bfs_click_depth: BTreeMap<String, usize>,
     /// Whether all discovered internal targets are present in `pages`.
     pub coverage_complete: bool,
 }
@@ -160,13 +166,62 @@ impl ApplicationGraph {
             }
         }
 
+        let bfs_click_depth = compute_bfs_click_depth(&pages, &redirect_map);
+
         Self {
             pages,
             redirect_map,
             incoming_links,
+            bfs_click_depth,
             coverage_complete,
         }
     }
+
+    /// Returns the shortest BFS click-depth from the home/seed page to `url`, if reachable.
+    #[must_use]
+    pub fn click_depth(&self, url: &str) -> Option<usize> {
+        let resolved = self.redirect_map.get(url).map_or(url, String::as_str);
+        self.bfs_click_depth.get(resolved).copied()
+    }
+}
+
+fn compute_bfs_click_depth(
+    pages: &BTreeMap<String, GraphPageInput>,
+    redirect_map: &BTreeMap<String, String>,
+) -> BTreeMap<String, usize> {
+    let mut depths = BTreeMap::new();
+    let home_url = pages
+        .values()
+        .filter(|p| {
+            p.depth == 0
+                || url::Url::parse(&p.url).is_ok_and(|u| u.path() == "/" || u.path().is_empty())
+        })
+        .min_by_key(|p| (p.depth, p.url.as_str()))
+        .map(|p| p.url.clone());
+
+    let Some(start) = home_url else {
+        return depths;
+    };
+
+    let mut queue = VecDeque::new();
+    depths.insert(start.clone(), 0usize);
+    queue.push_back(start);
+
+    while let Some(curr) = queue.pop_front() {
+        let curr_depth = depths[&curr];
+        let Some(page) = pages.get(&curr) else {
+            continue;
+        };
+        for target in &page.internal_links {
+            let resolved = redirect_map.get(target).unwrap_or(target);
+            if pages.contains_key(resolved) && !depths.contains_key(resolved) {
+                depths.insert(resolved.clone(), curr_depth + 1);
+                queue.push_back(resolved.clone());
+            }
+        }
+    }
+
+    depths
 }
 
 /// Evaluates all Application Graph rules across `graph`, grouped by responsible dwarf.
@@ -205,7 +260,7 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
     check_duplicate_metadata(graph, &mut inh_findings, &mut inh_checks);
     check_near_duplicate_simhash(graph, &mut inh_findings, &mut inh_checks);
 
-    vec![
+    let mut results = vec![
         AnalyserResult {
             dwarf_id: DwarfId::Netz,
             findings: netz_findings,
@@ -226,7 +281,18 @@ pub fn analyse(graph: &ApplicationGraph) -> Vec<AnalyserResult> {
             findings: inh_findings,
             checks: inh_checks,
         },
-    ]
+    ];
+
+    for mut site_res in crate::analysis::site_rules::analyse_graph(graph) {
+        if let Some(existing) = results.iter_mut().find(|r| r.dwarf_id == site_res.dwarf_id) {
+            existing.findings.append(&mut site_res.findings);
+            existing.checks.append(&mut site_res.checks);
+        } else {
+            results.push(site_res);
+        }
+    }
+
+    results
 }
 
 fn check_broken_internal_links(
@@ -960,8 +1026,10 @@ fn check_deep_crawl_depth(
     let deep: Vec<String> = graph
         .pages
         .values()
-        .filter(|p| p.depth > 3)
-        .map(|p| format!("{} (depth={})", p.url, p.depth))
+        .filter_map(|p| {
+            let effective_depth = graph.click_depth(&p.url).unwrap_or(p.depth);
+            (effective_depth > 3).then(|| format!("{} (click_depth={effective_depth})", p.url))
+        })
         .collect();
 
     if deep.is_empty() {
@@ -1787,6 +1855,8 @@ mod tests {
             entities: Vec::new(),
             resources: Vec::new(),
             text_simhash: None,
+            word_count: None,
+            chrome_fingerprint: None,
         }
     }
 
@@ -2023,5 +2093,37 @@ mod tests {
         assert!(near_finding.summary.contains("near-1"));
         assert!(near_finding.summary.contains("near-2"));
         assert!(near_finding.summary.contains("near-3"));
+    }
+
+    #[test]
+    fn computes_bfs_click_depth_from_home_ignoring_sitemap_shortcut() {
+        let mut home = page("https://example.com/");
+        home.depth = 0;
+        home.internal_links = vec!["https://example.com/a".to_owned()];
+        let mut a = page("https://example.com/a");
+        a.depth = 1;
+        a.internal_links = vec!["https://example.com/b".to_owned()];
+        let mut b = page("https://example.com/b");
+        b.depth = 1; // sitemap shortcut depth, but 2 clicks from home
+        b.internal_links = vec!["https://example.com/c".to_owned()];
+        let mut c = page("https://example.com/c");
+        c.depth = 1;
+        c.internal_links = vec!["https://example.com/d".to_owned()];
+        let mut d = page("https://example.com/d");
+        d.depth = 1; // 4 clicks from home
+
+        let graph = ApplicationGraph::from_pages(&[home, a, b, c, d], true);
+        assert_eq!(graph.click_depth("https://example.com/"), Some(0));
+        assert_eq!(graph.click_depth("https://example.com/a"), Some(1));
+        assert_eq!(graph.click_depth("https://example.com/b"), Some(2));
+        assert_eq!(graph.click_depth("https://example.com/c"), Some(3));
+        assert_eq!(graph.click_depth("https://example.com/d"), Some(4));
+
+        let results = analyse(&graph);
+        let ids: Vec<&str> = results
+            .iter()
+            .flat_map(|r| r.findings.iter().map(|f| f.rule_id.0.as_str()))
+            .collect();
+        assert!(ids.contains(&RULE_DEEP_CRAWL_DEPTH));
     }
 }

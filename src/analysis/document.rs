@@ -47,6 +47,24 @@ pub struct ImageObs {
     pub has_srcset: bool,
 }
 
+/// Semantic DOM region enclosing a hyperlink.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkRegion {
+    /// Inside `<header>` or `[role="banner"]`.
+    Header,
+    /// Inside `<nav>` or `[role="navigation"]`.
+    Nav,
+    /// Inside `<main>`, `<article>`, or `[role="main"]`.
+    Main,
+    /// Inside `<aside>` or `[role="complementary"]`.
+    Aside,
+    /// Inside `<footer>` or `[role="contentinfo"]`.
+    Footer,
+    /// Anywhere else inside `<body>`.
+    Body,
+}
+
 /// Observed `<a href="...">` link element.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkObs {
@@ -58,6 +76,8 @@ pub struct LinkObs {
     pub rel: Option<String>,
     /// Trimmed `target` attribute, if present.
     pub target: Option<String>,
+    /// Semantic DOM region enclosing this link.
+    pub region: LinkRegion,
 }
 
 /// Observed `<link rel="alternate" hreflang="...">` element.
@@ -278,6 +298,11 @@ pub struct DocumentObservations {
     pub preconnect_count: usize,
     /// Count of inline `<svg>` elements lacking `aria-hidden="true"` and an accessible label.
     pub inline_svg_without_a11y: usize,
+    /// Deterministic 64-bit FNV-1a fingerprint of page chrome (stylesheets, scripts, landmarks,
+    /// and header/nav/footer element skeleton) for template clustering.
+    pub chrome_fingerprint: Option<u64>,
+    /// Static WAI-ARIA 1.2 role and attribute validation summary.
+    pub aria_validation: crate::analysis::aria::AriaValidationSummary,
     /// Trimmed `<meta http-equiv="refresh" content="...">`, if present.
     pub meta_refresh: Option<String>,
     /// Count of data `<table>` elements lacking any `<th>` header cell.
@@ -358,6 +383,8 @@ impl DocumentObservations {
         extract_interactive_and_aria(&doc, &mut obs);
         extract_visible_text_stats(&doc, &mut obs);
         extract_wave5_observations(&doc, &mut obs);
+        obs.chrome_fingerprint = compute_chrome_fingerprint(&doc, &obs);
+        obs.aria_validation = crate::analysis::aria::validate_document_aria(&doc);
 
         obs
     }
@@ -806,6 +833,7 @@ fn extract_interactive_and_aria(doc: &Html, obs: &mut DocumentObservations) {
                         text,
                         rel: non_empty_attr(&el, "rel"),
                         target: non_empty_attr(&el, "target"),
+                        region: classify_link_region(&el),
                     });
                 }
             }
@@ -931,6 +959,91 @@ fn extract_visible_text_stats(doc: &Html, obs: &mut DocumentObservations) {
         append_filtered_text(body, &mut main_sample);
     }
     obs.main_content_text = main_sample;
+}
+
+fn compute_chrome_fingerprint(doc: &Html, obs: &DocumentObservations) -> Option<u64> {
+    let mut signals: Vec<String> = Vec::new();
+
+    for ss in &obs.stylesheets {
+        let path = ss.href.split('?').next().unwrap_or(ss.href.as_str()).trim();
+        if !path.is_empty() {
+            signals.push(format!("css:{path}"));
+        }
+    }
+    for sc in &obs.scripts {
+        if let Some(ref src) = sc.src {
+            let path = src.split('?').next().unwrap_or(src.as_str()).trim();
+            if !path.is_empty() {
+                signals.push(format!("js:{path}"));
+            }
+        }
+    }
+    if let Ok(chrome_sel) = Selector::parse("header, nav, footer") {
+        for region in doc.select(&chrome_sel).take(12) {
+            let mut skeleton = String::from(region.value().name());
+            for child in region.descendants().take(64) {
+                if let Some(el) = child.value().as_element() {
+                    skeleton.push('>');
+                    skeleton.push_str(el.name());
+                }
+            }
+            signals.push(format!("chrome:{skeleton}"));
+        }
+    }
+
+    if signals.is_empty() {
+        return None;
+    }
+
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            hash ^= u64::from(b);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+        hash ^= 0xff;
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    };
+
+    for sig in &signals {
+        feed(sig.as_bytes());
+    }
+    feed(
+        format!(
+            "landmarks:{},{},{},{}",
+            obs.landmarks.header_count,
+            obs.landmarks.nav_count,
+            obs.landmarks.main_count,
+            obs.landmarks.footer_count,
+        )
+        .as_bytes(),
+    );
+    Some(hash)
+}
+
+fn classify_link_region(el: &ElementRef<'_>) -> LinkRegion {
+    for anc in el.ancestors() {
+        let Some(anc_el) = anc.value().as_element() else {
+            continue;
+        };
+        let role = anc_el.attr("role").unwrap_or("");
+        if anc_el.name() == "nav" || role.eq_ignore_ascii_case("navigation") {
+            return LinkRegion::Nav;
+        }
+        if anc_el.name() == "header" || role.eq_ignore_ascii_case("banner") {
+            return LinkRegion::Header;
+        }
+        if anc_el.name() == "footer" || role.eq_ignore_ascii_case("contentinfo") {
+            return LinkRegion::Footer;
+        }
+        if anc_el.name() == "aside" || role.eq_ignore_ascii_case("complementary") {
+            return LinkRegion::Aside;
+        }
+        if matches!(anc_el.name(), "main" | "article") || role.eq_ignore_ascii_case("main") {
+            return LinkRegion::Main;
+        }
+    }
+    LinkRegion::Body
 }
 
 fn non_empty_attr(el: &ElementRef<'_>, attr: &str) -> Option<String> {
@@ -1106,5 +1219,33 @@ mod tests {
         assert_eq!(obs.positive_tabindex_count, 1);
         assert_eq!(obs.autoplay_unmuted_media, 1);
         assert_eq!(obs.author_or_date_signal, Some("meta"));
+    }
+
+    #[test]
+    fn attributes_link_regions_from_semantic_ancestors() {
+        let html = r#"<html><body>
+            <header><a href="/logo">Logo</a><nav><a href="/nav">Nav</a></nav></header>
+            <main><a href="/article">Article</a></main>
+            <aside><a href="/related">Related</a></aside>
+            <footer><a href="/privacy">Privacy</a></footer>
+            <div><a href="/other">Other</a></div>
+        </body></html>"#;
+        let obs = DocumentObservations::from_html(html);
+        let regions: Vec<(&str, LinkRegion)> = obs
+            .links
+            .iter()
+            .map(|l| (l.href.as_str(), l.region))
+            .collect();
+        assert_eq!(
+            regions,
+            vec![
+                ("/logo", LinkRegion::Header),
+                ("/nav", LinkRegion::Nav),
+                ("/article", LinkRegion::Main),
+                ("/related", LinkRegion::Aside),
+                ("/privacy", LinkRegion::Footer),
+                ("/other", LinkRegion::Body),
+            ]
+        );
     }
 }

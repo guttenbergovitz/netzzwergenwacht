@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::analysis::AuditReport;
 use crate::brigade::DwarfId;
-use crate::domain::{AnalyserResult, CheckStatus, CollectorOutcome, Severity};
+use crate::domain::{
+    AnalyserResult, CheckStatus, CollectorOutcome, Measurement, MeasurementUnit, Severity,
+};
 
 /// Quality dimensions evaluated by `NetzZwergenWacht` (Phase II §8).
 #[derive(
@@ -586,5 +588,314 @@ mod tests {
             .find(|d| d.domain == QualityDomain::EvidenceCoverage)
             .expect("coverage domain");
         assert_eq!(cov.verdict, DomainVerdict::InsufficientEvidence);
+    }
+
+    #[test]
+    fn health_score_excludes_unobserved_checks_and_computes_grade() {
+        let skipped_only = vec![AnalyserResult {
+            dwarf_id: DwarfId::Zugaenglichkeits,
+            checks: vec![CheckStatus::Skipped {
+                rule_id: RuleId("a11y.axe.violations".to_owned()),
+                evidence_level: EvidenceLevel::Rendered,
+                reason: "axe unavailable".to_owned(),
+            }],
+            findings: vec![],
+        }];
+        let empty_score = compute_health_score(&skipped_only);
+        assert!(matches!(
+            empty_score.overall_score,
+            Measurement::Unavailable { .. }
+        ));
+        assert_eq!(empty_score.grade, None);
+        assert_eq!(empty_score.observed_checks, 0);
+        assert_eq!(empty_score.unobserved_checks, 1);
+
+        let mixed = vec![
+            AnalyserResult {
+                dwarf_id: DwarfId::Netz,
+                checks: vec![
+                    CheckStatus::Passed {
+                        rule_id: RuleId("netz.http.status".to_owned()),
+                        evidence_level: EvidenceLevel::Source,
+                    },
+                    CheckStatus::Passed {
+                        rule_id: RuleId("netz.http.redirects".to_owned()),
+                        evidence_level: EvidenceLevel::Source,
+                    },
+                ],
+                findings: vec![],
+            },
+            AnalyserResult {
+                dwarf_id: DwarfId::Sicherheits,
+                checks: vec![
+                    CheckStatus::Passed {
+                        rule_id: RuleId("sec.tls.expiry".to_owned()),
+                        evidence_level: EvidenceLevel::Source,
+                    },
+                    CheckStatus::Failed {
+                        rule_id: RuleId("sec.headers.csp".to_owned()),
+                        evidence_level: EvidenceLevel::Source,
+                    },
+                ],
+                findings: vec![finding(
+                    "sec.headers.csp",
+                    FindingCategory::Security,
+                    Severity::High,
+                )],
+            },
+            AnalyserResult {
+                dwarf_id: DwarfId::Zugaenglichkeits,
+                checks: vec![CheckStatus::Skipped {
+                    rule_id: RuleId("a11y.axe.violations".to_owned()),
+                    evidence_level: EvidenceLevel::Rendered,
+                    reason: "browser skipped".to_owned(),
+                }],
+                findings: vec![],
+            },
+        ];
+
+        let summary = compute_health_score(&mixed);
+        assert_eq!(summary.observed_checks, 4);
+        assert_eq!(summary.unobserved_checks, 1);
+        assert_eq!(summary.coverage_pct, 80);
+        assert!(matches!(
+            summary.overall_score,
+            Measurement::Measured { value, .. } if value > 0 && value < 100
+        ));
+        assert!(summary.grade.is_some());
+
+        let a11y_group = summary
+            .group_scores
+            .iter()
+            .find(|g| g.domain == QualityDomain::Accessibility)
+            .expect("a11y group");
+        assert!(matches!(a11y_group.score, Measurement::Unavailable { .. }));
+        assert_eq!(a11y_group.grade, None);
+    }
+}
+
+/// Letter grade derived from a numeric `0–100` health score.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+pub enum HealthGrade {
+    /// `90–100`
+    A,
+    /// `80–89`
+    B,
+    /// `70–79`
+    C,
+    /// `55–69`
+    D,
+    /// `0–54`
+    F,
+}
+
+impl HealthGrade {
+    /// Maps a numeric `0–100` score to a letter grade.
+    #[must_use]
+    pub const fn from_score(score: u8) -> Self {
+        match score {
+            90..=100 => Self::A,
+            80..=89 => Self::B,
+            70..=79 => Self::C,
+            55..=69 => Self::D,
+            _ => Self::F,
+        }
+    }
+
+    /// Single-letter string representation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::A => "A",
+            Self::B => "B",
+            Self::C => "C",
+            Self::D => "D",
+            Self::F => "F",
+        }
+    }
+}
+
+/// Numeric health score for a single [`QualityDomain`], excluding unobserved checks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GroupHealthScore {
+    /// Quality domain represented by this group.
+    pub domain: QualityDomain,
+    /// Measured `0–100` score, or `Unavailable` when `observed_checks == 0`.
+    pub score: Measurement<u8>,
+    /// Letter grade when `score` is `Measured`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<HealthGrade>,
+    /// Count of `Passed` checks in this group.
+    pub passed_checks: usize,
+    /// Count of `Failed` checks in this group.
+    pub failed_checks: usize,
+    /// Count of `Skipped` or `Unavailable` checks excluded from the denominator.
+    pub unobserved_checks: usize,
+}
+
+/// Numeric `0–100` health score summary computed strictly from observed checks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HealthScoreSummary {
+    /// Aggregate `0–100` score across observed domains, or `Unavailable` if no checks ran.
+    pub overall_score: Measurement<u8>,
+    /// Aggregate letter grade when `overall_score` is `Measured`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grade: Option<HealthGrade>,
+    /// Total observed (`Passed` + `Failed`) checks.
+    pub observed_checks: usize,
+    /// Total unobserved (`Skipped` + `Unavailable`) checks excluded from scoring.
+    pub unobserved_checks: usize,
+    /// Percentage (`0–100`) of checks that produced an observation.
+    pub coverage_pct: u8,
+    /// Per-domain breakdown for domains with at least one check or finding.
+    pub group_scores: Vec<GroupHealthScore>,
+}
+
+#[derive(Default)]
+struct HealthBucket {
+    passed: usize,
+    failed: usize,
+    unobserved: usize,
+    penalty: usize,
+}
+
+fn score_domain_bucket(
+    domain: QualityDomain,
+    bucket: &HealthBucket,
+) -> Option<(GroupHealthScore, usize, usize)> {
+    let observed = bucket.passed + bucket.failed;
+    if observed == 0 && bucket.unobserved == 0 && bucket.penalty == 0 {
+        return None;
+    }
+    if observed == 0 {
+        return Some((
+            GroupHealthScore {
+                domain,
+                score: Measurement::Unavailable {
+                    reason: "no observed checks in this domain".to_owned(),
+                },
+                grade: None,
+                passed_checks: 0,
+                failed_checks: 0,
+                unobserved_checks: bucket.unobserved,
+            },
+            0,
+            0,
+        ));
+    }
+
+    let pass_ratio = (bucket.passed * 100) / observed;
+    let penalty_capped = 100usize.saturating_sub(bucket.penalty.min(100));
+    let score_usize = pass_ratio.min(penalty_capped);
+    let score_u8 = u8::try_from(score_usize).unwrap_or(100);
+    Some((
+        GroupHealthScore {
+            domain,
+            score: Measurement::Measured {
+                value: score_u8,
+                unit: MeasurementUnit::Count,
+            },
+            grade: Some(HealthGrade::from_score(score_u8)),
+            passed_checks: bucket.passed,
+            failed_checks: bucket.failed,
+            unobserved_checks: bucket.unobserved,
+        },
+        observed,
+        score_usize * observed,
+    ))
+}
+
+/// Computes a numeric `0–100` health score, letter grade, and per-domain scores from `analysers`.
+///
+/// Unobserved checks (`Skipped` / `Unavailable`) are **never** coerced into passing checks
+/// or `0` scores: domains without observed checks report [`Measurement::Unavailable`].
+#[must_use]
+pub fn compute_health_score(analysers: &[AnalyserResult]) -> HealthScoreSummary {
+    let mut buckets: [(QualityDomain, HealthBucket); 11] =
+        QualityDomain::ALL.map(|d| (d, HealthBucket::default()));
+
+    for result in analysers {
+        for check in &result.checks {
+            let rule_id = match check {
+                CheckStatus::Passed { rule_id, .. }
+                | CheckStatus::Failed { rule_id, .. }
+                | CheckStatus::Skipped { rule_id, .. }
+                | CheckStatus::Unavailable { rule_id, .. } => rule_id.0.as_str(),
+            };
+            let domain = domain_for_rule(result.dwarf_id, rule_id);
+            if let Some((_, bucket)) = buckets.iter_mut().find(|(d, _)| *d == domain) {
+                match check {
+                    CheckStatus::Passed { .. } => bucket.passed += 1,
+                    CheckStatus::Failed { .. } => bucket.failed += 1,
+                    CheckStatus::Skipped { .. } | CheckStatus::Unavailable { .. } => {
+                        bucket.unobserved += 1;
+                    }
+                }
+            }
+        }
+        for finding in &result.findings {
+            let domain = domain_for_rule(result.dwarf_id, &finding.rule_id.0);
+            if let Some((_, bucket)) = buckets.iter_mut().find(|(d, _)| *d == domain) {
+                let weight = match finding.severity {
+                    Severity::Critical => 25,
+                    Severity::High => 15,
+                    Severity::Medium => 7,
+                    Severity::Low => 2,
+                    Severity::Info => 0,
+                };
+                bucket.penalty = bucket.penalty.saturating_add(weight);
+            }
+        }
+    }
+
+    let mut total_observed = 0usize;
+    let mut total_unobserved = 0usize;
+    let mut weighted_sum = 0usize;
+    let mut group_scores = Vec::new();
+
+    for (domain, bucket) in &buckets {
+        if let Some((group, observed, weighted)) = score_domain_bucket(*domain, bucket) {
+            total_observed += observed;
+            total_unobserved += group.unobserved_checks;
+            weighted_sum += weighted;
+            group_scores.push(group);
+        }
+    }
+
+    let total_checks = total_observed + total_unobserved;
+    let coverage_pct = (total_observed * 100)
+        .checked_div(total_checks)
+        .map_or(0, |v| u8::try_from(v).unwrap_or(100));
+
+    let (overall_score, grade) = weighted_sum.checked_div(total_observed).map_or_else(
+        || {
+            (
+                Measurement::Unavailable {
+                    reason: "no observed checks across any quality domain".to_owned(),
+                },
+                None,
+            )
+        },
+        |avg| {
+            let overall = u8::try_from(avg).unwrap_or(100);
+            (
+                Measurement::Measured {
+                    value: overall,
+                    unit: MeasurementUnit::Count,
+                },
+                Some(HealthGrade::from_score(overall)),
+            )
+        },
+    );
+
+    HealthScoreSummary {
+        overall_score,
+        grade,
+        observed_checks: total_observed,
+        unobserved_checks: total_unobserved,
+        coverage_pct,
+        group_scores,
     }
 }

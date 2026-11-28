@@ -15,6 +15,7 @@ mod crawl;
 pub mod frontier;
 pub mod resources;
 pub mod robots;
+pub mod sitemap;
 
 pub use crawl::sample_browser_on_crawl;
 pub use frontier::DiscoverySource;
@@ -22,6 +23,7 @@ pub use resources::{
     PageResourceEdge, ResourceCoverage, ResourceKind, ResourceObservation, ResourceStatus,
 };
 pub use robots::RobotsOutcome;
+pub use sitemap::{SitemapEvidence, SitemapKind};
 
 use crate::analysis::document::DocumentObservations;
 use crate::analysis::graph::GraphPageInput;
@@ -617,10 +619,14 @@ pub fn parse_robots_sitemaps(
 /// Extracts and normalises same-origin URLs from an XML sitemap `<loc>` list.
 #[must_use]
 pub fn parse_sitemap_urls(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> Vec<AuditTarget> {
-    if xml.contains("<sitemapindex") {
+    let ev = sitemap::SitemapEvidence::parse(xml, base, policy);
+    if ev.kind != sitemap::SitemapKind::UrlSet {
         return Vec::new();
     }
-    extract_loc_targets(xml, base, policy)
+    ev.urls
+        .into_iter()
+        .filter_map(|e| AuditTarget::parse(&e.loc, policy).ok())
+        .collect()
 }
 
 /// Extracts same-origin child sitemap URLs from an XML `<sitemapindex>` document.
@@ -630,88 +636,14 @@ pub fn parse_sitemap_index_urls(
     base: &AuditTarget,
     policy: TargetPolicy,
 ) -> Vec<AuditTarget> {
-    if !xml.contains("<sitemapindex") {
+    let ev = sitemap::SitemapEvidence::parse(xml, base, policy);
+    if ev.kind != sitemap::SitemapKind::SitemapIndex {
         return Vec::new();
     }
-    extract_loc_targets(xml, base, policy)
-}
-
-fn decode_xml_text(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if let Some(cdata) = trimmed
-        .strip_prefix("<![CDATA[")
-        .and_then(|s| s.strip_suffix("]]>"))
-    {
-        return cdata.trim().to_owned();
-    }
-    let mut out = String::with_capacity(trimmed.len());
-    let mut rest = trimmed;
-    while let Some(amp) = rest.find('&') {
-        out.push_str(&rest[..amp]);
-        let after = &rest[amp + 1..];
-        if let Some(semi) = after.find(';')
-            && semi <= 10
-        {
-            let entity = &after[..semi];
-            let decoded = match entity {
-                "amp" => Some('&'),
-                "lt" => Some('<'),
-                "gt" => Some('>'),
-                "quot" => Some('"'),
-                "apos" => Some('\''),
-                _ if entity.starts_with("#x") || entity.starts_with("#X") => {
-                    u32::from_str_radix(&entity[2..], 16)
-                        .ok()
-                        .and_then(char::from_u32)
-                }
-                _ if entity.starts_with('#') => {
-                    entity[1..].parse::<u32>().ok().and_then(char::from_u32)
-                }
-                _ => None,
-            };
-            if let Some(ch) = decoded {
-                out.push(ch);
-                rest = &after[semi + 1..];
-                continue;
-            }
-        }
-        out.push('&');
-        rest = after;
-    }
-    out.push_str(rest);
-    out
-}
-
-fn extract_loc_targets(xml: &str, base: &AuditTarget, policy: TargetPolicy) -> Vec<AuditTarget> {
-    let base_origin = Origin::from_target(base);
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    let mut rest = xml;
-    while let Some(start) = rest.find("<loc") {
-        let after_tag = &rest[start + 4..];
-        let Some(gt) = after_tag.find('>') else {
-            break;
-        };
-        // Skip unrelated tags such as `<location>`.
-        let attr_part = &after_tag[..gt];
-        if !attr_part.is_empty() && !attr_part.starts_with(char::is_whitespace) {
-            rest = &after_tag[gt + 1..];
-            continue;
-        }
-        let after = &after_tag[gt + 1..];
-        let Some(end) = after.find("</loc>") else {
-            break;
-        };
-        let decoded = decode_xml_text(&after[..end]);
-        if let Ok(target) = AuditTarget::parse(decoded.trim(), policy)
-            && Origin::from_target(&target) == base_origin
-            && seen.insert(target.as_str().to_owned())
-        {
-            out.push(target);
-        }
-        rest = &after[end + 6..];
-    }
-    out
+    ev.child_sitemaps
+        .into_iter()
+        .filter_map(|e| AuditTarget::parse(&e.loc, policy).ok())
+        .collect()
 }
 
 fn path_has_segment(path: &str, keyword: &str) -> bool {
@@ -752,48 +684,47 @@ pub fn prioritise_representative_urls(mut urls: Vec<AuditTarget>) -> Vec<AuditTa
     urls
 }
 
+/// Classifies a page from its URL path and [`DocumentObservations`], including confidence and signals.
+#[must_use]
+pub fn classify_page_with_confidence(
+    url: &AuditTarget,
+    obs: &DocumentObservations,
+) -> crate::analysis::site_rules::PageTypeClassification {
+    let mut schema_types: Vec<String> =
+        crate::analysis::schema::extract_entities(&obs.json_ld_blocks)
+            .entities
+            .into_iter()
+            .flat_map(|e| e.entity_types)
+            .collect();
+    schema_types.sort();
+    schema_types.dedup();
+    let features = crate::analysis::site_rules::PageFeatures {
+        url: url.as_str().to_owned(),
+        requested_url: url.as_str().to_owned(),
+        status_code: Some(200),
+        depth: 0,
+        bfs_click_depth: None,
+        in_sitemap: false,
+        indexable: true,
+        title: obs.title.clone(),
+        meta_description: obs.meta_description.clone(),
+        canonical_url: obs.canonical_url.clone(),
+        lang: obs.html_lang.clone(),
+        word_count: Some(obs.visible_word_count),
+        internal_link_count: obs.link_hrefs.len(),
+        hreflang_count: obs.hreflangs.len(),
+        text_simhash: None,
+        schema_types,
+        chrome_fingerprint: obs.chrome_fingerprint,
+        classification: crate::analysis::site_rules::PageTypeClassification::default(),
+    };
+    crate::analysis::site_rules::classify_page_features(&features, !obs.form_controls.is_empty())
+}
+
 /// Classifies a page from its URL path and [`DocumentObservations`].
 #[must_use]
 pub fn classify_page(url: &AuditTarget, obs: &DocumentObservations) -> PageType {
-    let path = Url::parse(url.as_str())
-        .map(|u| u.path().to_ascii_lowercase())
-        .unwrap_or_default();
-
-    if path == "/" || path.is_empty() {
-        return PageType::Homepage;
-    }
-    if path_has_segment(&path, "login")
-        || path_has_segment(&path, "signin")
-        || path_has_segment(&path, "auth")
-    {
-        return PageType::Auth;
-    }
-    if path_has_segment(&path, "privacy")
-        || path_has_segment(&path, "terms")
-        || path_has_segment(&path, "legal")
-        || path_has_segment(&path, "imprint")
-    {
-        return PageType::Legal;
-    }
-    if path_has_segment(&path, "contact") {
-        return PageType::Contact;
-    }
-    if path_has_segment(&path, "help")
-        || path_has_segment(&path, "support")
-        || path_has_segment(&path, "faq")
-    {
-        return PageType::Support;
-    }
-    if !obs.form_controls.is_empty() {
-        return PageType::Form;
-    }
-    if obs.visible_word_count >= 250 {
-        return PageType::Article;
-    }
-    if obs.link_hrefs.len() >= 15 {
-        return PageType::Listing;
-    }
-    PageType::Unknown
+    classify_page_with_confidence(url, obs).page_type
 }
 
 /// Clusters findings recurring across 2 or more pages into [`SystemicIssue`]s.
@@ -1091,6 +1022,8 @@ pub(crate) fn build_captured_graph_input(
         entities: crate::analysis::schema::extract_entities(&obs.json_ld_blocks).entities,
         resources: Vec::new(),
         text_simhash: crate::analysis::graph::compute_text_simhash(&obs.main_content_text),
+        word_count: Some(obs.visible_word_count),
+        chrome_fingerprint: obs.chrome_fingerprint,
     }
 }
 
@@ -1118,6 +1051,8 @@ pub(crate) fn unreachable_graph_input(
         entities: Vec::new(),
         resources: Vec::new(),
         text_simhash: None,
+        word_count: None,
+        chrome_fingerprint: None,
     }
 }
 
@@ -1230,6 +1165,152 @@ async fn collect_child_sitemaps(
         }
     }
     prioritise_representative_urls(all_urls)
+}
+
+/// Remediation scope for a grouped finding cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FixScope {
+    /// Origin-wide or cross-page graph/server finding (`site.*`, `graph.*`).
+    SiteWide,
+    /// Shared template or component defect recurring across 2+ pages.
+    SharedComponent,
+    /// Isolated defect observed on a single page.
+    PerPage,
+}
+
+/// Fix-oriented remediation group aggregating findings by component signature or site-wide scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FixGroup {
+    /// Deterministic group identifier (`"FIX-1"`, `"FIX-2"`, ...).
+    pub group_id: String,
+    /// Scope classification (`site_wide`, `shared_component`, or `per_page`).
+    pub scope: FixScope,
+    /// Normalised component or evidence signature used for grouping.
+    pub component_signature: String,
+    /// Underlying deterministic rule identifier.
+    pub rule_id: RuleId,
+    /// Responsible specialist in **Die Zwergenbrigade**.
+    pub dwarf_id: DwarfId,
+    /// Highest impact severity observed across grouped occurrences.
+    pub severity: Severity,
+    /// Representative finding title.
+    pub title: String,
+    /// Sorted list of affected page URLs (empty for pure site-wide graph items without page refs).
+    pub affected_urls: Vec<String>,
+    /// Optional remediation guidance.
+    pub remediation: Option<String>,
+}
+
+fn component_signature_for_finding(
+    rule_id: &str,
+    evidence_refs: &[EvidenceRef],
+    title: &str,
+) -> String {
+    if let Some(first) = evidence_refs.first() {
+        let trimmed = first.detail.trim();
+        if !trimmed.is_empty() {
+            return format!("{rule_id}::{trimmed}");
+        }
+    }
+    format!("{rule_id}::{title}")
+}
+
+/// Groups page-level and graph/site-wide findings in `summary` into fix-oriented
+/// [`FixGroup`] items keyed by component signature and ordered by severity and impact.
+#[must_use]
+pub fn group_fixes_by_component(summary: &CrawlSummary) -> Vec<FixGroup> {
+    type GroupKey = (bool, String, String);
+    struct Accumulator {
+        rule_id: RuleId,
+        dwarf_id: DwarfId,
+        severity: Severity,
+        title: String,
+        remediation: Option<String>,
+        urls: Vec<String>,
+    }
+
+    let mut groups: BTreeMap<GroupKey, Accumulator> = BTreeMap::new();
+
+    for page in &summary.page_diagnostics {
+        for f in &page.findings {
+            let sig = component_signature_for_finding(&f.rule_id.0, &f.evidence_refs, &f.title);
+            let is_site_header_or_graph = f.rule_id.0.starts_with("site.")
+                || f.rule_id.0.starts_with("graph.")
+                || f.rule_id.0.starts_with("sec.headers.")
+                || f.rule_id.0.starts_with("sec.tls.");
+            let key = (is_site_header_or_graph, f.rule_id.0.clone(), sig);
+            let entry = groups.entry(key).or_insert_with(|| Accumulator {
+                rule_id: f.rule_id.clone(),
+                dwarf_id: f.dwarf_id,
+                severity: f.severity,
+                title: f.title.clone(),
+                remediation: f.remediation.clone(),
+                urls: Vec::new(),
+            });
+            if f.severity > entry.severity {
+                entry.severity = f.severity;
+            }
+            if !entry.urls.contains(&page.url) {
+                entry.urls.push(page.url.clone());
+            }
+        }
+    }
+
+    for analyser in &summary.graph_results {
+        for f in &analyser.findings {
+            let sig = component_signature_for_finding(&f.rule_id.0, &f.evidence_refs, &f.title);
+            let key = (true, f.rule_id.0.clone(), sig);
+            let entry = groups.entry(key).or_insert_with(|| Accumulator {
+                rule_id: f.rule_id.clone(),
+                dwarf_id: analyser.dwarf_id,
+                severity: f.severity,
+                title: f.title.clone(),
+                remediation: f.remediation.clone(),
+                urls: Vec::new(),
+            });
+            if f.severity > entry.severity {
+                entry.severity = f.severity;
+            }
+        }
+    }
+
+    let mut out: Vec<FixGroup> = groups
+        .into_iter()
+        .map(|((is_site, _, sig), mut acc)| {
+            acc.urls.sort();
+            let scope = if is_site {
+                FixScope::SiteWide
+            } else if acc.urls.len() >= 2 {
+                FixScope::SharedComponent
+            } else {
+                FixScope::PerPage
+            };
+            FixGroup {
+                group_id: String::new(),
+                scope,
+                component_signature: sig,
+                rule_id: acc.rule_id,
+                dwarf_id: acc.dwarf_id,
+                severity: acc.severity,
+                title: acc.title,
+                affected_urls: acc.urls,
+                remediation: acc.remediation,
+            }
+        })
+        .collect();
+
+    out.sort_by(|a, b| {
+        b.severity
+            .cmp(&a.severity)
+            .then_with(|| b.affected_urls.len().cmp(&a.affected_urls.len()))
+            .then_with(|| a.rule_id.0.cmp(&b.rule_id.0))
+            .then_with(|| a.component_signature.cmp(&b.component_signature))
+    });
+    for (idx, group) in out.iter_mut().enumerate() {
+        group.group_id = format!("FIX-{}", idx + 1);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1432,6 +1513,95 @@ mod tests {
             sitemaps[0].as_str(),
             "https://example.org/sitemap-custom.xml"
         );
+    }
+
+    #[test]
+    fn groups_fixes_by_component_signature_and_site_wide_scope() {
+        let seed =
+            AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).expect("seed");
+        let shared_ref = vec![EvidenceRef::new(
+            crate::domain::EvidenceSource::HttpBody,
+            "missing_alt=/img/shared-banner.png",
+        )];
+        let make_pf =
+            |rule: &str, title: &str, sev: Severity, refs: Vec<EvidenceRef>| PageFinding {
+                rule_id: RuleId(rule.to_owned()),
+                dwarf_id: DwarfId::Zugaenglichkeits,
+                severity: sev,
+                confidence: Confidence::High,
+                title: title.to_owned(),
+                summary: "s".to_owned(),
+                remediation: None,
+                evidence_refs: refs,
+            };
+        let summary = CrawlSummary {
+            seed,
+            pages: Vec::new(),
+            systemic_issues: Vec::new(),
+            budget_exhausted: false,
+            graph_results: vec![AnalyserResult {
+                dwarf_id: DwarfId::Such,
+                findings: vec![crate::domain::Finding {
+                    fingerprint: crate::domain::FindingFingerprint::default(),
+                    rule_id: RuleId("site.seo.missing_meta_description_pattern".to_owned()),
+                    category: crate::domain::FindingCategory::Seo,
+                    evidence_level: crate::domain::EvidenceLevel::Source,
+                    kind: crate::domain::FindingKind::Deterministic,
+                    severity: Severity::Medium,
+                    confidence: Confidence::High,
+                    title: "Missing meta desc pattern".to_owned(),
+                    summary: "s".to_owned(),
+                    evidence_refs: Vec::new(),
+                    remediation: None,
+                }],
+                checks: Vec::new(),
+            }],
+            coverage: CrawlCoverage::default(),
+            resources: Vec::new(),
+            page_resources: Vec::new(),
+            analysis_totals: Vec::new(),
+            page_diagnostics: vec![
+                PageDiagnostics {
+                    url: "https://example.com/a".to_owned(),
+                    http_status: Some(200),
+                    page_type: PageType::Unknown,
+                    status: PageCrawlStatus::Investigated,
+                    checks_passed: 0,
+                    checks_failed: 1,
+                    checks_skipped: 0,
+                    checks_unavailable: 0,
+                    findings: vec![make_pf(
+                        "a11y.images.alt",
+                        "Missing alt",
+                        Severity::High,
+                        shared_ref.clone(),
+                    )],
+                },
+                PageDiagnostics {
+                    url: "https://example.com/b".to_owned(),
+                    http_status: Some(200),
+                    page_type: PageType::Unknown,
+                    status: PageCrawlStatus::Investigated,
+                    checks_passed: 0,
+                    checks_failed: 1,
+                    checks_skipped: 0,
+                    checks_unavailable: 0,
+                    findings: vec![make_pf(
+                        "a11y.images.alt",
+                        "Missing alt",
+                        Severity::High,
+                        shared_ref,
+                    )],
+                },
+            ],
+        };
+
+        let grouped = group_fixes_by_component(&summary);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].group_id, "FIX-1");
+        assert_eq!(grouped[0].scope, FixScope::SharedComponent);
+        assert_eq!(grouped[0].affected_urls.len(), 2);
+        assert_eq!(grouped[1].scope, FixScope::SiteWide);
     }
 
     #[test]

@@ -752,6 +752,110 @@ impl HttpEvidence {
             .find(|h| h.name == needle)
             .map(|h| h.value.as_str())
     }
+
+    /// Parses advertised ALPN protocol tokens from `Alt-Svc` headers (for example `"h3"`, `"h2"`).
+    #[must_use]
+    pub fn alt_svc_protocols(&self) -> Vec<String> {
+        let mut protocols = Vec::new();
+        for raw in self.header_values("alt-svc") {
+            for entry in raw.split(',') {
+                if let Some((proto, _)) = entry.trim().split_once('=') {
+                    let clean = proto.trim();
+                    if !clean.is_empty() && !protocols.iter().any(|p| p == clean) {
+                        protocols.push(clean.to_owned());
+                    }
+                }
+            }
+        }
+        protocols
+    }
+
+    /// Returns `true` when `Alt-Svc` advertises HTTP/3 (`h3` or `h3-*`).
+    #[must_use]
+    pub fn supports_http3_alt_svc(&self) -> bool {
+        self.alt_svc_protocols()
+            .iter()
+            .any(|p| p == "h3" || p.starts_with("h3-"))
+    }
+}
+
+/// Typed classification of HTTP/TLS transport errors for deterministic diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportErrorKind {
+    /// DNS resolution failure.
+    DnsFailure,
+    /// TCP connection refused.
+    ConnectionRefused,
+    /// Request or connect timeout exceeded.
+    Timeout,
+    /// TLS handshake failure without a more specific certificate cause.
+    TlsHandshake,
+    /// Peer X.509 certificate is expired or not yet valid.
+    CertificateExpired,
+    /// Peer X.509 certificate is self-signed.
+    CertificateSelfSigned,
+    /// Peer X.509 certificate SAN does not match the requested hostname.
+    CertificateHostnameMismatch,
+    /// Peer X.509 certificate chain is not trusted by root store.
+    CertificateUntrusted,
+    /// Redirect limit exceeded.
+    RedirectLimit,
+    /// Unclassified transport failure.
+    Other,
+}
+
+impl TransportErrorKind {
+    /// Stable `snake_case` identifier.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DnsFailure => "dns_failure",
+            Self::ConnectionRefused => "connection_refused",
+            Self::Timeout => "timeout",
+            Self::TlsHandshake => "tls_handshake",
+            Self::CertificateExpired => "certificate_expired",
+            Self::CertificateSelfSigned => "certificate_self_signed",
+            Self::CertificateHostnameMismatch => "certificate_hostname_mismatch",
+            Self::CertificateUntrusted => "certificate_untrusted",
+            Self::RedirectLimit => "redirect_limit",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// Classifies a transport/TLS error message into a typed [`TransportErrorKind`].
+#[must_use]
+pub fn classify_transport_error_message(message: &str) -> TransportErrorKind {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("timed out") || lower.contains("timeout") {
+        return TransportErrorKind::Timeout;
+    }
+    if lower.contains("dns") || lower.contains("failed to lookup address") {
+        return TransportErrorKind::DnsFailure;
+    }
+    if lower.contains("connection refused") {
+        return TransportErrorKind::ConnectionRefused;
+    }
+    if lower.contains("expired") || lower.contains("not yet valid") {
+        return TransportErrorKind::CertificateExpired;
+    }
+    if lower.contains("self signed") || lower.contains("self-signed") {
+        return TransportErrorKind::CertificateSelfSigned;
+    }
+    if lower.contains("not valid for name") || lower.contains("hostname") {
+        return TransportErrorKind::CertificateHostnameMismatch;
+    }
+    if lower.contains("unknown issuer") || lower.contains("invalid peer certificate") {
+        return TransportErrorKind::CertificateUntrusted;
+    }
+    if lower.contains("tls") || lower.contains("handshake") || lower.contains("certificate") {
+        return TransportErrorKind::TlsHandshake;
+    }
+    if lower.contains("redirect") {
+        return TransportErrorKind::RedirectLimit;
+    }
+    TransportErrorKind::Other
 }
 
 /// Result of a DNS CAA lookup for the audited hostname.

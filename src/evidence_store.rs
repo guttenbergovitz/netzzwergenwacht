@@ -1226,6 +1226,172 @@ impl EvidenceStore {
         }
         Ok(results)
     }
+
+    /// Persists an incremental crawl checkpoint for `checkpoint.application`, enabling resume.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if serialisation or the SQLite upsert fails.
+    pub async fn save_checkpoint(&self, checkpoint: &CrawlCheckpoint) -> Result<(), StoreError> {
+        let frontier_json = serde_json::to_string(&checkpoint.frontier_urls)
+            .map_err(|e| StoreError::Database(format!("failed to serialise frontier: {e}")))?;
+        let visited_json = serde_json::to_string(&checkpoint.visited_urls)
+            .map_err(|e| StoreError::Database(format!("failed to serialise visited: {e}")))?;
+        let connection = self.database.connect()?;
+        connection
+            .execute(
+                "CREATE TABLE IF NOT EXISTS crawl_checkpoints (
+                    application TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    frontier_json TEXT NOT NULL,
+                    visited_urls_json TEXT NOT NULL,
+                    updated_at_unix_secs INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
+        connection
+            .execute(
+                "INSERT INTO crawl_checkpoints
+                 (application, run_id, frontier_json, visited_urls_json, updated_at_unix_secs)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(application) DO UPDATE SET
+                    run_id = excluded.run_id,
+                    frontier_json = excluded.frontier_json,
+                    visited_urls_json = excluded.visited_urls_json,
+                    updated_at_unix_secs = excluded.updated_at_unix_secs",
+                (
+                    checkpoint.application.as_str(),
+                    checkpoint.run_id.as_str(),
+                    frontier_json,
+                    visited_json,
+                    checkpoint.updated_at_unix_secs,
+                ),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Loads the latest crawl checkpoint for `application`, if one exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if the query or JSON deserialisation fails.
+    pub async fn load_checkpoint(
+        &self,
+        application: &str,
+    ) -> Result<Option<CrawlCheckpoint>, StoreError> {
+        let connection = self.database.connect()?;
+        connection
+            .execute(
+                "CREATE TABLE IF NOT EXISTS crawl_checkpoints (
+                    application TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    frontier_json TEXT NOT NULL,
+                    visited_urls_json TEXT NOT NULL,
+                    updated_at_unix_secs INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
+        let mut rows = connection
+            .query(
+                "SELECT run_id, frontier_json, visited_urls_json, updated_at_unix_secs
+                 FROM crawl_checkpoints WHERE application = ?1",
+                [application],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(None);
+        };
+        let run_id = row.get::<String>(0)?;
+        let frontier_raw = row.get::<String>(1)?;
+        let visited_raw = row.get::<String>(2)?;
+        let updated_at_unix_secs = row.get::<i64>(3)?;
+        let frontier_urls = serde_json::from_str(&frontier_raw)
+            .map_err(|e| StoreError::Database(format!("invalid checkpoint frontier JSON: {e}")))?;
+        let visited_urls = serde_json::from_str(&visited_raw)
+            .map_err(|e| StoreError::Database(format!("invalid checkpoint visited JSON: {e}")))?;
+        Ok(Some(CrawlCheckpoint {
+            application: application.to_owned(),
+            run_id,
+            frontier_urls,
+            visited_urls,
+            updated_at_unix_secs,
+        }))
+    }
+
+    /// Deletes any saved crawl checkpoint for `application`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the SQLite delete fails.
+    pub async fn clear_checkpoint(&self, application: &str) -> Result<(), StoreError> {
+        let connection = self.database.connect()?;
+        connection
+            .execute(
+                "CREATE TABLE IF NOT EXISTS crawl_checkpoints (
+                    application TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    frontier_json TEXT NOT NULL,
+                    visited_urls_json TEXT NOT NULL,
+                    updated_at_unix_secs INTEGER NOT NULL
+                )",
+                (),
+            )
+            .await?;
+        connection
+            .execute(
+                "DELETE FROM crawl_checkpoints WHERE application = ?1",
+                [application],
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Returns stored pages from the most recent fresh run for `application` within `max_age_secs`
+    /// for incremental scan reuse, or an empty vector when no fresh run exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] if querying the store fails.
+    pub async fn latest_known_pages(
+        &self,
+        application: &str,
+        max_age_secs: i64,
+        now_unix_secs: i64,
+    ) -> Result<Vec<StoredPage>, StoreError> {
+        let connection = self.database.connect()?;
+        let min_ts = now_unix_secs.saturating_sub(max_age_secs);
+        let mut rows = connection
+            .query(
+                "SELECT run_id FROM runs
+                 WHERE application = ?1 AND recorded_at_unix_secs >= ?2
+                 ORDER BY recorded_at_unix_secs DESC LIMIT 1",
+                (application, min_ts),
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Ok(Vec::new());
+        };
+        let run_id = row.get::<String>(0)?;
+        self.pages(&run_id, None, MAX_READ_ROWS).await
+    }
+}
+
+/// Resumable crawl frontier/visited checkpoint persisted in [`EvidenceStore`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CrawlCheckpoint {
+    /// Application seed URL/key.
+    pub application: String,
+    /// Active run identifier.
+    pub run_id: String,
+    /// Remaining unvisited frontier URLs.
+    pub frontier_urls: Vec<String>,
+    /// URLs already visited in this run.
+    pub visited_urls: Vec<String>,
+    /// Checkpoint timestamp in Unix seconds.
+    pub updated_at_unix_secs: i64,
 }
 
 async fn insert_graph_results(
@@ -2589,5 +2755,47 @@ mod tests {
 
         let totals = store.dwarf_totals("check-1").await.expect("totals");
         assert_ne!(totals.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn saves_loads_clears_checkpoints_and_queries_fresh_pages_for_incremental_scan() {
+        let dir = std::env::temp_dir().join(format!(
+            "nzw-checkpoint-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store_path = dir.join("evidence.db");
+        let store = EvidenceStore::open(&store_path).await.expect("open");
+
+        let cp = super::CrawlCheckpoint {
+            application: "https://example.org/".to_owned(),
+            run_id: "scan-1".to_owned(),
+            frontier_urls: vec!["https://example.org/pricing".to_owned()],
+            visited_urls: vec!["https://example.org/".to_owned()],
+            updated_at_unix_secs: 1_700_000_000,
+        };
+        store.save_checkpoint(&cp).await.expect("save checkpoint");
+        let loaded = store
+            .load_checkpoint("https://example.org/")
+            .await
+            .expect("load checkpoint")
+            .expect("checkpoint present");
+        assert_eq!(loaded, cp);
+
+        store
+            .clear_checkpoint("https://example.org/")
+            .await
+            .expect("clear checkpoint");
+        assert_eq!(
+            store
+                .load_checkpoint("https://example.org/")
+                .await
+                .expect("load cleared"),
+            None
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

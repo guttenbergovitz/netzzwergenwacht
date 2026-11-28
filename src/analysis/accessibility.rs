@@ -32,6 +32,7 @@ const RULE_AX_HIDDEN_FOCUSABLE: &str = "a11y.ax.hidden_focusable_element";
 const RULE_BEHAVIOURAL: &str = "a11y.behavioural.keyboard_and_focus";
 const RULE_DOC_TITLE_PRESENCE: &str = "a11y.doc.title_presence";
 const RULE_GENERIC_PAGE_TITLE: &str = "a11y.doc.generic_page_title";
+const RULE_ARIA_SPEC_COMPLIANCE: &str = "a11y.aria.spec_compliance";
 const RULE_AX_HIGH_IGNORED_RATIO: &str = "a11y.ax.high_ignored_ratio";
 const RULE_BEHAVIOURAL_FOCUS_TRAP: &str = "a11y.behavioural.focus_trap";
 const RULE_BEHAVIOURAL_FOCUS_INDICATOR: &str = "a11y.behavioural.missing_focus_indicator";
@@ -59,6 +60,7 @@ pub const SOURCE_RULES: &[&str] = &[
     RULE_AMBIGUOUS_LINKS,
     RULE_DOC_TITLE_PRESENCE,
     RULE_GENERIC_PAGE_TITLE,
+    RULE_ARIA_SPEC_COMPLIANCE,
 ];
 
 /// Evaluates source-level accessibility checks and records higher-level gaps.
@@ -103,6 +105,7 @@ pub fn analyse_with_browser(
     check_suspicious_alt_text(obs, &mut findings, &mut checks);
     check_ambiguous_links(obs, &mut findings, &mut checks);
     check_doc_title_accessibility(obs, &mut findings, &mut checks);
+    check_aria_spec_compliance(obs, &mut findings, &mut checks);
 
     check_axe_violations(axe, &mut findings, &mut checks);
     check_ax_tree(browser, &mut findings, &mut checks);
@@ -863,6 +866,67 @@ fn check_aria_references(
             evidence_level: EvidenceLevel::Source,
         });
     }
+}
+
+fn check_aria_spec_compliance(
+    obs: &DocumentObservations,
+    findings: &mut Vec<Finding>,
+    checks: &mut Vec<CheckStatus>,
+) {
+    let total = obs.aria_validation.total_issues();
+    if total == 0 {
+        checks.push(CheckStatus::Passed {
+            rule_id: RuleId(RULE_ARIA_SPEC_COMPLIANCE.to_owned()),
+            evidence_level: EvidenceLevel::Source,
+        });
+        return;
+    }
+
+    let mut refs = Vec::new();
+    for (tag, role) in obs.aria_validation.invalid_roles.iter().take(4) {
+        refs.push(EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("invalid_role=<{tag} role=\"{role}\">"),
+        ));
+    }
+    for (tag, role, attr) in obs.aria_validation.missing_required_attrs.iter().take(4) {
+        refs.push(EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("missing_required_attr=<{tag} role=\"{role}\"> lacks {attr}"),
+        ));
+    }
+    for (tag, attr) in obs.aria_validation.unknown_aria_attrs.iter().take(4) {
+        refs.push(EvidenceRef::new(
+            EvidenceSource::HttpBody,
+            format!("unknown_aria_attr=<{tag} {attr}>"),
+        ));
+    }
+
+    findings.push(Finding {
+        fingerprint: FindingFingerprint::default(),
+        rule_id: RuleId(RULE_ARIA_SPEC_COMPLIANCE.to_owned()),
+        category: FindingCategory::Accessibility,
+        evidence_level: EvidenceLevel::Source,
+        kind: FindingKind::Deterministic,
+        severity: Severity::Medium,
+        confidence: Confidence::High,
+        title: format!("WAI-ARIA 1.2 role/attribute conformance issues ({total})"),
+        summary: format!(
+            "Observed {} invalid role(s), {} missing required ARIA attribute(s), and {} unrecognised `aria-*` attribute(s).",
+            obs.aria_validation.invalid_roles.len(),
+            obs.aria_validation.missing_required_attrs.len(),
+            obs.aria_validation.unknown_aria_attrs.len(),
+        ),
+        evidence_refs: refs,
+        remediation: Some(
+            "Use valid WAI-ARIA 1.2 role tokens, supply required state attributes for widget roles, and remove typoed `aria-*` attributes."
+                .to_owned(),
+        ),
+    });
+    checks.push(CheckStatus::Failed {
+        rule_id: RuleId(RULE_ARIA_SPEC_COMPLIANCE.to_owned()),
+        evidence_level: EvidenceLevel::Source,
+    });
 }
 
 fn check_interactive_names(

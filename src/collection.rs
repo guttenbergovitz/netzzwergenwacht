@@ -255,13 +255,470 @@ pub async fn probe_soft_404_baseline(
     })
 }
 
+/// Default well-known origin paths inspected by [`ProbeCollector`].
+pub const DEFAULT_WELL_KNOWN_PROBE_PATHS: &[&str] = &[
+    "/.well-known/security.txt",
+    "/llms.txt",
+    "/humans.txt",
+    "/ads.txt",
+    "/.well-known/assetlinks.json",
+];
+
+/// Captured response metadata for a single well-known origin path probe.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WellKnownProbeObservation {
+    /// Final resolved URL after redirects.
+    pub final_url: String,
+    /// HTTP status code returned by the origin.
+    pub status_code: u16,
+    /// `Content-Type` header value, if present.
+    pub content_type: Option<String>,
+    /// Observed response body byte length.
+    pub body_bytes: usize,
+    /// Bounded UTF-8 preview (up to 4096 bytes) for downstream deterministic checks.
+    pub body_preview: String,
+}
+
+/// Outcome for one path probed by [`ProbeCollector`].
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WellKnownPathProbe {
+    /// Origin-relative path probed (for example `"/.well-known/security.txt"`).
+    pub path: String,
+    /// Explicit probe outcome (`Captured`, `Failed`, or `Skipped`).
+    pub outcome: CollectorOutcome<WellKnownProbeObservation>,
+}
+
+/// Aggregated origin-level probe evidence (custom-404 baseline + well-known files).
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OriginProbes {
+    /// Normalised origin URL (`scheme://host[:port]`).
+    pub origin: String,
+    /// Random-URL baseline + confirmation re-fetch used for soft-404 verification.
+    pub soft_404_baseline: Option<crate::analysis::network::Soft404Baseline>,
+    /// Bounded well-known path probe outcomes.
+    pub well_known: Vec<WellKnownPathProbe>,
+}
+
+/// Bounded origin probe collector enforcing request-count and payload-size caps.
+#[derive(Debug, Clone, Copy)]
+pub struct ProbeCollector {
+    /// Maximum number of well-known paths probed per origin.
+    pub max_well_known_probes: usize,
+    /// Maximum response bytes retained in [`WellKnownProbeObservation::body_preview`].
+    pub max_preview_bytes: usize,
+}
+
+impl Default for ProbeCollector {
+    fn default() -> Self {
+        Self {
+            max_well_known_probes: 8,
+            max_preview_bytes: 4_096,
+        }
+    }
+}
+
+impl ProbeCollector {
+    /// Collects [`OriginProbes`] for `origin_target` within `budget` and `policy`.
+    pub async fn collect_origin_probes(
+        &self,
+        origin_target: &AuditTarget,
+        policy: TargetPolicy,
+        budget: &ExecutionBudget,
+        paths: &[&str],
+    ) -> OriginProbes {
+        let origin = Url::parse(origin_target.as_str()).map_or_else(
+            |_| origin_target.as_str().to_owned(),
+            |u| u.origin().ascii_serialization(),
+        );
+        let soft_404_baseline = probe_soft_404_baseline(origin_target, policy, budget).await;
+
+        let effective_paths: &[&str] = if paths.is_empty() {
+            DEFAULT_WELL_KNOWN_PROBE_PATHS
+        } else {
+            paths
+        };
+
+        let mut well_known = Vec::new();
+        for (idx, &raw_path) in effective_paths.iter().enumerate() {
+            if idx >= self.max_well_known_probes {
+                well_known.push(WellKnownPathProbe {
+                    path: raw_path.to_owned(),
+                    outcome: CollectorOutcome::Skipped {
+                        reason: format!(
+                            "probe skipped at max_well_known_probes={} budget",
+                            self.max_well_known_probes
+                        ),
+                    },
+                });
+                continue;
+            }
+            let outcome = self
+                .probe_single_path(origin_target, raw_path, policy, budget)
+                .await;
+            well_known.push(WellKnownPathProbe {
+                path: raw_path.to_owned(),
+                outcome,
+            });
+        }
+
+        OriginProbes {
+            origin,
+            soft_404_baseline,
+            well_known,
+        }
+    }
+
+    async fn probe_single_path(
+        &self,
+        origin_target: &AuditTarget,
+        raw_path: &str,
+        policy: TargetPolicy,
+        budget: &ExecutionBudget,
+    ) -> CollectorOutcome<WellKnownProbeObservation> {
+        let Ok(mut probe_url) = Url::parse(origin_target.as_str()) else {
+            return CollectorOutcome::Failed {
+                error: "invalid origin URL".to_owned(),
+            };
+        };
+        let normalised_path = if raw_path.starts_with('/') {
+            raw_path.to_owned()
+        } else {
+            format!("/{raw_path}")
+        };
+        probe_url.set_path(&normalised_path);
+        probe_url.set_query(None);
+        probe_url.set_fragment(None);
+
+        let Ok(probe_target) = AuditTarget::parse(probe_url.as_str(), policy) else {
+            return CollectorOutcome::Skipped {
+                reason: "probe URL blocked by target policy".to_owned(),
+            };
+        };
+
+        match tokio::time::timeout(
+            budget.http_timeout,
+            execute_bounded_get(&probe_target, budget, policy, ClientSource::Fresh),
+        )
+        .await
+        {
+            Ok(Ok((http, _))) => {
+                let content_type = http
+                    .headers
+                    .iter()
+                    .find(|h| h.name == "content-type")
+                    .map(|h| h.value.clone());
+                let body_preview: String = http
+                    .body_text
+                    .chars()
+                    .take(self.max_preview_bytes)
+                    .collect();
+                CollectorOutcome::Captured {
+                    data: WellKnownProbeObservation {
+                        final_url: http.final_url,
+                        status_code: http.status_code,
+                        content_type,
+                        body_bytes: http.body_bytes,
+                        body_preview,
+                    },
+                }
+            }
+            Ok(Err(err)) => CollectorOutcome::Failed { error: err.error },
+            Err(_) => CollectorOutcome::Failed {
+                error: format!(
+                    "probe timed out after {} ms",
+                    budget.http_timeout.as_millis()
+                ),
+            },
+        }
+    }
+}
+
 /// Where the HTTP client for one request comes from.
 #[derive(Clone, Copy)]
 enum ClientSource<'a> {
     /// A dedicated client, as used by single-page collection.
     Fresh,
+    /// A dedicated client configured with an explicit `User-Agent` header.
+    FreshWithUserAgent(&'a str),
     /// A client reused for the crawl, keyed by host and pinned address set.
     Cached(&'a CrawlHttpCache),
+}
+
+/// Predefined `User-Agent` profiles for agent-access and cloaking comparisons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserAgentProfile {
+    /// Default `NetzZwergenWacht` auditor user-agent.
+    Default,
+    /// Desktop Chromium browser user-agent.
+    DesktopBrowser,
+    /// Mobile Safari browser user-agent.
+    MobileBrowser,
+    /// Search engine crawler user-agent.
+    SearchCrawler,
+    /// AI agent / LLM crawler user-agent.
+    AiAgent,
+}
+
+impl UserAgentProfile {
+    /// HTTP `User-Agent` string sent for this profile.
+    #[must_use]
+    pub const fn header_value(self) -> &'static str {
+        match self {
+            Self::Default => USER_AGENT,
+            Self::DesktopBrowser => {
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            }
+            Self::MobileBrowser => {
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
+            }
+            Self::SearchCrawler => {
+                "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+            }
+            Self::AiAgent => "GPTBot/1.0 (+https://openai.com/gptbot)",
+        }
+    }
+}
+
+/// Comparison result for one [`UserAgentProfile`] fetch against a baseline profile.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UserAgentComparison {
+    /// Profile tested.
+    pub profile: UserAgentProfile,
+    /// Observed HTTP status code (`None` if request failed).
+    pub status_code: Option<u16>,
+    /// Captured body byte count.
+    pub body_bytes: usize,
+    /// Primary-content `SimHash`, if sufficient text was captured.
+    pub main_simhash: Option<u64>,
+    /// Whether this profile received a 401/403/406/429 refusal.
+    pub blocked_or_refused: bool,
+    /// Whether this profile diverged materially from the baseline response (cloaking signal).
+    pub cloaking_suspected: bool,
+}
+
+/// Evaluates whether `candidate` response exhibits access refusal or cloaking relative to `baseline`.
+#[must_use]
+pub fn evaluate_cloaking(
+    baseline_status: u16,
+    baseline_simhash: Option<u64>,
+    baseline_bytes: usize,
+    candidate_status: u16,
+    candidate_simhash: Option<u64>,
+    candidate_bytes: usize,
+) -> (bool, bool) {
+    let blocked_or_refused = matches!(candidate_status, 401 | 403 | 406 | 429);
+    let status_diverged = baseline_status == 200 && candidate_status != 200;
+    let content_diverged = if let (Some(a), Some(b)) = (baseline_simhash, candidate_simhash) {
+        (a ^ b).count_ones() > 12
+    } else {
+        let max_b = baseline_bytes.max(candidate_bytes);
+        max_b > 256 && baseline_bytes.abs_diff(candidate_bytes) * 100 > max_b * 40
+    };
+    (blocked_or_refused, status_diverged || content_diverged)
+}
+
+/// Collects HTTP evidence for `target` using an explicit [`UserAgentProfile`].
+pub async fn collect_http_with_user_agent_profile(
+    target: &AuditTarget,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+    profile: UserAgentProfile,
+) -> EvidenceSnapshot {
+    collect_http_with_source(
+        target,
+        budget,
+        policy,
+        None,
+        ClientSource::FreshWithUserAgent(profile.header_value()),
+    )
+    .await
+}
+
+/// Fetches `target` across `profiles` and compares responses against the first profile
+/// (typically [`UserAgentProfile::DesktopBrowser`]) to detect agent blocking and cloaking.
+pub async fn probe_user_agent_profiles(
+    target: &AuditTarget,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+    profiles: &[UserAgentProfile],
+) -> Vec<UserAgentComparison> {
+    if profiles.is_empty() {
+        return Vec::new();
+    }
+
+    let mut snapshots = Vec::with_capacity(profiles.len());
+    for &profile in profiles {
+        let snap = collect_http_with_user_agent_profile(target, budget, policy, profile).await;
+        snapshots.push((profile, snap));
+    }
+
+    let baseline_http = snapshots.first().and_then(|(_, s)| match &s.http {
+        CollectorOutcome::Captured { data } | CollectorOutcome::Partial { data, .. } => Some(data),
+        _ => None,
+    });
+    let baseline_simhash = baseline_http.and_then(|h| {
+        let obs = crate::analysis::document::DocumentObservations::from_html(&h.body_text);
+        crate::analysis::graph::compute_text_simhash(&obs.main_content_text)
+    });
+
+    snapshots
+        .iter()
+        .enumerate()
+        .map(|(idx, (profile, snap))| {
+            let (CollectorOutcome::Captured { data: http }
+            | CollectorOutcome::Partial { data: http, .. }) = &snap.http
+            else {
+                return UserAgentComparison {
+                    profile: *profile,
+                    status_code: None,
+                    body_bytes: 0,
+                    main_simhash: None,
+                    blocked_or_refused: false,
+                    cloaking_suspected: false,
+                };
+            };
+            let obs = crate::analysis::document::DocumentObservations::from_html(&http.body_text);
+            let simhash = crate::analysis::graph::compute_text_simhash(&obs.main_content_text);
+            let (blocked, cloaking) = if idx == 0 {
+                (matches!(http.status_code, 401 | 403 | 406 | 429), false)
+            } else if let Some(base) = baseline_http {
+                evaluate_cloaking(
+                    base.status_code,
+                    baseline_simhash,
+                    base.body_bytes,
+                    http.status_code,
+                    simhash,
+                    http.body_bytes,
+                )
+            } else {
+                (matches!(http.status_code, 401 | 403 | 406 | 429), false)
+            };
+            UserAgentComparison {
+                profile: *profile,
+                status_code: Some(http.status_code),
+                body_bytes: http.body_bytes,
+                main_simhash: simhash,
+                blocked_or_refused: blocked,
+                cloaking_suspected: cloaking,
+            }
+        })
+        .collect()
+}
+
+/// Result of checking a single opt-in external link target.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ExternalLinkCheck {
+    /// External URL checked.
+    pub url: String,
+    /// Observed HTTP status code, if a response was received.
+    pub status_code: Option<u16>,
+    /// `true` when the external link returned 404/410/5xx or failed transport.
+    pub broken: bool,
+    /// Explicit collector outcome (`Captured` status, `Skipped` by policy, or `Failed`).
+    pub outcome: CollectorOutcome<u16>,
+}
+
+/// Checks up to `max_links` distinct external URLs concurrently under `budget` and `policy`.
+///
+/// Only runs when explicitly opted into (e.g. `--check-external`). Private/loopback targets
+/// remain governed by `policy`, and `403`/`429` bot-blocks are recorded without false-flagging
+/// the link as broken.
+pub async fn check_external_links(
+    urls: &[String],
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+    max_links: usize,
+) -> Vec<ExternalLinkCheck> {
+    let mut unique = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for u in urls {
+        if unique.len() >= max_links {
+            break;
+        }
+        if seen.insert(u.clone()) {
+            unique.push(u.clone());
+        }
+    }
+
+    let sem = Arc::new(Semaphore::new(budget.max_concurrency.max(1)));
+    let budget = *budget;
+    let mut join_set = JoinSet::new();
+
+    for (idx, raw_url) in unique.into_iter().enumerate() {
+        let sem = Arc::clone(&sem);
+        join_set.spawn(async move {
+            let _permit = sem.acquire_owned().await;
+            let Ok(target) = AuditTarget::parse(&raw_url, policy) else {
+                return (
+                    idx,
+                    ExternalLinkCheck {
+                        url: raw_url,
+                        status_code: None,
+                        broken: false,
+                        outcome: CollectorOutcome::Skipped {
+                            reason: "blocked by target policy or invalid URL".to_owned(),
+                        },
+                    },
+                );
+            };
+            match tokio::time::timeout(
+                budget.http_timeout,
+                execute_bounded_get(&target, &budget, policy, ClientSource::Fresh),
+            )
+            .await
+            {
+                Ok(Ok((http, _))) => {
+                    let broken = http.status_code == 404
+                        || http.status_code == 410
+                        || http.status_code >= 500;
+                    (
+                        idx,
+                        ExternalLinkCheck {
+                            url: raw_url,
+                            status_code: Some(http.status_code),
+                            broken,
+                            outcome: CollectorOutcome::Captured {
+                                data: http.status_code,
+                            },
+                        },
+                    )
+                }
+                Ok(Err(err)) => (
+                    idx,
+                    ExternalLinkCheck {
+                        url: raw_url,
+                        status_code: None,
+                        broken: true,
+                        outcome: CollectorOutcome::Failed { error: err.error },
+                    },
+                ),
+                Err(_) => (
+                    idx,
+                    ExternalLinkCheck {
+                        url: raw_url,
+                        status_code: None,
+                        broken: true,
+                        outcome: CollectorOutcome::Failed {
+                            error: format!(
+                                "external check timed out after {} ms",
+                                budget.http_timeout.as_millis()
+                            ),
+                        },
+                    },
+                ),
+            }
+        });
+    }
+
+    let mut ordered = Vec::new();
+    while let Some(res) = join_set.join_next().await {
+        if let Ok(item) = res {
+            ordered.push(item);
+        }
+    }
+    ordered.sort_by_key(|(idx, _)| *idx);
+    ordered.into_iter().map(|(_, item)| item).collect()
 }
 
 async fn collect_http_with_source(
@@ -280,11 +737,30 @@ async fn collect_http_with_source(
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
 
+    if let ClientSource::Cached(cache) = source {
+        cache
+            .wait_if_backed_off(target.host(), budget.http_timeout)
+            .await;
+    }
+
     let outcome = tokio::time::timeout(
         budget.audit_timeout,
         execute_bounded_get(target, budget, policy, source),
     )
     .await;
+
+    if let ClientSource::Cached(cache) = source
+        && let Ok(Ok((ref evidence, _))) = outcome
+    {
+        let retry_after = evidence
+            .headers
+            .iter()
+            .find(|h| h.name == "retry-after")
+            .map(|h| h.value.as_str());
+        let refusal =
+            classify_http_refusal(evidence.status_code, &evidence.headers, &evidence.body_text);
+        cache.record_response_outcome(target.host(), evidence.status_code, retry_after, refusal);
+    }
 
     let (http, mut tls) = match outcome {
         Ok(Ok((evidence, tls))) if evidence.body_truncated => (
@@ -580,9 +1056,93 @@ pub async fn check_if_unchanged(
 /// instead of rebuilt for every request. Reuse does not weaken SSRF defence: a cached client can
 /// only reach the addresses that were validated when it was created, and a fresh resolution that
 /// yields different addresses produces a different cache key and therefore a new client.
+/// Classification of HTTP 403/429/503 refusal, rate-limit, or WAF challenge responses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RefusalKind {
+    /// Explicit rate limiting (`429`, `Retry-After`, or `X-RateLimit-Remaining: 0`).
+    RateLimited,
+    /// Interactive or automated WAF challenge (e.g. Cloudflare Turnstile/JS challenge).
+    WafChallenge,
+    /// Hard bot-protection or IP/UA access block (`403` / `406` with WAF markers).
+    BotBlocked,
+    /// Temporary upstream overload / maintenance (`503`).
+    UpstreamUnavailable,
+}
+
+#[derive(Debug, Clone)]
+struct HostBackoffState {
+    consecutive_throttles: u32,
+    next_allowed_at: Option<Instant>,
+    last_refusal: Option<RefusalKind>,
+}
+
+/// Parses an integer-seconds `Retry-After` header value, capped at 30 seconds.
+#[must_use]
+pub fn parse_retry_after_secs(raw: &str) -> Option<u64> {
+    let secs = raw.trim().parse::<u64>().ok()?;
+    Some(secs.min(30))
+}
+
+/// Classifies an HTTP response as rate-limited, WAF-challenged, bot-blocked, or upstream-unavailable.
+#[must_use]
+pub fn classify_http_refusal(
+    status: u16,
+    headers: &[HttpHeader],
+    body_text: &str,
+) -> Option<RefusalKind> {
+    let has_header = |name: &str, needle: Option<&str>| -> bool {
+        headers.iter().any(|h| {
+            h.name == name && needle.is_none_or(|n| h.value.to_ascii_lowercase().contains(n))
+        })
+    };
+
+    if status == 429 || has_header("x-ratelimit-remaining", Some("0")) {
+        return Some(RefusalKind::RateLimited);
+    }
+
+    let body_lower = body_text
+        .chars()
+        .take(4096)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let waf_challenge = has_header("cf-mitigated", Some("challenge"))
+        || body_lower.contains("just a moment...")
+        || body_lower.contains("attention required!")
+        || body_lower.contains("checking your browser before accessing");
+    if waf_challenge && matches!(status, 403 | 429 | 503) {
+        return Some(RefusalKind::WafChallenge);
+    }
+
+    let bot_markers = has_header("x-sucuri-id", None)
+        || has_header("x-datadome", None)
+        || has_header("x-px-vid", None)
+        || (has_header("server", Some("cloudflare")) && status == 403)
+        || body_lower.contains("access denied")
+        || body_lower.contains("request blocked");
+    if status == 403 && bot_markers {
+        return Some(RefusalKind::BotBlocked);
+    }
+
+    if status == 503 {
+        return if has_header("retry-after", None) {
+            Some(RefusalKind::RateLimited)
+        } else {
+            Some(RefusalKind::UpstreamUnavailable)
+        };
+    }
+
+    None
+}
+
+/// Reusable per-crawl pool of pinned HTTP clients plus per-host rate-limit backoff state.
+///
+/// Reuses resolved and SSRF-validated clients across crawl requests without weakening
+/// DNS pinning, and coordinates per-host `Retry-After` / exponential backoff across concurrent workers.
 pub struct CrawlHttpCache {
     capacity: usize,
     clients: Mutex<HashMap<String, reqwest::Client>>,
+    host_backoff: Mutex<HashMap<String, HostBackoffState>>,
 }
 
 impl CrawlHttpCache {
@@ -595,7 +1155,80 @@ impl CrawlHttpCache {
         Self {
             capacity: capacity.max(1),
             clients: Mutex::new(HashMap::new()),
+            host_backoff: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Sleeps briefly if `host` currently has an active rate-limit backoff window,
+    /// bounded by `max_wait` so [`ExecutionBudget`] deadlines are respected.
+    pub async fn wait_if_backed_off(&self, host: &str, max_wait: std::time::Duration) {
+        let key = strip_ipv6_brackets(host).to_ascii_lowercase();
+        let remaining = self.host_backoff.lock().ok().and_then(|map| {
+            let state = map.get(&key)?;
+            let until = state.next_allowed_at?;
+            until.checked_duration_since(Instant::now())
+        });
+        if let Some(delay) = remaining
+            && !delay.is_zero()
+        {
+            tokio::time::sleep(delay.min(max_wait)).await;
+        }
+    }
+
+    /// Updates per-host backoff and refusal classification from an observed HTTP response.
+    pub fn record_response_outcome(
+        &self,
+        host: &str,
+        status: u16,
+        retry_after: Option<&str>,
+        refusal: Option<RefusalKind>,
+    ) {
+        let key = strip_ipv6_brackets(host).to_ascii_lowercase();
+        let Ok(mut map) = self.host_backoff.lock() else {
+            return;
+        };
+        if (200..400).contains(&status) {
+            map.remove(&key);
+            return;
+        }
+
+        let entry = map.entry(key).or_insert(HostBackoffState {
+            consecutive_throttles: 0,
+            next_allowed_at: None,
+            last_refusal: None,
+        });
+        entry.last_refusal = refusal;
+
+        if matches!(
+            refusal,
+            Some(RefusalKind::RateLimited | RefusalKind::UpstreamUnavailable)
+        ) {
+            entry.consecutive_throttles = entry.consecutive_throttles.saturating_add(1);
+            let delay = retry_after.and_then(parse_retry_after_secs).map_or_else(
+                || {
+                    let shift = entry.consecutive_throttles.saturating_sub(1).min(5);
+                    std::time::Duration::from_millis(500 * (1_u64 << shift))
+                        .min(std::time::Duration::from_secs(30))
+                },
+                std::time::Duration::from_secs,
+            );
+            entry.next_allowed_at = Some(Instant::now() + delay);
+        } else if matches!(
+            refusal,
+            Some(RefusalKind::WafChallenge | RefusalKind::BotBlocked)
+        ) {
+            entry.next_allowed_at = Some(Instant::now() + std::time::Duration::from_secs(1));
+        }
+    }
+
+    /// Returns the most recent refusal/WAF classification observed for `host`, if any.
+    #[must_use]
+    pub fn last_refusal_for_host(&self, host: &str) -> Option<RefusalKind> {
+        let key = strip_ipv6_brackets(host).to_ascii_lowercase();
+        self.host_backoff
+            .lock()
+            .ok()
+            .and_then(|map| map.get(&key).and_then(|s| s.last_refusal))
     }
 
     /// Number of clients currently cached.
@@ -683,13 +1316,43 @@ impl From<String> for Box<FailedHttpAttempt> {
     }
 }
 
+/// Maps a `reqwest::Version` to its canonical protocol label (`"HTTP/1.1"`, `"HTTP/2"`, etc.).
+#[must_use]
+pub const fn http_version_label(version: reqwest::Version) -> &'static str {
+    match version {
+        reqwest::Version::HTTP_09 => "HTTP/0.9",
+        reqwest::Version::HTTP_10 => "HTTP/1.0",
+        reqwest::Version::HTTP_11 => "HTTP/1.1",
+        reqwest::Version::HTTP_2 => "HTTP/2",
+        reqwest::Version::HTTP_3 => "HTTP/3",
+        _ => "HTTP/unknown",
+    }
+}
+
+/// Classifies a `reqwest::Error` into a typed [`crate::domain::TransportErrorKind`].
+#[must_use]
+pub fn classify_reqwest_error(err: &reqwest::Error) -> crate::domain::TransportErrorKind {
+    if err.is_timeout() {
+        return crate::domain::TransportErrorKind::Timeout;
+    }
+    if err.is_redirect() {
+        return crate::domain::TransportErrorKind::RedirectLimit;
+    }
+    crate::domain::classify_transport_error_message(&format_error_chain(err))
+}
+
 async fn handle_http_send_error(
     current_target: &AuditTarget,
     policy: TargetPolicy,
     timeout: std::time::Duration,
     err: &reqwest::Error,
 ) -> Box<FailedHttpAttempt> {
-    let error_msg = format!("HTTP request failed: {}", format_error_chain(err));
+    let kind = classify_reqwest_error(err);
+    let error_msg = format!(
+        "HTTP request failed [kind={}]: {}",
+        kind.as_str(),
+        format_error_chain(err)
+    );
     let tls_probe = if current_target.scheme() == TargetScheme::Https {
         probe_tls_certificate_unverified(current_target, policy, timeout, &error_msg).await
     } else {
@@ -718,10 +1381,14 @@ async fn execute_bounded_get(
                     .client_for(&current_target, budget.http_timeout, policy)
                     .await?
             }
-            ClientSource::Fresh => {
+            ClientSource::Fresh | ClientSource::FreshWithUserAgent(_) => {
+                let ua = match source {
+                    ClientSource::FreshWithUserAgent(ua) => ua,
+                    _ => USER_AGENT,
+                };
                 let pinned_addrs = resolve_and_validate(&current_target, policy).await?;
                 let host_for_pin = strip_ipv6_brackets(current_target.host());
-                build_pinned_client(host_for_pin, &pinned_addrs, budget.http_timeout)?
+                build_pinned_client_with_ua(host_for_pin, &pinned_addrs, budget.http_timeout, ua)?
             }
         };
 
@@ -822,6 +1489,15 @@ fn build_pinned_client(
     pinned_addrs: &[std::net::SocketAddr],
     timeout: std::time::Duration,
 ) -> Result<reqwest::Client, String> {
+    build_pinned_client_with_ua(host_for_pin, pinned_addrs, timeout, USER_AGENT)
+}
+
+fn build_pinned_client_with_ua(
+    host_for_pin: &str,
+    pinned_addrs: &[std::net::SocketAddr],
+    timeout: std::time::Duration,
+    user_agent: &str,
+) -> Result<reqwest::Client, String> {
     let mut default_headers = reqwest::header::HeaderMap::new();
     default_headers.insert(
         reqwest::header::ACCEPT_ENCODING,
@@ -833,7 +1509,7 @@ fn build_pinned_client(
         .tls_info(true)
         .redirect(Policy::none())
         .timeout(timeout)
-        .user_agent(USER_AGENT)
+        .user_agent(user_agent)
         .default_headers(default_headers)
         .no_gzip()
         .no_brotli()
@@ -1532,5 +2208,301 @@ mod caa_tests {
         }];
         let decoded = super::decode_body_text(&encoded, &headers);
         assert_eq!(decoded, "Zażółć gęślą jaźń");
+    }
+
+    #[test]
+    fn classifies_refusal_waf_and_tracks_per_host_backoff() {
+        assert_eq!(super::parse_retry_after_secs("5"), Some(5));
+        assert_eq!(super::parse_retry_after_secs("999"), Some(30));
+        assert_eq!(super::parse_retry_after_secs("invalid"), None);
+
+        let cf_headers = vec![crate::domain::HttpHeader {
+            name: "cf-mitigated".to_owned(),
+            value: "challenge".to_owned(),
+        }];
+        assert_eq!(
+            super::classify_http_refusal(403, &cf_headers, "<html>Just a moment...</html>"),
+            Some(super::RefusalKind::WafChallenge)
+        );
+        assert_eq!(
+            super::classify_http_refusal(429, &[], ""),
+            Some(super::RefusalKind::RateLimited)
+        );
+        assert_eq!(
+            super::classify_http_refusal(503, &[], ""),
+            Some(super::RefusalKind::UpstreamUnavailable)
+        );
+
+        let cache = super::CrawlHttpCache::new(4);
+        cache.record_response_outcome(
+            "api.example.com",
+            429,
+            Some("2"),
+            Some(super::RefusalKind::RateLimited),
+        );
+        assert_eq!(
+            cache.last_refusal_for_host("api.example.com"),
+            Some(super::RefusalKind::RateLimited)
+        );
+        assert_eq!(cache.last_refusal_for_host("other.example.com"), None);
+
+        cache.record_response_outcome("api.example.com", 200, None, None);
+        assert_eq!(cache.last_refusal_for_host("api.example.com"), None);
+    }
+
+    #[tokio::test]
+    async fn probe_collector_captures_well_known_and_soft_404_baseline_within_bounds() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+
+        tokio::spawn(async move {
+            for _ in 0..8 {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("/");
+                    let (status, body) = match path {
+                        "/.well-known/security.txt" => {
+                            ("200 OK", "Contact: mailto:sec@example.com\n")
+                        }
+                        _ => ("404 Not Found", "not found"),
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let target = crate::domain::AuditTarget::parse(
+            &format!("http://{addr}/"),
+            crate::domain::TargetPolicy::AllowPrivate,
+        )
+        .expect("target");
+        let collector = super::ProbeCollector {
+            max_well_known_probes: 2,
+            max_preview_bytes: 512,
+        };
+        let probes = collector
+            .collect_origin_probes(
+                &target,
+                crate::domain::TargetPolicy::AllowPrivate,
+                &crate::domain::ExecutionBudget::default(),
+                &["/.well-known/security.txt", "/llms.txt", "/humans.txt"],
+            )
+            .await;
+
+        assert_eq!(probes.well_known.len(), 3);
+        assert!(matches!(
+            &probes.well_known[0].outcome,
+            crate::domain::CollectorOutcome::Captured { data }
+                if data.status_code == 200 && data.body_preview.contains("mailto:sec@example.com")
+        ));
+        assert!(matches!(
+            &probes.well_known[1].outcome,
+            crate::domain::CollectorOutcome::Captured { data } if data.status_code == 404
+        ));
+        assert!(matches!(
+            &probes.well_known[2].outcome,
+            crate::domain::CollectorOutcome::Skipped { .. }
+        ));
+        assert_eq!(
+            probes.soft_404_baseline.as_ref().map(|b| b.probe_status),
+            Some(404)
+        );
+    }
+
+    #[test]
+    fn parses_alt_svc_protocols_and_classifies_transport_errors() {
+        let http = crate::domain::HttpEvidence {
+            final_url: "https://example.com/".to_owned(),
+            status_code: 200,
+            redirect_chain: Vec::new(),
+            headers: vec![crate::domain::HttpHeader {
+                name: "alt-svc".to_owned(),
+                value: r#"h3=":443"; ma=86400, h2=":443""#.to_owned(),
+            }],
+            elapsed_ms: crate::domain::Measurement::Unavailable {
+                reason: "unit test".to_owned(),
+            },
+            body_bytes: 0,
+            body_truncated: false,
+            body_text: String::new(),
+        };
+        assert_eq!(http.alt_svc_protocols(), vec!["h3", "h2"]);
+        assert!(http.supports_http3_alt_svc());
+        assert_eq!(
+            super::http_version_label(reqwest::Version::HTTP_2),
+            "HTTP/2"
+        );
+
+        assert_eq!(
+            crate::domain::classify_transport_error_message("certificate expired"),
+            crate::domain::TransportErrorKind::CertificateExpired
+        );
+        assert_eq!(
+            crate::domain::classify_transport_error_message("unknown issuer in chain"),
+            crate::domain::TransportErrorKind::CertificateUntrusted
+        );
+        assert_eq!(
+            crate::domain::classify_transport_error_message("operation timed out"),
+            crate::domain::TransportErrorKind::Timeout
+        );
+    }
+
+    #[tokio::test]
+    async fn probes_user_agent_profiles_for_blocking_and_cloaking() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+
+        tokio::spawn(async move {
+            for _ in 0..3 {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 2048];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+                    let (status, body) = if req.contains("gptbot") {
+                        (
+                            "403 Forbidden",
+                            "<html><body>Access denied for AI crawlers</body></html>".to_owned(),
+                        )
+                    } else if req.contains("googlebot") {
+                        (
+                            "200 OK",
+                            format!(
+                                "<html><body><main>{}</main></body></html>",
+                                "seo keyword spam ".repeat(40)
+                            ),
+                        )
+                    } else {
+                        (
+                            "200 OK",
+                            format!(
+                                "<html><body><main>{}</main></body></html>",
+                                "genuine human product description ".repeat(30)
+                            ),
+                        )
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let target = crate::domain::AuditTarget::parse(
+            &format!("http://{addr}/"),
+            crate::domain::TargetPolicy::AllowPrivate,
+        )
+        .expect("target");
+        let results = super::probe_user_agent_profiles(
+            &target,
+            &crate::domain::ExecutionBudget::default(),
+            crate::domain::TargetPolicy::AllowPrivate,
+            &[
+                super::UserAgentProfile::DesktopBrowser,
+                super::UserAgentProfile::AiAgent,
+                super::UserAgentProfile::SearchCrawler,
+            ],
+        )
+        .await;
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].status_code, Some(200));
+        assert!(!results[0].blocked_or_refused);
+        assert!(!results[0].cloaking_suspected);
+
+        assert_eq!(results[1].status_code, Some(403));
+        assert!(results[1].blocked_or_refused);
+        assert!(results[1].cloaking_suspected);
+
+        assert_eq!(results[2].status_code, Some(200));
+        assert!(!results[2].blocked_or_refused);
+        assert!(results[2].cloaking_suspected);
+    }
+
+    #[tokio::test]
+    async fn checks_external_links_within_cap_and_distinguishes_broken_from_403() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+
+        tokio::spawn(async move {
+            for _ in 0..3 {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 1024];
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    let req = String::from_utf8_lossy(&buf[..n]);
+                    let path = req
+                        .lines()
+                        .next()
+                        .and_then(|l| l.split_whitespace().nth(1))
+                        .unwrap_or("/");
+                    let status = match path {
+                        "/ok" => "200 OK",
+                        "/blocked" => "403 Forbidden",
+                        _ => "404 Not Found",
+                    };
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+
+        let urls = vec![
+            format!("http://{addr}/ok"),
+            format!("http://{addr}/blocked"),
+            format!("http://{addr}/missing"),
+            format!("http://{addr}/ignored-by-cap"),
+        ];
+        let results = super::check_external_links(
+            &urls,
+            &crate::domain::ExecutionBudget::default(),
+            crate::domain::TargetPolicy::AllowPrivate,
+            3,
+        )
+        .await;
+
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].status_code, Some(200));
+        assert!(!results[0].broken);
+        assert_eq!(results[1].status_code, Some(403));
+        assert!(!results[1].broken);
+        assert_eq!(results[2].status_code, Some(404));
+        assert!(results[2].broken);
     }
 }

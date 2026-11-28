@@ -152,12 +152,27 @@ enum Command {
         /// Allow loopback and private network targets (for local testing only).
         #[arg(long)]
         allow_private: bool,
-        /// Maximum number of pages to acquire.
-        #[arg(long, default_value_t = 50)]
-        max_pages: usize,
-        /// Maximum link-following depth from the seed URL.
-        #[arg(long, default_value_t = 2)]
-        max_depth: usize,
+        /// Maximum number of pages to acquire (overrides `--level` default).
+        #[arg(long)]
+        max_pages: Option<usize>,
+        /// Maximum link-following depth from the seed URL (overrides `--level` default).
+        #[arg(long)]
+        max_depth: Option<usize>,
+        /// Depth preset (`quick`, `surface`, or `full`).
+        #[arg(long, value_enum, default_value_t = ScanLevelArg::Surface)]
+        level: ScanLevelArg,
+        /// Include only rules matching these IDs or trailing `*` prefix globs.
+        #[arg(long = "rule-include")]
+        rule_include: Vec<String>,
+        /// Exclude rules matching these IDs or trailing `*` prefix globs.
+        #[arg(long = "rule-exclude")]
+        rule_exclude: Vec<String>,
+        /// Optional ignore file path (defaults to `.nzwignore` when present).
+        #[arg(long)]
+        ignore_file: Option<PathBuf>,
+        /// Opt-in check of external links discovered during the scan (up to 25 unique URLs).
+        #[arg(long)]
+        check_external: bool,
         /// End-to-end crawl deadline in seconds.
         #[arg(long)]
         audit_timeout_secs: Option<u64>,
@@ -370,6 +385,23 @@ impl From<AudienceArg> for netzzwergenwacht::investigation::RolePerspective {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
+enum ScanLevelArg {
+    Quick,
+    Surface,
+    Full,
+}
+
+impl ScanLevelArg {
+    const fn into_audit_level(self) -> netzzwergenwacht::analysis::AuditLevel {
+        match self {
+            Self::Quick => netzzwergenwacht::analysis::AuditLevel::Quick,
+            Self::Surface => netzzwergenwacht::analysis::AuditLevel::Surface,
+            Self::Full => netzzwergenwacht::analysis::AuditLevel::Full,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
 enum OutputFormat {
     Text,
     Json,
@@ -444,6 +476,8 @@ struct ScanReport {
     systemic_issues: Vec<netzzwergenwacht::discovery::SystemicIssue>,
     graph_results: Vec<netzzwergenwacht::domain::AnalyserResult>,
     quality_assessment: netzzwergenwacht::analysis::assessment::QualityAssessment,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    external_link_checks: Vec<netzzwergenwacht::collection::ExternalLinkCheck>,
     stored_at: Option<String>,
     store_error: Option<String>,
 }
@@ -669,11 +703,39 @@ async fn main() -> ExitCode {
             allow_private,
             max_pages,
             max_depth,
+            level,
+            rule_include,
+            rule_exclude,
+            ignore_file,
+            check_external,
             audit_timeout_secs,
             browser_sample,
             output,
             evidence_dir,
         } => {
+            let mut selection = if let Some(ref path) = ignore_file {
+                match netzzwergenwacht::analysis::RuleSelection::from_ignore_file(path) {
+                    Ok(sel) => sel,
+                    Err(err) => {
+                        eprintln!("scan error: {err}");
+                        return ExitCode::from(EXIT_COLLECTION_OR_INPUT_ERROR);
+                    }
+                }
+            } else {
+                let default_ignore = PathBuf::from(".nzwignore");
+                if default_ignore.exists() {
+                    netzzwergenwacht::analysis::RuleSelection::from_ignore_file(&default_ignore)
+                        .unwrap_or_default()
+                } else {
+                    netzzwergenwacht::analysis::RuleSelection::default()
+                }
+            };
+            selection.include.extend(rule_include);
+            selection.exclude.extend(rule_exclude);
+
+            let (level_pages, level_depth) = level.into_audit_level().default_crawl_bounds();
+            let effective_max_pages = max_pages.unwrap_or(level_pages).max(1);
+            let effective_max_depth = max_depth.unwrap_or(level_depth);
             let discovery = config::ConfigDiscovery {
                 explicit: config,
                 ..config::ConfigDiscovery::from_process()
@@ -695,8 +757,8 @@ async fn main() -> ExitCode {
             };
             let exec_budget = budget_with_overrides(&loaded.config, None, audit_timeout_secs, None);
             let crawl_budget = netzzwergenwacht::discovery::CrawlBudget {
-                max_pages: max_pages.max(1),
-                max_depth,
+                max_pages: effective_max_pages,
+                max_depth: effective_max_depth,
                 max_duration: exec_budget.audit_timeout,
             };
             let mut summary = netzzwergenwacht::discovery::crawl_and_cluster(
@@ -715,6 +777,30 @@ async fn main() -> ExitCode {
                 )
                 .await;
             }
+            netzzwergenwacht::analysis::apply_rule_selection_to_crawl(&mut summary, &selection);
+            let external_link_checks = if check_external {
+                let seed_host = target.host().to_ascii_lowercase();
+                let ext_urls: Vec<String> = summary
+                    .resources
+                    .iter()
+                    .map(|r| r.url.clone())
+                    .filter(|u| {
+                        url::Url::parse(u)
+                            .ok()
+                            .and_then(|parsed| parsed.host_str().map(str::to_ascii_lowercase))
+                            .is_some_and(|h| h != seed_host)
+                    })
+                    .collect();
+                netzzwergenwacht::collection::check_external_links(
+                    &ext_urls,
+                    &exec_budget,
+                    policy,
+                    25,
+                )
+                .await
+            } else {
+                Vec::new()
+            };
             let quality_assessment =
                 netzzwergenwacht::analysis::assessment::assess_crawl_summary(&summary);
 
@@ -745,6 +831,7 @@ async fn main() -> ExitCode {
                 systemic_issues: summary.systemic_issues.clone(),
                 graph_results: summary.graph_results.clone(),
                 quality_assessment,
+                external_link_checks,
                 stored_at,
                 store_error,
             };

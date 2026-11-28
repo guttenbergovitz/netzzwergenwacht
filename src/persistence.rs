@@ -568,4 +568,311 @@ mod tests {
         assert_eq!(diff.worsened_findings[0].fingerprint.0, "fp-worse");
         assert_eq!(diff.improved_findings[0].fingerprint.0, "fp-improve");
     }
+
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn diff_crawl_summaries_tracks_page_changes_and_finding_deltas() {
+        use crate::brigade::DwarfId;
+        use crate::discovery::{
+            CrawlCoverage, CrawlSummary, PageCrawlStatus, PageDiagnostics, PageFinding, PageType,
+        };
+        use crate::domain::{AuditTarget, Confidence, RuleId, Severity, TargetPolicy};
+
+        let seed =
+            AuditTarget::parse("https://example.com/", TargetPolicy::PublicOnly).expect("seed");
+        let make_finding = |rule: &str, title: &str, sev: Severity| PageFinding {
+            rule_id: RuleId(rule.to_owned()),
+            dwarf_id: DwarfId::Such,
+            severity: sev,
+            confidence: Confidence::High,
+            title: title.to_owned(),
+            summary: "summary".to_owned(),
+            remediation: None,
+            evidence_refs: Vec::new(),
+        };
+        let make_page = |url: &str, status: u16, findings: Vec<PageFinding>| PageDiagnostics {
+            url: url.to_owned(),
+            http_status: Some(status),
+            page_type: PageType::Unknown,
+            status: PageCrawlStatus::Investigated,
+            checks_passed: 1,
+            checks_failed: findings.len(),
+            checks_skipped: 0,
+            checks_unavailable: 0,
+            findings,
+        };
+
+        let baseline = CrawlSummary {
+            seed: seed.clone(),
+            coverage: CrawlCoverage {
+                discovered_urls: 3,
+                fetched_urls: 3,
+                analysed_urls: 3,
+                failed_urls: 0,
+                skipped_budget_urls: 0,
+                cancelled_urls: 0,
+                robots_blocked_urls: 0,
+                reused_evidence_urls: 0,
+                unknown_urls: 0,
+                robots: crate::discovery::RobotsOutcome::Absent,
+                queue_rejections: 0,
+                duplicate_offers: 0,
+                max_pages: 10,
+                max_depth: 2,
+                complete: true,
+                resources: crate::discovery::ResourceCoverage::default(),
+            },
+            budget_exhausted: false,
+            pages: Vec::new(),
+            systemic_issues: Vec::new(),
+            analysis_totals: Vec::new(),
+            page_diagnostics: vec![
+                make_page(
+                    "https://example.com/",
+                    200,
+                    vec![make_finding(
+                        "such.meta.title",
+                        "Short title",
+                        Severity::Low,
+                    )],
+                ),
+                make_page(
+                    "https://example.com/old",
+                    200,
+                    vec![make_finding(
+                        "such.meta.description",
+                        "Missing desc",
+                        Severity::Medium,
+                    )],
+                ),
+                make_page("https://example.com/about", 200, vec![]),
+            ],
+            graph_results: Vec::new(),
+            resources: Vec::new(),
+            page_resources: Vec::new(),
+        };
+
+        let current = CrawlSummary {
+            page_diagnostics: vec![
+                make_page(
+                    "https://example.com/",
+                    200,
+                    vec![make_finding(
+                        "such.meta.title",
+                        "Short title",
+                        Severity::Low,
+                    )],
+                ),
+                make_page(
+                    "https://example.com/about",
+                    404,
+                    vec![make_finding("netz.http.status", "HTTP 404", Severity::High)],
+                ),
+                make_page("https://example.com/new", 200, vec![]),
+            ],
+            ..baseline.clone()
+        };
+
+        let diff = diff_crawl_summaries(&baseline, &current);
+        assert_eq!(diff.added_pages, vec!["https://example.com/new"]);
+        assert_eq!(diff.removed_pages, vec!["https://example.com/old"]);
+        assert_eq!(diff.status_changed_pages.len(), 1);
+        assert_eq!(
+            diff.status_changed_pages[0].url,
+            "https://example.com/about"
+        );
+        assert_eq!(diff.status_changed_pages[0].baseline_status, Some(200));
+        assert_eq!(diff.status_changed_pages[0].current_status, Some(404));
+        assert_eq!(diff.unchanged_pages_count, 1);
+        assert_eq!(diff.persisting_findings_count, 1);
+        assert_eq!(diff.new_findings.len(), 1);
+        assert_eq!(diff.new_findings[0].rule_id, "netz.http.status");
+        assert_eq!(diff.resolved_findings.len(), 1);
+        assert_eq!(diff.resolved_findings[0].rule_id, "such.meta.description");
+        assert!(!diff.is_clean_or_improved());
+    }
+}
+
+/// Classification of a page's status change between two crawl scans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScanPageDiffKind {
+    /// Page was not present in the baseline scan.
+    Added,
+    /// Page was present in the baseline scan but absent in the current scan.
+    Removed,
+    /// Page HTTP status code changed between baseline and current scans.
+    StatusChanged,
+    /// Page remained present with the same HTTP status.
+    Unchanged,
+}
+
+/// Per-page status delta between two crawl scans.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanPageDiff {
+    /// Page URL.
+    pub url: String,
+    /// Classification of the page-level change.
+    pub kind: ScanPageDiffKind,
+    /// HTTP status in baseline scan.
+    pub baseline_status: Option<u16>,
+    /// HTTP status in current scan.
+    pub current_status: Option<u16>,
+}
+
+/// Finding delta entry between two crawl scans.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanFindingDiffEntry {
+    /// Affected page URL (or `"<graph>"` for cross-page graph findings).
+    pub url: String,
+    /// Rule identifier.
+    pub rule_id: String,
+    /// Finding severity.
+    pub severity: crate::domain::Severity,
+    /// Finding title.
+    pub title: String,
+}
+
+/// Scan-to-scan diff across pages and findings between two [`crate::discovery::CrawlSummary`] runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanDiffReport {
+    /// Seed URL of the baseline scan.
+    pub baseline_seed: String,
+    /// Seed URL of the current scan.
+    pub current_seed: String,
+    /// Newly discovered page URLs absent from baseline.
+    pub added_pages: Vec<String>,
+    /// Page URLs present in baseline but absent from current scan.
+    pub removed_pages: Vec<String>,
+    /// Pages whose observed HTTP status changed between scans.
+    pub status_changed_pages: Vec<ScanPageDiff>,
+    /// Count of pages present in both scans with identical HTTP status.
+    pub unchanged_pages_count: usize,
+    /// Findings newly introduced in the current scan.
+    pub new_findings: Vec<ScanFindingDiffEntry>,
+    /// Findings present in baseline that did not recur in the current scan.
+    pub resolved_findings: Vec<ScanFindingDiffEntry>,
+    /// Count of findings present in both scans.
+    pub persisting_findings_count: usize,
+}
+
+impl ScanDiffReport {
+    /// Returns `true` when no new findings, removed pages, or status changes occurred.
+    #[must_use]
+    pub fn is_clean_or_improved(&self) -> bool {
+        self.new_findings.is_empty()
+            && self.removed_pages.is_empty()
+            && self.status_changed_pages.is_empty()
+    }
+}
+
+/// Computes a deterministic scan-to-scan diff across pages and findings
+/// between `baseline` and `current` [`crate::discovery::CrawlSummary`] objects.
+#[must_use]
+pub fn diff_crawl_summaries(
+    baseline: &crate::discovery::CrawlSummary,
+    current: &crate::discovery::CrawlSummary,
+) -> ScanDiffReport {
+    use std::collections::BTreeMap;
+
+    let base_pages: BTreeMap<&str, Option<u16>> = baseline
+        .page_diagnostics
+        .iter()
+        .map(|p| (p.url.as_str(), p.http_status))
+        .collect();
+    let curr_pages: BTreeMap<&str, Option<u16>> = current
+        .page_diagnostics
+        .iter()
+        .map(|p| (p.url.as_str(), p.http_status))
+        .collect();
+
+    let mut added_pages = Vec::new();
+    let mut removed_pages = Vec::new();
+    let mut status_changed_pages = Vec::new();
+    let mut unchanged_pages_count = 0usize;
+
+    for (&url, &curr_status) in &curr_pages {
+        match base_pages.get(url) {
+            None => added_pages.push(url.to_owned()),
+            Some(&base_status) if base_status != curr_status => {
+                status_changed_pages.push(ScanPageDiff {
+                    url: url.to_owned(),
+                    kind: ScanPageDiffKind::StatusChanged,
+                    baseline_status: base_status,
+                    current_status: curr_status,
+                });
+            }
+            Some(_) => unchanged_pages_count += 1,
+        }
+    }
+    for &url in base_pages.keys() {
+        if !curr_pages.contains_key(url) {
+            removed_pages.push(url.to_owned());
+        }
+    }
+
+    let collect_findings = |summary: &crate::discovery::CrawlSummary| {
+        let mut map: BTreeMap<(String, String, String), ScanFindingDiffEntry> = BTreeMap::new();
+        for page in &summary.page_diagnostics {
+            for f in &page.findings {
+                let key = (page.url.clone(), f.rule_id.0.clone(), f.title.clone());
+                map.insert(
+                    key,
+                    ScanFindingDiffEntry {
+                        url: page.url.clone(),
+                        rule_id: f.rule_id.0.clone(),
+                        severity: f.severity,
+                        title: f.title.clone(),
+                    },
+                );
+            }
+        }
+        for analyser in &summary.graph_results {
+            for f in &analyser.findings {
+                let key = ("<graph>".to_owned(), f.rule_id.0.clone(), f.title.clone());
+                map.insert(
+                    key,
+                    ScanFindingDiffEntry {
+                        url: "<graph>".to_owned(),
+                        rule_id: f.rule_id.0.clone(),
+                        severity: f.severity,
+                        title: f.title.clone(),
+                    },
+                );
+            }
+        }
+        map
+    };
+
+    let base_findings = collect_findings(baseline);
+    let curr_findings = collect_findings(current);
+
+    let mut new_findings = Vec::new();
+    let mut resolved_findings = Vec::new();
+    let mut persisting_findings_count = 0usize;
+
+    for (key, entry) in &curr_findings {
+        if base_findings.contains_key(key) {
+            persisting_findings_count += 1;
+        } else {
+            new_findings.push(entry.clone());
+        }
+    }
+    for (key, entry) in &base_findings {
+        if !curr_findings.contains_key(key) {
+            resolved_findings.push(entry.clone());
+        }
+    }
+
+    ScanDiffReport {
+        baseline_seed: baseline.seed.as_str().to_owned(),
+        current_seed: current.seed.as_str().to_owned(),
+        added_pages,
+        removed_pages,
+        status_changed_pages,
+        unchanged_pages_count,
+        new_findings,
+        resolved_findings,
+        persisting_findings_count,
+    }
 }

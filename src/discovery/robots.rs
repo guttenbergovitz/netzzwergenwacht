@@ -16,6 +16,230 @@ use crate::domain::{AuditTarget, CollectorOutcome, ExecutionBudget, TargetPolicy
 /// Maximum `Crawl-delay` honoured per request so hostile directives cannot stall a bounded audit.
 const MAX_CRAWL_DELAY: Duration = Duration::from_secs(10);
 
+/// Known AI crawler user-agent tokens evaluated in [`RobotsEvidence::ai_crawler_policies`].
+pub const KNOWN_AI_CRAWLERS: &[&str] = &[
+    "GPTBot",
+    "OAI-SearchBot",
+    "ChatGPT-User",
+    "ClaudeBot",
+    "anthropic-ai",
+    "Google-Extended",
+    "PerplexityBot",
+    "CCBot",
+    "Bytespider",
+    "Applebot-Extended",
+];
+
+/// Effective access policy for a single AI crawler token derived from `robots.txt`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiCrawlerPolicy {
+    /// No disallow rules block this crawler in the applicable group.
+    Allowed,
+    /// `Disallow: /` blocks all paths without overriding `Allow` rules.
+    Disallowed,
+    /// Specific paths are disallowed or selectively allowed.
+    Partial,
+    /// Neither a matching user-agent group nor a wildcard (`*`) group was present.
+    Unspecified,
+}
+
+/// Evaluated policy entry for one AI crawler token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiCrawlerStatus {
+    /// Canonical AI crawler `User-agent` token.
+    pub user_agent: String,
+    /// Effective policy derived per RFC 9309 group precedence.
+    pub policy: AiCrawlerPolicy,
+    /// Matching group token (`*` or specific crawler name), if any.
+    pub matched_group: Option<String>,
+}
+
+/// Parsed `User-agent` record group from `robots.txt`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RobotsGroup {
+    /// `User-agent` tokens sharing this group's directives.
+    pub user_agents: Vec<String>,
+    /// `Allow:` patterns in order of appearance.
+    pub allow: Vec<String>,
+    /// `Disallow:` patterns in order of appearance.
+    pub disallow: Vec<String>,
+    /// Optional `Crawl-delay` directive in seconds (unclamped raw finite value).
+    pub crawl_delay_secs: Option<f64>,
+}
+
+/// Syntax or semantic warning encountered while parsing `robots.txt`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RobotsWarning {
+    /// 1-based source line number.
+    pub line: usize,
+    /// Human-readable warning description.
+    pub message: String,
+}
+
+/// Structured evidence collected from an origin's `/robots.txt` resource.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RobotsEvidence {
+    /// Acquisition outcome (`observed`, `absent`, or `unavailable`).
+    pub outcome: RobotsOutcome,
+    /// Observed HTTP status code, if a response was received.
+    pub status_code: Option<u16>,
+    /// Parsed `User-agent` record groups.
+    pub groups: Vec<RobotsGroup>,
+    /// `Sitemap:` directives declared in `robots.txt`.
+    pub sitemaps: Vec<String>,
+    /// Syntax or structural warnings emitted during parsing.
+    pub warnings: Vec<RobotsWarning>,
+    /// Policy table across [`KNOWN_AI_CRAWLERS`].
+    pub ai_crawler_policies: Vec<AiCrawlerStatus>,
+}
+
+impl RobotsEvidence {
+    /// Parses `robots.txt` text into structured groups, sitemaps, warnings, and AI crawler policies.
+    #[must_use]
+    pub fn parse(body: &str, status_code: Option<u16>) -> Self {
+        let mut groups: Vec<RobotsGroup> = Vec::new();
+        let mut sitemaps: Vec<String> = Vec::new();
+        let mut warnings: Vec<RobotsWarning> = Vec::new();
+        let mut current = RobotsGroup::default();
+        let mut awaiting_agent = true;
+
+        let flush_group = |groups: &mut Vec<RobotsGroup>, curr: &mut RobotsGroup| {
+            if curr.user_agents.is_empty() {
+                *curr = RobotsGroup::default();
+            } else {
+                groups.push(std::mem::take(curr));
+            }
+        };
+
+        for (idx, raw) in body.lines().enumerate() {
+            let line_no = idx + 1;
+            let line = raw.split('#').next().unwrap_or_default().trim();
+            if line.is_empty() {
+                if !awaiting_agent {
+                    flush_group(&mut groups, &mut current);
+                    awaiting_agent = true;
+                }
+                continue;
+            }
+            let Some((key, value)) = line.split_once(':') else {
+                warnings.push(RobotsWarning {
+                    line: line_no,
+                    message: "line missing ':' separator".to_owned(),
+                });
+                continue;
+            };
+            let key = key.trim().to_ascii_lowercase();
+            let value = value.trim();
+
+            match key.as_str() {
+                "user-agent" => {
+                    if !awaiting_agent {
+                        flush_group(&mut groups, &mut current);
+                        awaiting_agent = true;
+                    }
+                    if value.is_empty() {
+                        warnings.push(RobotsWarning {
+                            line: line_no,
+                            message: "empty User-agent directive".to_owned(),
+                        });
+                    } else {
+                        current.user_agents.push(value.to_owned());
+                    }
+                }
+                "allow" | "disallow" => {
+                    awaiting_agent = false;
+                    if current.user_agents.is_empty() {
+                        warnings.push(RobotsWarning {
+                            line: line_no,
+                            message: format!("'{key}' directive before any User-agent"),
+                        });
+                    }
+                    if key == "allow" {
+                        if !value.is_empty() {
+                            current.allow.push(value.to_owned());
+                        }
+                    } else if !value.is_empty() {
+                        current.disallow.push(value.to_owned());
+                    }
+                }
+                "crawl-delay" => {
+                    awaiting_agent = false;
+                    match value.parse::<f64>() {
+                        Ok(secs) if secs.is_finite() && secs >= 0.0 => {
+                            current.crawl_delay_secs = Some(secs);
+                        }
+                        _ => warnings.push(RobotsWarning {
+                            line: line_no,
+                            message: format!("invalid Crawl-delay value `{value}`"),
+                        }),
+                    }
+                }
+                "sitemap" => {
+                    if !value.is_empty() {
+                        sitemaps.push(value.to_owned());
+                    }
+                }
+                other => {
+                    warnings.push(RobotsWarning {
+                        line: line_no,
+                        message: format!("unrecognised robots.txt directive `{other}`"),
+                    });
+                }
+            }
+        }
+        flush_group(&mut groups, &mut current);
+
+        let ai_crawler_policies = evaluate_ai_crawler_policies(&groups);
+        Self {
+            outcome: RobotsOutcome::Observed,
+            status_code,
+            groups,
+            sitemaps,
+            warnings,
+            ai_crawler_policies,
+        }
+    }
+}
+
+fn evaluate_ai_crawler_policies(groups: &[RobotsGroup]) -> Vec<AiCrawlerStatus> {
+    let wildcard = groups
+        .iter()
+        .find(|g| g.user_agents.iter().any(|ua| ua == "*"));
+
+    KNOWN_AI_CRAWLERS
+        .iter()
+        .map(|&bot| {
+            let specific = groups
+                .iter()
+                .find(|g| g.user_agents.iter().any(|ua| ua.eq_ignore_ascii_case(bot)));
+            let (matched, matched_group) = match (specific, wildcard) {
+                (Some(g), _) => (Some(g), Some(bot.to_owned())),
+                (None, Some(g)) => (Some(g), Some("*".to_owned())),
+                (None, None) => (None, None),
+            };
+            let policy = match matched {
+                None => AiCrawlerPolicy::Unspecified,
+                Some(g) => {
+                    let blocks_all = g.disallow.iter().any(|p| p == "/");
+                    if blocks_all && g.allow.is_empty() {
+                        AiCrawlerPolicy::Disallowed
+                    } else if !g.disallow.is_empty() {
+                        AiCrawlerPolicy::Partial
+                    } else {
+                        AiCrawlerPolicy::Allowed
+                    }
+                }
+            };
+            AiCrawlerStatus {
+                user_agent: bot.to_owned(),
+                policy,
+                matched_group,
+            }
+        })
+        .collect()
+}
+
 /// How the robots exclusion file was obtained for an origin.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -300,14 +524,34 @@ pub async fn fetch_robots(
     budget: &ExecutionBudget,
     policy: TargetPolicy,
 ) -> (RobotsOutcome, RobotsRules) {
+    let (outcome, rules, _) = fetch_robots_with_evidence(seed, budget, policy).await;
+    (outcome, rules)
+}
+
+/// Fetches `/robots.txt` and returns both [`RobotsRules`] and structured [`RobotsEvidence`].
+pub async fn fetch_robots_with_evidence(
+    seed: &AuditTarget,
+    budget: &ExecutionBudget,
+    policy: TargetPolicy,
+) -> (RobotsOutcome, RobotsRules, RobotsEvidence) {
+    let unavailable = || {
+        (
+            RobotsOutcome::Unavailable,
+            RobotsRules::default(),
+            RobotsEvidence {
+                outcome: RobotsOutcome::Unavailable,
+                ..RobotsEvidence::default()
+            },
+        )
+    };
     let Ok(seed_url) = Url::parse(seed.as_str()) else {
-        return (RobotsOutcome::Unavailable, RobotsRules::default());
+        return unavailable();
     };
     let Ok(robots_url) = seed_url.join("/robots.txt") else {
-        return (RobotsOutcome::Unavailable, RobotsRules::default());
+        return unavailable();
     };
     let Ok(target) = AuditTarget::parse(robots_url.as_str(), policy) else {
-        return (RobotsOutcome::Unavailable, RobotsRules::default());
+        return unavailable();
     };
 
     let snapshot = collection::collect_http(&target, budget, policy).await;
@@ -316,19 +560,43 @@ pub async fn fetch_robots(
             match data.status_code {
                 200..=299 => {
                     let sitemaps = super::parse_robots_sitemaps(&data.body_text, seed, policy);
+                    let evidence = RobotsEvidence::parse(&data.body_text, Some(data.status_code));
                     (
                         RobotsOutcome::Observed,
                         RobotsRules::parse(&data.body_text).with_sitemaps(sitemaps),
+                        evidence,
                     )
                 }
-                401 | 403 | 404 | 410 => (RobotsOutcome::Absent, RobotsRules::default()),
-                500..=599 => (RobotsOutcome::Unavailable, RobotsRules::disallow_all()),
-                _ => (RobotsOutcome::Unavailable, RobotsRules::default()),
+                401 | 403 | 404 | 410 => (
+                    RobotsOutcome::Absent,
+                    RobotsRules::default(),
+                    RobotsEvidence {
+                        outcome: RobotsOutcome::Absent,
+                        status_code: Some(data.status_code),
+                        ..RobotsEvidence::default()
+                    },
+                ),
+                500..=599 => (
+                    RobotsOutcome::Unavailable,
+                    RobotsRules::disallow_all(),
+                    RobotsEvidence {
+                        outcome: RobotsOutcome::Unavailable,
+                        status_code: Some(data.status_code),
+                        ..RobotsEvidence::default()
+                    },
+                ),
+                other => (
+                    RobotsOutcome::Unavailable,
+                    RobotsRules::default(),
+                    RobotsEvidence {
+                        outcome: RobotsOutcome::Unavailable,
+                        status_code: Some(other),
+                        ..RobotsEvidence::default()
+                    },
+                ),
             }
         }
-        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => {
-            (RobotsOutcome::Unavailable, RobotsRules::default())
-        }
+        CollectorOutcome::Failed { .. } | CollectorOutcome::Skipped { .. } => unavailable(),
     }
 }
 
@@ -436,5 +704,63 @@ mod tests {
         let rules = RobotsRules::disallow_all();
         assert!(!rules.allows("/"));
         assert!(!rules.allows("/index.html"));
+    }
+
+    #[test]
+    fn parses_robots_evidence_groups_warnings_and_ai_crawler_policies() {
+        let robots = "\
+Disallow: /orphan
+User-agent: *
+Disallow: /admin/
+Crawl-delay: 1.5
+
+User-agent: GPTBot
+Disallow: /
+
+User-agent: ClaudeBot
+Disallow: /private/
+Allow: /public/
+
+UnknownDirective: foo
+Sitemap: https://example.com/sitemap.xml
+";
+        let ev = RobotsEvidence::parse(robots, Some(200));
+        assert_eq!(ev.outcome, RobotsOutcome::Observed);
+        assert_eq!(ev.status_code, Some(200));
+        assert_eq!(ev.sitemaps, vec!["https://example.com/sitemap.xml"]);
+        assert_eq!(ev.groups.len(), 3);
+        assert!(
+            ev.warnings
+                .iter()
+                .any(|w| w.message.contains("before any User-agent"))
+        );
+        assert!(
+            ev.warnings
+                .iter()
+                .any(|w| w.message.contains("unrecognised"))
+        );
+
+        let gpt = ev
+            .ai_crawler_policies
+            .iter()
+            .find(|p| p.user_agent == "GPTBot")
+            .expect("GPTBot policy");
+        assert_eq!(gpt.policy, AiCrawlerPolicy::Disallowed);
+        assert_eq!(gpt.matched_group.as_deref(), Some("GPTBot"));
+
+        let claude = ev
+            .ai_crawler_policies
+            .iter()
+            .find(|p| p.user_agent == "ClaudeBot")
+            .expect("ClaudeBot policy");
+        assert_eq!(claude.policy, AiCrawlerPolicy::Partial);
+
+        let ccbot = ev
+            .ai_crawler_policies
+            .iter()
+            .find(|p| p.user_agent == "CCBot")
+            .expect("CCBot falls back to *");
+        assert_eq!(ccbot.policy, AiCrawlerPolicy::Partial);
+        assert_eq!(ccbot.matched_group.as_deref(), Some("*"));
     }
 }

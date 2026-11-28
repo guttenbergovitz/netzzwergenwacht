@@ -5,6 +5,7 @@
 //! never perform network or browser I/O.
 
 pub mod accessibility;
+pub mod aria;
 pub mod assessment;
 pub mod browser;
 pub mod content;
@@ -24,6 +25,7 @@ pub mod security;
 pub mod segmentation;
 pub mod semantics;
 pub mod seo;
+pub mod site_rules;
 pub mod stats;
 pub mod visual;
 pub mod visual_diff;
@@ -465,4 +467,205 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn rule_selection_filters_include_exclude_and_ignore_patterns() {
+        let mut selection = RuleSelection::parse_ignore_str(
+            "# comment\n\
+             such.meta.description\n\
+             rule:a11y.images.*\n\
+             /admin/*\n",
+        );
+        selection.include = vec!["such.*".to_owned(), "a11y.*".to_owned()];
+        selection.exclude = vec!["such.social.*".to_owned()];
+
+        assert!(selection.matches_rule("such.meta.title"));
+        assert!(!selection.matches_rule("such.meta.description"));
+        assert!(!selection.matches_rule("such.social.metadata"));
+        assert!(!selection.matches_rule("a11y.images.alt"));
+        assert!(selection.matches_rule("a11y.doc.lang"));
+        assert!(!selection.matches_rule("sec.headers.csp"));
+        assert!(selection.is_url_ignored("https://example.com/admin/users"));
+        assert!(!selection.is_url_ignored("https://example.com/blog"));
+    }
+}
+
+/// Depth/coverage preset for `--level quick|surface|full`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditLevel {
+    /// Fast shallow probe (`max_pages = 10`, `max_depth = 1`).
+    Quick,
+    /// Balanced surface reconnaissance (`max_pages = 50`, `max_depth = 2`).
+    #[default]
+    Surface,
+    /// Deep multi-layer crawl (`max_pages = 250`, `max_depth = 4`).
+    Full,
+}
+
+impl AuditLevel {
+    /// Default `(max_pages, max_depth)` pair for this audit level.
+    #[must_use]
+    pub const fn default_crawl_bounds(self) -> (usize, usize) {
+        match self {
+            Self::Quick => (10, 1),
+            Self::Surface => (50, 2),
+            Self::Full => (250, 4),
+        }
+    }
+}
+
+/// Deterministic rule and URL ignore selection (`--rule-include`, `--rule-exclude`, `.nzwignore`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuleSelection {
+    /// Optional allow-list of rule patterns (supports trailing `*` prefix globs).
+    pub include: Vec<String>,
+    /// Deny-list of rule patterns from `--rule-exclude`.
+    pub exclude: Vec<String>,
+    /// Rule patterns loaded from an ignore file.
+    pub ignored_rules: Vec<String>,
+    /// URL path or full-URL patterns loaded from an ignore file.
+    pub ignored_url_patterns: Vec<String>,
+}
+
+impl RuleSelection {
+    /// Parses ignore file contents (`#` comments, `rule:<pattern>`, rule IDs with `.`, or `/path` patterns).
+    #[must_use]
+    pub fn parse_ignore_str(raw: &str) -> Self {
+        let mut selection = Self::default();
+        for line in raw.lines() {
+            let trimmed = line.split('#').next().unwrap_or_default().trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if let Some(rule_pat) = trimmed.strip_prefix("rule:") {
+                let pat = rule_pat.trim();
+                if !pat.is_empty() {
+                    selection.ignored_rules.push(pat.to_owned());
+                }
+            } else if trimmed.starts_with('/')
+                || trimmed.starts_with("http://")
+                || trimmed.starts_with("https://")
+            {
+                selection.ignored_url_patterns.push(trimmed.to_owned());
+            } else {
+                selection.ignored_rules.push(trimmed.to_owned());
+            }
+        }
+        selection
+    }
+
+    /// Loads a [`RuleSelection`] from `path` on disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the file cannot be read.
+    pub fn from_ignore_file(path: &std::path::Path) -> Result<Self, String> {
+        let raw = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read ignore file `{}`: {e}", path.display()))?;
+        Ok(Self::parse_ignore_str(&raw))
+    }
+
+    /// Returns `true` when `rule_id` should be retained under include/exclude/ignore rules.
+    #[must_use]
+    pub fn matches_rule(&self, rule_id: &str) -> bool {
+        if !self.include.is_empty() && !self.include.iter().any(|pat| wildcard_match(pat, rule_id))
+        {
+            return false;
+        }
+        if self
+            .exclude
+            .iter()
+            .chain(self.ignored_rules.iter())
+            .any(|pat| wildcard_match(pat, rule_id))
+        {
+            return false;
+        }
+        true
+    }
+
+    /// Returns `true` when `url` (or its path) matches any ignored URL pattern.
+    #[must_use]
+    pub fn is_url_ignored(&self, url: &str) -> bool {
+        if self.ignored_url_patterns.is_empty() {
+            return false;
+        }
+        let path = url::Url::parse(url)
+            .map(|u| u.path().to_owned())
+            .unwrap_or_default();
+        self.ignored_url_patterns.iter().any(|pat| {
+            if pat.starts_with('/') {
+                wildcard_match(pat, &path)
+            } else {
+                wildcard_match(pat, url)
+            }
+        })
+    }
+
+    /// Returns `true` when no include, exclude, or ignore filters are configured.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.include.is_empty()
+            && self.exclude.is_empty()
+            && self.ignored_rules.is_empty()
+            && self.ignored_url_patterns.is_empty()
+    }
+}
+
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        value.starts_with(prefix)
+    } else {
+        pattern == value
+    }
+}
+
+/// Applies `selection` to a vector of [`AnalyserResult`]s, removing excluded findings
+/// and converting excluded checks into [`CheckStatus::Skipped`].
+pub fn apply_rule_selection(results: &mut [AnalyserResult], selection: &RuleSelection) {
+    if selection.is_empty() {
+        return;
+    }
+    for analyser in results.iter_mut() {
+        analyser
+            .findings
+            .retain(|f| selection.matches_rule(&f.rule_id.0));
+        for check in &mut analyser.checks {
+            let rule_id = match check {
+                CheckStatus::Passed { rule_id, .. }
+                | CheckStatus::Failed { rule_id, .. }
+                | CheckStatus::Skipped { rule_id, .. }
+                | CheckStatus::Unavailable { rule_id, .. } => rule_id.clone(),
+            };
+            if !selection.matches_rule(&rule_id.0) {
+                *check = CheckStatus::Skipped {
+                    rule_id,
+                    evidence_level: EvidenceLevel::Source,
+                    reason: "excluded by rule selection".to_owned(),
+                };
+            }
+        }
+    }
+}
+
+/// Applies `selection` to a [`crate::discovery::CrawlSummary`], filtering ignored URLs
+/// and excluded rules across `page_diagnostics`, `graph_results`, and `systemic_issues`.
+pub fn apply_rule_selection_to_crawl(
+    summary: &mut crate::discovery::CrawlSummary,
+    selection: &RuleSelection,
+) {
+    if selection.is_empty() {
+        return;
+    }
+    summary
+        .page_diagnostics
+        .retain(|p| !selection.is_url_ignored(&p.url));
+    for page in &mut summary.page_diagnostics {
+        page.findings
+            .retain(|f| selection.matches_rule(&f.rule_id.0));
+    }
+    apply_rule_selection(&mut summary.graph_results, selection);
+    summary
+        .systemic_issues
+        .retain(|s| selection.matches_rule(&s.rule_id.0));
 }

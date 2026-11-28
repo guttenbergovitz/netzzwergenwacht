@@ -758,10 +758,25 @@ fn check_etag_and_rate_limiting(
         });
     }
 
+    let refusal =
+        crate::collection::classify_http_refusal(http.status_code, &http.headers, &http.body_text);
     let rate_limited = http.status_code == 429
         || header_value(http, "retry-after").is_some()
-        || header_value(http, "x-ratelimit-remaining").is_some_and(|v| v.trim() == "0");
+        || header_value(http, "x-ratelimit-remaining").is_some_and(|v| v.trim() == "0")
+        || matches!(
+            refusal,
+            Some(
+                crate::collection::RefusalKind::WafChallenge
+                    | crate::collection::RefusalKind::BotBlocked
+            )
+        );
     if rate_limited {
+        let refusal_label = match refusal {
+            Some(crate::collection::RefusalKind::WafChallenge) => "waf_challenge",
+            Some(crate::collection::RefusalKind::BotBlocked) => "bot_blocked",
+            Some(crate::collection::RefusalKind::UpstreamUnavailable) => "upstream_unavailable",
+            Some(crate::collection::RefusalKind::RateLimited) | None => "rate_limited",
+        };
         findings.push(Finding {
             fingerprint: FindingFingerprint::default(),
             rule_id: RuleId(RULE_RATE_LIMITING.to_owned()),
@@ -770,18 +785,21 @@ fn check_etag_and_rate_limiting(
             kind: FindingKind::Deterministic,
             severity: Severity::Medium,
             confidence: Confidence::High,
-            title: format!("Rate limiting or Retry-After observed (HTTP {})", http.status_code),
+            title: format!(
+                "Rate limiting or WAF/bot refusal observed (HTTP {}, {refusal_label})",
+                http.status_code
+            ),
             summary: format!(
-                "Origin or intermediary signalled rate limiting / backoff (status={}, retry_after={}).",
+                "Origin or intermediary signalled `{refusal_label}` / backoff (status={}, retry_after={}).",
                 http.status_code,
                 header_value(http, "retry-after").unwrap_or("<absent>")
             ),
             evidence_refs: vec![EvidenceRef::new(
                 EvidenceSource::HttpHeaders,
-                format!("status={};rate_limited=true", http.status_code),
+                format!("status={};refusal={refusal_label}", http.status_code),
             )],
             remediation: Some(
-                "Respect `Retry-After` backoff and reduce crawl concurrency for this target."
+                "Respect `Retry-After` backoff, reduce crawl concurrency, or verify WAF/bot-protection rules for legitimate crawlers."
                     .to_owned(),
             ),
         });
