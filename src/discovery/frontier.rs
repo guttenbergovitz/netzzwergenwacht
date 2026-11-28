@@ -6,8 +6,7 @@
 //! which keeps crawl output deterministic even when acquisitions complete out of order.
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
-use std::collections::HashSet;
+use std::collections::{BinaryHeap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -116,11 +115,13 @@ impl PartialOrd for Queued {
 
 impl Ord for Queued {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reversed so that `BinaryHeap` (a max-heap) yields the lowest priority value first,
-        // and FIFO within one priority value.
+        // Reversed so that `BinaryHeap` (a max-heap) yields the shallowest depth first (BFS
+        // layer order), then lowest priority value, then FIFO within the same depth and priority.
         other
-            .priority
-            .cmp(&self.priority)
+            .entry
+            .depth
+            .cmp(&self.entry.depth)
+            .then_with(|| other.priority.cmp(&self.priority))
             .then_with(|| other.sequence.cmp(&self.sequence))
     }
 }
@@ -129,7 +130,9 @@ impl Ord for Queued {
 #[derive(Debug)]
 pub struct CrawlFrontier {
     heap: BinaryHeap<Queued>,
-    seen: HashSet<String>,
+    best_depth: HashMap<String, usize>,
+    popped: HashSet<String>,
+    queued_count: usize,
     max_queued: usize,
     sequence: u64,
     duplicates: usize,
@@ -145,7 +148,9 @@ impl CrawlFrontier {
     pub fn new(max_queued: usize) -> Self {
         Self {
             heap: BinaryHeap::new(),
-            seen: HashSet::new(),
+            best_depth: HashMap::new(),
+            popped: HashSet::new(),
+            queued_count: 0,
             max_queued: max_queued.max(1),
             sequence: 0,
             duplicates: 0,
@@ -155,8 +160,9 @@ impl CrawlFrontier {
 
     /// Offers `target` to the frontier.
     ///
-    /// A URL is identified by its normalised string form. An offer is idempotent: the second
-    /// offer of the same URL is counted as a duplicate and does not queue.
+    /// A URL is identified by its normalised string form. If an already-queued URL is rediscovered
+    /// at a strictly shallower depth, its queued depth is updated to the shorter path so crawl
+    /// depth remains deterministic.
     pub fn enqueue(
         &mut self,
         target: AuditTarget,
@@ -164,15 +170,29 @@ impl CrawlFrontier {
         source: DiscoverySource,
     ) -> EnqueueOutcome {
         let key = target.as_str().to_owned();
-        if self.seen.contains(&key) {
+        if let Some(prev_depth) = self.best_depth.get_mut(&key) {
             self.duplicates += 1;
+            if depth < *prev_depth && !self.popped.contains(&key) {
+                *prev_depth = depth;
+                self.sequence = self.sequence.saturating_add(1);
+                self.heap.push(Queued {
+                    priority: source.priority(),
+                    sequence: self.sequence,
+                    entry: FrontierEntry {
+                        target,
+                        depth,
+                        source,
+                    },
+                });
+            }
             return EnqueueOutcome::Duplicate;
         }
-        if self.heap.len() >= self.max_queued {
+        if self.queued_count >= self.max_queued {
             self.rejected_full += 1;
             return EnqueueOutcome::QueueFull;
         }
-        self.seen.insert(key);
+        self.best_depth.insert(key, depth);
+        self.queued_count += 1;
         self.sequence = self.sequence.saturating_add(1);
         self.heap.push(Queued {
             priority: source.priority(),
@@ -191,30 +211,46 @@ impl CrawlFrontier {
     /// Used for targets rejected by scope or policy: they must not be fetched, and they must not
     /// be re-evaluated on every page that links to them.
     pub fn mark_seen(&mut self, target: &AuditTarget) {
-        self.seen.insert(target.as_str().to_owned());
+        let key = target.as_str().to_owned();
+        self.best_depth.entry(key.clone()).or_insert(0);
+        self.popped.insert(key);
     }
 
     /// Removes and returns the next entry, or `None` when the frontier is empty.
     pub fn pop(&mut self) -> Option<FrontierEntry> {
-        self.heap.pop().map(|queued| queued.entry)
+        while let Some(queued) = self.heap.pop() {
+            let key = queued.entry.target.as_str();
+            if self.popped.contains(key)
+                || self
+                    .best_depth
+                    .get(key)
+                    .is_some_and(|&best| queued.entry.depth > best)
+            {
+                continue;
+            }
+            self.popped.insert(key.to_owned());
+            self.queued_count = self.queued_count.saturating_sub(1);
+            return Some(queued.entry);
+        }
+        None
     }
 
     /// Number of URLs waiting to be acquired.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.heap.len()
+        self.queued_count
     }
 
     /// Whether nothing is waiting to be acquired.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.heap.is_empty()
+        self.queued_count == 0
     }
 
     /// Number of distinct URLs the frontier has ever accepted.
     #[must_use]
     pub fn accepted_count(&self) -> usize {
-        self.seen.len()
+        self.best_depth.len()
     }
 
     /// Number of duplicate offers rejected.
@@ -324,5 +360,22 @@ mod tests {
             EnqueueOutcome::Duplicate
         );
         assert!(frontier.is_empty());
+    }
+
+    #[test]
+    fn shorter_depth_discovery_updates_queued_entry_deterministically() {
+        let mut frontier = CrawlFrontier::new(8);
+        assert_eq!(
+            frontier.enqueue(target("/child"), 2, DiscoverySource::Link),
+            EnqueueOutcome::Enqueued
+        );
+        assert_eq!(
+            frontier.enqueue(target("/child"), 1, DiscoverySource::Link),
+            EnqueueOutcome::Duplicate
+        );
+        assert_eq!(frontier.len(), 1);
+        let popped = frontier.pop().expect("child entry");
+        assert_eq!(popped.depth, 1);
+        assert!(frontier.pop().is_none());
     }
 }
