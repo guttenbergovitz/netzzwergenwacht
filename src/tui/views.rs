@@ -494,7 +494,7 @@ fn render_overview(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         for blocker in top_blockers.into_iter().take(4) {
             right_lines.push(Line::from(vec![
                 Span::styled(
-                    format!(" [{}] ", Theme::severity_badge(blocker.severity)),
+                    format!(" {} ", Theme::severity_badge(blocker.severity)),
                     state.theme.severity_style(blocker.severity),
                 ),
                 Span::raw(sanitize_line(&blocker.title, 44)),
@@ -1064,6 +1064,7 @@ fn render_findings(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
                 ),
             ]),
             Line::from(format!(" Specialist: {}", finding.dwarf_id.labelled_name())),
+            Line::from(format!(" Target:     {}", finding.target_url)),
             Line::from(format!(" Title:      {}", finding.title)),
             Line::from(""),
             Line::from(Span::styled(
@@ -2324,31 +2325,33 @@ fn push_cargo_diagnostic_lines(
         format!("{indent}{empty_gutter} |"),
         theme.title_style(),
     )));
+    let rendered_snippet = sanitize_line(&excerpt.snippet, 120);
     lines.push(Line::from(vec![
         Span::styled(
             format!("{indent}{line_label:>gutter_width$} | "),
             theme.title_style(),
         ),
-        Span::styled(sanitize_line(&excerpt.snippet, 120), theme.primary_style()),
+        Span::styled(rendered_snippet.clone(), theme.primary_style()),
     ]));
 
     if let (Some(start), Some(len)) = (excerpt.highlight_start, excerpt.highlight_len) {
-        let snippet_chars = excerpt.snippet.chars().count();
-        let clamped_start = start.min(snippet_chars);
-        let clamped_len = len.min(snippet_chars.saturating_sub(clamped_start)).max(1);
-        let spaces = " ".repeat(clamped_start);
-        let carets = "^".repeat(clamped_len);
-        let label_text = excerpt
-            .label
-            .as_deref()
-            .map_or_else(String::new, |l| format!(" {}", sanitize_line(l, 64)));
-        lines.push(Line::from(vec![
-            Span::styled(format!("{indent}{empty_gutter} | "), theme.title_style()),
-            Span::styled(
-                format!("{spaces}{carets}{label_text}"),
-                theme.severity_style(crate::domain::Severity::High),
-            ),
-        ]));
+        let snippet_chars = rendered_snippet.chars().count();
+        if start < snippet_chars {
+            let clamped_len = len.min(snippet_chars.saturating_sub(start)).max(1);
+            let spaces = " ".repeat(start);
+            let carets = "^".repeat(clamped_len);
+            let label_text = excerpt
+                .label
+                .as_deref()
+                .map_or_else(String::new, |l| format!(" {}", sanitize_line(l, 64)));
+            lines.push(Line::from(vec![
+                Span::styled(format!("{indent}{empty_gutter} | "), theme.title_style()),
+                Span::styled(
+                    format!("{spaces}{carets}{label_text}"),
+                    theme.severity_style(crate::domain::Severity::High),
+                ),
+            ]));
+        }
     }
 
     if let Some(ref help) = excerpt.help {
@@ -2836,6 +2839,27 @@ fn render_topology(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         })
         .collect();
 
+    let title = format!(
+        " APPLICATION & DEPENDENCY TOPOLOGY ({} node(s)) ",
+        state.topology_rows.len()
+    );
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(state.theme.border_style(true));
+
+    if state.topology_rows.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " No topology nodes observed yet. Start an audit or crawl from Launcher (n).",
+                state.theme.muted_style(),
+            )))
+            .block(block),
+            area,
+        );
+        return;
+    }
+
     let table = Table::new(
         rows,
         [
@@ -2846,15 +2870,7 @@ fn render_topology(frame: &mut Frame<'_>, area: Rect, state: &AppState) {
         ],
     )
     .header(header)
-    .block(
-        Block::default()
-            .title(format!(
-                " APPLICATION & DEPENDENCY TOPOLOGY ({} node(s)) ",
-                state.topology_rows.len()
-            ))
-            .borders(Borders::ALL)
-            .border_style(state.theme.border_style(true)),
-    );
+    .block(block);
     frame.render_widget(table, area);
 }
 

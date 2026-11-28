@@ -1024,6 +1024,8 @@ pub struct AppState {
     /// Selected row index in `3:Targets`.
     pub selected_target_index: usize,
 
+    /// Whether the operator has already pressed `q` once during an active run to confirm quitting.
+    pub quit_armed: bool,
     /// Authoritative sanitized findings (`4:Findings`).
     pub findings: Vec<FindingRow>,
     /// Indices into `findings` matching the current filter and sort order.
@@ -1137,6 +1139,7 @@ impl AppState {
             instruments: InstrumentAvailability::detect(),
             theme: Theme::new(theme_mode, glyphs),
             help_open: false,
+            quit_armed: false,
             search_focused: false,
             terminal_width: 120,
             terminal_height: 40,
@@ -1342,28 +1345,28 @@ impl AppState {
             let fa = &self.findings[a];
             let fb = &self.findings[b];
             match self.finding_sort {
-                FindingSortOrder::SeverityDesc => fa
+                FindingSortOrder::SeverityDesc => fb
                     .severity
-                    .cmp(&fb.severity)
-                    .then_with(|| fa.confidence.cmp(&fb.confidence))
+                    .cmp(&fa.severity)
+                    .then_with(|| fb.confidence.cmp(&fa.confidence))
                     .then_with(|| fa.rule_id.cmp(&fb.rule_id))
                     .then_with(|| fa.index.cmp(&fb.index)),
-                FindingSortOrder::ConfidenceDesc => fa
+                FindingSortOrder::ConfidenceDesc => fb
                     .confidence
-                    .cmp(&fb.confidence)
-                    .then_with(|| fa.severity.cmp(&fb.severity))
+                    .cmp(&fa.confidence)
+                    .then_with(|| fb.severity.cmp(&fa.severity))
                     .then_with(|| fa.rule_id.cmp(&fb.rule_id))
                     .then_with(|| fa.index.cmp(&fb.index)),
                 FindingSortOrder::RuleIdAsc => fa
                     .rule_id
                     .cmp(&fb.rule_id)
-                    .then_with(|| fa.severity.cmp(&fb.severity))
+                    .then_with(|| fb.severity.cmp(&fa.severity))
                     .then_with(|| fa.index.cmp(&fb.index)),
                 FindingSortOrder::SpecialistAsc => fa
                     .dwarf_id
                     .display_name()
                     .cmp(fb.dwarf_id.display_name())
-                    .then_with(|| fa.severity.cmp(&fb.severity))
+                    .then_with(|| fb.severity.cmp(&fa.severity))
                     .then_with(|| fa.rule_id.cmp(&fb.rule_id))
                     .then_with(|| fa.index.cmp(&fb.index)),
             }
@@ -1527,6 +1530,9 @@ impl AppState {
             self.populate_targets_from_crawl(&crawl);
             if self.audit_report.is_none() {
                 self.populate_findings_from_crawl(&crawl);
+            }
+            if self.topology_rows.is_empty() {
+                self.build_topology_from_crawl(&crawl);
             }
             self.crawl_summary = Some(crawl);
         }
@@ -1976,6 +1982,44 @@ impl AppState {
                     value.status_code,
                     value.redirect_chain.len()
                 ),
+                directly_observed: true,
+            });
+        }
+        self.topology_rows = rows;
+        self.selected_topology_index = 0;
+    }
+
+    fn build_topology_from_crawl(&mut self, crawl: &crate::discovery::CrawlSummary) {
+        let mut rows = Vec::new();
+        rows.push(TopologyNodeRow {
+            depth: 0,
+            relation_kind: "SEED",
+            label: sanitize_url_for_display(crawl.seed.as_str(), 100),
+            detail: format!(
+                "{} page(s), {} resource(s)",
+                crawl.pages.len(),
+                crawl.resources.len()
+            ),
+            directly_observed: true,
+        });
+        for page in crawl.pages.iter().take(64) {
+            rows.push(TopologyNodeRow {
+                depth: page.depth.clamp(1, 4),
+                relation_kind: "PAGE",
+                label: sanitize_url_for_display(page.url.as_str(), 96),
+                detail: format!("{:?} | {:?}", page.page_type, page.status),
+                directly_observed: page.status == PageCrawlStatus::Investigated,
+            });
+        }
+        for res in crawl.resources.iter().take(48) {
+            let status_str = res
+                .http_status
+                .map_or_else(|| String::from("---"), |code| format!("HTTP {code}"));
+            rows.push(TopologyNodeRow {
+                depth: 2,
+                relation_kind: "RESOURCE",
+                label: sanitize_url_for_display(res.url.as_str(), 90),
+                detail: format!("{:?} | {}", res.kind, status_str),
                 directly_observed: true,
             });
         }
@@ -2482,5 +2526,44 @@ mod tests {
             .expect("performance row");
         assert_eq!(untouched.checks_total, 0);
         assert_eq!(untouched.status, OperationalStatus::Waiting);
+        assert!(
+            !state.topology_rows.is_empty(),
+            "crawl should populate Topology rows"
+        );
+    }
+
+    #[test]
+    fn findings_sort_orders_severity_and_confidence_descending() {
+        let make_row = |index: usize, severity: Severity, confidence: Confidence| FindingRow {
+            index,
+            dwarf_id: DwarfId::Sicherheits,
+            rule_id: format!("rule.{index}"),
+            severity,
+            confidence,
+            evidence_level: EvidenceLevel::Source,
+            target_url: String::from("https://example.org/"),
+            title: String::from("title"),
+            description: String::from("desc"),
+            recommendation: String::from("rec"),
+            evidence_refs: Vec::new(),
+            primary_evidence_category: EvidenceCategory::Http,
+        };
+
+        let mut state = AppState {
+            findings: vec![
+                make_row(0, Severity::Info, Confidence::Low),
+                make_row(1, Severity::Critical, Confidence::Medium),
+                make_row(2, Severity::High, Confidence::High),
+            ],
+            ..AppState::default()
+        };
+
+        state.finding_sort = FindingSortOrder::SeverityDesc;
+        state.refresh_visible_findings();
+        assert_eq!(state.visible_finding_indices, vec![1, 2, 0]);
+
+        state.finding_sort = FindingSortOrder::ConfidenceDesc;
+        state.refresh_visible_findings();
+        assert_eq!(state.visible_finding_indices, vec![2, 1, 0]);
     }
 }

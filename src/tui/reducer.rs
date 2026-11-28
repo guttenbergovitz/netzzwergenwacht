@@ -129,6 +129,10 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
 
     // Handle Executive Domain Brief overlay when open on `1:Overview`.
     if state.overview_brief_open {
+        if !matches!(action, UserAction::Quit) {
+            state.quit_armed = false;
+        }
+
         match action {
             UserAction::BackOrClose => {
                 state.overview_brief_open = false;
@@ -162,6 +166,10 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
 
     // Handle Search bar input when focused.
     if state.search_focused {
+        if !matches!(action, UserAction::Quit) {
+            state.quit_armed = false;
+        }
+
         match action {
             UserAction::BackOrClose | UserAction::Activate => {
                 state.search_focused = false;
@@ -188,6 +196,10 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
             _ => {}
         }
         return Vec::new();
+    }
+
+    if !matches!(action, UserAction::Quit) {
+        state.quit_armed = false;
     }
 
     match action {
@@ -351,6 +363,13 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
             }
         }
         UserAction::Quit => {
+            if state.lifecycle == RunLifecycleState::Running && !state.quit_armed {
+                state.quit_armed = true;
+                state.status_message = String::from(
+                    "Run still in progress — press q again to cancel and quit, or Esc to cancel run only.",
+                );
+                return Vec::new();
+            }
             state.should_quit = true;
             if matches!(
                 state.lifecycle,
@@ -368,6 +387,10 @@ fn reduce_user_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect
 
 #[allow(clippy::too_many_lines)]
 fn reduce_launcher_action(state: &mut AppState, action: UserAction) -> Vec<AppEffect> {
+    if !matches!(action, UserAction::Quit) {
+        state.quit_armed = false;
+    }
+
     match action {
         UserAction::BackOrClose => {
             // Only close Launcher if we already have a run or report loaded; otherwise stay in Launcher.
@@ -1556,5 +1579,27 @@ mod tests {
             s.status,
             crate::tui::state::EaaSignalStatus::ManualOrUnverified
         )));
+    }
+
+    #[test]
+    fn quit_during_running_requires_confirmation() {
+        let mut state = AppState {
+            lifecycle: RunLifecycleState::Running,
+            launcher: crate::tui::state::LauncherState {
+                open: false,
+                ..crate::tui::state::LauncherState::default()
+            },
+            ..AppState::default()
+        };
+
+        let first = reduce(&mut state, AppAction::User(UserAction::Quit));
+        assert_eq!(first.len(), 0);
+        assert!(!state.should_quit);
+        assert!(state.quit_armed);
+
+        let second = reduce(&mut state, AppAction::User(UserAction::Quit));
+        assert!(state.should_quit);
+        assert!(second.contains(&AppEffect::CancelActiveRun));
+        assert!(second.contains(&AppEffect::Quit));
     }
 }
