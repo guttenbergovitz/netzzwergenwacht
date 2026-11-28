@@ -137,7 +137,7 @@ function findBrowser() {
     let navStartTs = null;
     let loadResolve = null;
 
-    ws.addEventListener('message', (ev) => {
+    ws.addEventListener('message', async (ev) => {
       const msg = JSON.parse(ev.data);
       if (msg.id && pending.has(msg.id)) {
         const { resolve, reject } = pending.get(msg.id);
@@ -267,7 +267,7 @@ function findBrowser() {
         }
       } else if (msg.method === 'Fetch.requestPaused') {
         const reqUrl = msg.params?.request?.url || '';
-        const blocked = isForbiddenSubresourceUrl(reqUrl);
+        const blocked = await isForbiddenSubresourceUrl(reqUrl);
         if (blocked) {
           timeline.policyBlock(msg.params);
           failedRequests.push({ url: reqUrl, error_text: 'BlockedByPolicy', status_code: null });
@@ -305,20 +305,54 @@ function findBrowser() {
       ws.send(JSON.stringify({ id, method, params }));
     });
 
-    const isForbiddenSubresourceUrl = (raw) => {
+    const dns = require('dns');
+    const net = require('net');
+    const dnsCache = new Map();
+    const isForbiddenIpLiteral = (ip) => {
+      const lower = String(ip || '').toLowerCase().replace(/^\[|\]$/g, '');
+      if (!lower) return true;
+      if (lower.startsWith('::ffff:')) {
+        return isForbiddenIpLiteral(lower.slice(7));
+      }
+      const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(lower);
+      if (v4) {
+        const o = v4.slice(1).map(Number);
+        if (o.some((n) => n > 255)) return true;
+        return o[0] === 0
+          || o[0] === 127
+          || o[0] === 10
+          || (o[0] === 192 && o[1] === 168)
+          || (o[0] === 169 && o[1] === 254)
+          || (o[0] === 172 && o[1] >= 16 && o[1] <= 31)
+          || (o[0] === 100 && o[1] >= 64 && o[1] <= 127)
+          || (o[0] === 198 && (o[1] === 18 || o[1] === 19))
+          || o[0] >= 224;
+      }
+      if (lower === '::' || lower === '::1') return true;
+      if (/^f[cd][0-9a-f]{2}:/.test(lower)) return true;
+      if (/^fe[89ab][0-9a-f]:/.test(lower)) return true;
+      if (/^fe[c-f][0-9a-f]:/.test(lower)) return true;
+      if (lower.startsWith('64:ff9b::') || lower.startsWith('2002:') || /^ff[0-9a-f]{2}:/.test(lower)) return true;
+      return false;
+    };
+    const isForbiddenSubresourceUrl = async (raw) => {
       if (sessionPolicy !== 'public_only') return false;
       try {
         const u = new URL(raw);
         if (u.protocol !== 'http:' && u.protocol !== 'https:') return false; // allow data:/blob:
-        const h = u.hostname.toLowerCase();
-        return h === 'localhost'
-          || h.endsWith('.local')
-          || h === '::1'
-          || /^127\./.test(h)
-          || /^10\./.test(h)
-          || /^192\.168\./.test(h)
-          || /^169\.254\./.test(h)
-          || /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(h);
+        const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+        if (h === 'localhost' || h.endsWith('.local') || h.endsWith('.internal')) return true;
+        if (net.isIP(h)) return isForbiddenIpLiteral(h);
+        if (dnsCache.has(h)) return dnsCache.get(h);
+        let blocked = false;
+        try {
+          const addrs = await dns.promises.lookup(h, { all: true });
+          blocked = addrs.some((a) => isForbiddenIpLiteral(a.address));
+        } catch {
+          blocked = false;
+        }
+        dnsCache.set(h, blocked);
+        return blocked;
       } catch {
         return true;
       }
@@ -1374,8 +1408,7 @@ pub fn parse_browser_outcome(raw: &str) -> CollectorOutcome<BrowserEvidence> {
     let mut warnings = Vec::new();
     if parsed.load_timed_out {
         warnings.push(
-            "Page.loadEventFired timed out after 15000 ms; DOM metrics captured before full load"
-                .to_owned(),
+            "Page.loadEventFired timed out before full load; DOM metrics captured early".to_owned(),
         );
     }
     if parsed

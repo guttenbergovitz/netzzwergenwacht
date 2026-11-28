@@ -273,6 +273,10 @@ const fn is_forbidden_ipv4(v4: Ipv4Addr) -> bool {
         || octets[0] == 0
         // CGNAT 100.64.0.0/10
         || (octets[0] == 100 && (octets[1] & 0b1100_0000) == 64)
+        // Benchmarking 198.18.0.0/15
+        || (octets[0] == 198 && (octets[1] & 0xfe) == 18)
+        // Reserved / future use 240.0.0.0/4
+        || octets[0] >= 240
 }
 
 const fn is_forbidden_ipv6(v6: Ipv6Addr) -> bool {
@@ -287,6 +291,17 @@ const fn is_forbidden_ipv6(v6: Ipv6Addr) -> bool {
         || (segs[0] & 0xfe00) == 0xfc00
         // Link-local fe80::/10
         || (segs[0] & 0xffc0) == 0xfe80
+        // Deprecated site-local fec0::/10
+        || (segs[0] & 0xffc0) == 0xfec0
+        // NAT64 well-known prefix 64:ff9b::/96
+        || (segs[0] == 0x0064
+            && segs[1] == 0xff9b
+            && segs[2] == 0
+            && segs[3] == 0
+            && segs[4] == 0
+            && segs[5] == 0)
+        // 6to4 2002::/16
+        || segs[0] == 0x2002
 }
 
 /// Explicit resource bounds governing an audit run.
@@ -1531,5 +1546,22 @@ mod tests {
         assert!(budget.max_response_bytes > 0);
         assert!(budget.http_timeout > Duration::ZERO);
         assert!(budget.audit_timeout >= budget.http_timeout);
+    }
+
+    #[test]
+    fn ssrf_guard_blocks_extended_reserved_ipv4_and_ipv6_ranges() {
+        let blocked = [
+            "198.18.0.1",
+            "198.19.255.254",
+            "240.0.0.1",
+            "64:ff9b::1",
+            "2002:7f00:1::1",
+            "fec0::1",
+        ];
+        for raw in blocked {
+            let ip: IpAddr = raw.parse().expect("ip");
+            assert!(is_forbidden_ip(ip), "expected {raw} to be blocked");
+        }
+        assert!(!is_forbidden_ip("93.184.216.34".parse().expect("ip")));
     }
 }
